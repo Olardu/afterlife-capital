@@ -60,12 +60,17 @@ body {
 }
 main, header, footer { position: relative; z-index: 1; }
 
-/* ───── HEADER ───── */
+/* ───── HEADER (sticky) ───── */
 header.topbar {
   display: grid; grid-template-columns: 1fr auto auto; gap: 16px;
   align-items: center;
   padding: 18px 28px; border-bottom: 1px solid var(--card-bd);
   background: var(--bg-2);
+  position: sticky; top: 0; z-index: 50;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+}
+[data-theme="sobrio"] header.topbar {
+  box-shadow: 0 1px 0 var(--card-bd);
 }
 .logo {
   font-family: var(--font-head); font-weight: 900; font-size: 18px;
