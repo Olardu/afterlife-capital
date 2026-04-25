@@ -26,12 +26,21 @@ class Historian:
         self.pool: Optional[asyncpg.Pool] = None
 
     async def connect(self):
-        """Inicializa el pool de conexiones asyncpg (min 2, max 10 conexiones)."""
+        """Inicializa el pool de conexiones asyncpg (min 2, max 10 conexiones).
+
+        Timeouts:
+            command_timeout=10  → cada query individual aborta a los 10s.
+            timeout=5           → acquire connection del pool aborta a los 5s.
+        Sin estos, una query colgada drena el pool y el sistema queda sin
+        servicio en silencio (#H-3a).
+        """
         try:
             self.pool = await asyncpg.create_pool(
                 dsn=self.database_url,
                 min_size=2,
                 max_size=10,
+                command_timeout=10,
+                timeout=5,
             )
             logger.info("Pool PostgreSQL inicializado.")
         except Exception as e:
