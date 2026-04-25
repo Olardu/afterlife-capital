@@ -227,6 +227,20 @@ section h2::before { content: "▌ "; color: var(--accent); }
 .tk-chip.sell { color: var(--bad);  border-color: var(--bad); }
 .sent-stats { font-size: 12px; color: var(--text-dim); }
 .sent-stats span.alloc { color: var(--accent); }
+.mini-chart-wrap {
+  height: 60px;
+  margin: 14px -16px -16px;
+  border-top: 1px solid var(--card-bd);
+  background: rgba(0,0,0,0.18);
+  position: relative;
+}
+.mini-chart-wrap .mini-empty {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px; letter-spacing: 2px; color: var(--text-dim);
+  font-family: var(--font-head);
+}
+canvas.mini-chart { display: block; width: 100%; height: 60px; }
 
 /* ───── ACCORDION (detalle inline por sentinel) ───── */
 .sent-card.expanded {
@@ -711,6 +725,7 @@ const STATE = {
   macro: { recent_events: [], current_risk_score: 0 },
   performance: [],
   equityChart: null,
+  miniCharts: {},
   sse: null,
 };
 
@@ -924,10 +939,77 @@ function renderSentinels() {
           ${s.decay_status ? ` · <span class="signal-sell">DECAY</span>` : ""}
         </div>
         ${renderSentinelDetail(s)}
+        <div class="mini-chart-wrap">
+          <canvas class="mini-chart" id="mini-${s.sentinel_id}"></canvas>
+        </div>
       </div>`;
   }).join("");
   $$(".sent-card").forEach(card => {
-    card.addEventListener("click", () => toggleSentinelCard(card));
+    card.addEventListener("click", (ev) => {
+      // No togglear si el click viene de un elemento interactivo del detail
+      if (ev.target.closest("table")) return;
+      toggleSentinelCard(card);
+    });
+  });
+  renderMiniCharts();
+}
+
+/* ============================================================ *
+ * RENDER — mini equity chart por sentinel                       *
+ * ============================================================ */
+function destroyMiniCharts() {
+  Object.values(STATE.miniCharts).forEach(c => { try { c.destroy(); } catch(_){} });
+  STATE.miniCharts = {};
+}
+
+function renderMiniCharts() {
+  destroyMiniCharts();
+  STATE.sentinels.forEach(s => {
+    const sid = s.sentinel_id;
+    const canvas = document.getElementById("mini-" + sid);
+    if (!canvas) return;
+
+    const trades = STATE.trades.filter(t =>
+      t.sentinel_name === s.name || t.sentinel_id === sid
+    );
+
+    if (!trades.length) {
+      // Placeholder visual: línea horizontal sutil con marca empty
+      const wrap = canvas.parentElement;
+      wrap.innerHTML = `<div class="mini-empty">— ${T("no_data").toUpperCase().slice(0, 24)} —</div>`;
+      return;
+    }
+
+    // PnL acumulado naive a partir de slippage (placeholder hasta FIFO real)
+    let acc = 0;
+    const points = [...trades].reverse().map(t => {
+      const sign = t.side === "SELL" ? 1 : -1;
+      acc += sign * (Number(t.slippage) || 0) * (Number(t.qty) || 1);
+      return acc;
+    });
+
+    STATE.miniCharts[sid] = new Chart(canvas, {
+      type: "line",
+      data: {
+        labels: points.map((_, i) => i),
+        datasets: [{
+          data: points,
+          borderColor: "#00f5ff",
+          backgroundColor: "rgba(0,245,255,0.18)",
+          borderWidth: 1.5,
+          tension: 0.3,
+          fill: true,
+          pointRadius: 0,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        animation: false,
+        scales: { x: { display: false }, y: { display: false } },
+        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        elements: { line: { borderJoinStyle: "round" } },
+      },
+    });
   });
 }
 
