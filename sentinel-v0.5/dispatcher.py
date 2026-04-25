@@ -614,7 +614,8 @@ class Dispatcher:
         elif not can_trade:
             logger.info(f"Señales omitidas — can_trade=False (régimen={regime}).")
 
-        # 5. Evaluar decay en todos los Sentinels activos del owner (fuente de verdad: DB)
+        # 5. Evaluar decay en todos los Sentinels activos del owner (fuente de verdad: DB).
+        # Multi-ticker: cada Sentinel evalúa decay por cada uno de sus tickers asignados.
         try:
             active_sentinels = await self.historian.get_active_sentinels(self.owner_id)
         except Exception as e:
@@ -623,11 +624,12 @@ class Dispatcher:
 
         for sentinel in active_sentinels:
             sentinel_id = sentinel["sentinel_id"]
-            ticker      = sentinel["ticker"]
-            try:
-                await self.historian.evaluate_decay(sentinel_id=sentinel_id, ticker=ticker)
-            except Exception as e:
-                logger.error(f"Error evaluando decay ({sentinel_id}, {ticker}): {e}")
+            tickers     = sentinel.get("tickers") or []
+            for ticker in tickers:
+                try:
+                    await self.historian.evaluate_decay(sentinel_id=sentinel_id, ticker=ticker)
+                except Exception as e:
+                    logger.error(f"Error evaluando decay ({sentinel_id}, {ticker}): {e}")
 
         approved_count = sum(1 for r in results if r.get("approved"))
         logger.info(

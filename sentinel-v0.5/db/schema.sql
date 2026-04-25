@@ -25,23 +25,40 @@ CREATE TABLE users (
 -- =============================================================================
 -- TABLA: sentinels
 -- Registro de los 10 agentes de estrategia. Cada Sentinel pertenece a un usuario
--- (owner_id), opera sobre un ticker base y tiene una asignación de capital
--- entre 5% y 25% del portafolio total (regla Dispatcher).
+-- (owner_id) y tiene una asignación de capital entre 5% y 25% del portafolio
+-- total (regla Dispatcher). Los tickers que opera están en sentinel_tickers
+-- (relación 1:N — un Sentinel puede operar múltiples tickers simultáneamente).
 -- =============================================================================
 CREATE TABLE sentinels (
     sentinel_id         UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
     owner_id            UUID          NOT NULL REFERENCES users(user_id),
     name                VARCHAR(50)   NOT NULL,
     strategy_type       VARCHAR(50)   NOT NULL,
-    ticker              VARCHAR(10)   NOT NULL,
     is_active           BOOLEAN       NOT NULL DEFAULT TRUE,
     capital_allocation  DECIMAL(5,2)  NOT NULL CHECK (capital_allocation BETWEEN 5 AND 25),
     created_at          TIMESTAMP     NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_sentinels_owner_id   ON sentinels(owner_id);
-CREATE INDEX idx_sentinels_ticker     ON sentinels(ticker);
 CREATE INDEX idx_sentinels_created_at ON sentinels(created_at);
+
+
+-- =============================================================================
+-- TABLA: sentinel_tickers
+-- Relación N:M entre Sentinels y tickers. Permite que cada Sentinel opere
+-- múltiples tickers en paralelo. La PK compuesta (sentinel_id, ticker) impide
+-- duplicados. is_active permite desactivar un ticker sin borrar el registro.
+-- =============================================================================
+CREATE TABLE sentinel_tickers (
+    sentinel_id UUID         NOT NULL REFERENCES sentinels(sentinel_id),
+    ticker      VARCHAR(10)  NOT NULL,
+    is_active   BOOLEAN      NOT NULL DEFAULT TRUE,
+    assigned_at TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (sentinel_id, ticker)
+);
+
+CREATE INDEX idx_sentinel_tickers_sentinel_id ON sentinel_tickers(sentinel_id);
+CREATE INDEX idx_sentinel_tickers_ticker      ON sentinel_tickers(ticker);
 
 
 -- =============================================================================

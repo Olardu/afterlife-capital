@@ -170,13 +170,17 @@ async def initialize() -> dict:
                 f"Sentinel {row['name']} omitido."
             )
             continue
+        tickers = list(row.get("tickers") or [])
+        if not tickers:
+            logger.warning(f"Sentinel {row['name']} sin tickers asignados — omitido.")
+            continue
         sentinel = cls(
             sentinel_id = row["sentinel_id"],
             owner_id    = owner_id,
-            ticker      = row["ticker"],
+            tickers     = tickers,
         )
         sentinels.append(sentinel)
-        logger.info(f"Sentinel cargado desde DB: {sentinel.name} ({sentinel.ticker})")
+        logger.info(f"Sentinel cargado desde DB: {sentinel.name} ({', '.join(tickers)})")
 
     # Fallback: S-1 SMA Crossover por defecto si la DB está vacía
     if not sentinels:
@@ -186,26 +190,35 @@ async def initialize() -> dict:
         fallback_id = uuid.uuid4()
         try:
             async with historian.pool.acquire() as conn:
-                await conn.execute(
-                    """
-                    INSERT INTO sentinels
-                        (sentinel_id, owner_id, name, strategy_type, ticker, capital_allocation)
-                    VALUES ($1, $2, $3, $4, $5, $6)
-                    """,
-                    fallback_id,
-                    owner_id,
-                    "S-1 SMA Crossover",
-                    "sma_crossover",
-                    BASE_TICKER,
-                    MIN_CAPITAL_PER_SENTINEL,
-                )
-            logger.info(f"S-1 SMA Crossover insertado en DB con sentinel_id={fallback_id}.")
+                async with conn.transaction():
+                    await conn.execute(
+                        """
+                        INSERT INTO sentinels
+                            (sentinel_id, owner_id, name, strategy_type, capital_allocation)
+                        VALUES ($1, $2, $3, $4, $5)
+                        """,
+                        fallback_id,
+                        owner_id,
+                        "S-1 SMA Crossover",
+                        "sma_crossover",
+                        MIN_CAPITAL_PER_SENTINEL,
+                    )
+                    await conn.execute(
+                        """
+                        INSERT INTO sentinel_tickers (sentinel_id, ticker)
+                        VALUES ($1, $2)
+                        """,
+                        fallback_id,
+                        BASE_TICKER,
+                    )
+            logger.info(f"S-1 SMA Crossover insertado en DB con sentinel_id={fallback_id} (ticker={BASE_TICKER}).")
         except Exception as e:
             logger.error(f"Error al insertar S-1 en DB: {e}. El Sentinel operará sin registro persistente.")
 
         sentinels.append(SentinelSMACrossover(
             sentinel_id = fallback_id,
             owner_id    = owner_id,
+            tickers     = [BASE_TICKER],
         ))
 
     logger.info(f"Sistema listo — {len(sentinels)} Sentinel(s) activo(s).")
@@ -251,7 +264,8 @@ async def main_loop(system: dict):
 
         logger.info("--- Nuevo ciclo de 15 minutos ---")
 
-        # 1. Ejecutar todos los Sentinels en paralelo
+        # 1. Ejecutar todos los Sentinels en paralelo. Cada s.run() retorna
+        # ahora una lista de señales (multi-ticker: 0 a N por Sentinel).
         try:
             signals_raw = await asyncio.gather(
                 *[s.run() for s in sentinels],
@@ -261,13 +275,14 @@ async def main_loop(system: dict):
             logger.error(f"Error en asyncio.gather de Sentinels: {e}")
             signals_raw = []
 
-        # 2. Filtrar None y excepciones
+        # 2. Aplanar (lista de listas → lista) y filtrar excepciones
         pending_signals = []
         for i, result in enumerate(signals_raw):
             if isinstance(result, Exception):
                 logger.error(f"Sentinel[{i}] lanzó excepción: {result}")
-            elif result is not None:
-                pending_signals.append(result)
+                continue
+            if result:
+                pending_signals.extend(result)
 
         logger.info(f"{len(pending_signals)} señal(es) generada(s) por los Sentinels.")
 

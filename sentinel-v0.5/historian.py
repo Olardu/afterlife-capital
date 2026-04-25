@@ -276,17 +276,29 @@ class Historian:
 
     async def get_active_sentinels(self, owner_id: UUID) -> list[dict]:
         """
-        Retorna los Sentinels activos del owner.
-        Usado por el Dispatcher en run_cycle para evaluar decay
-        sobre la fuente de verdad (DB), no sobre el caché local de posiciones.
+        Retorna los Sentinels activos del owner con sus tickers asignados.
+        Usado por main.py al inicializar y por el Dispatcher en run_cycle
+        para evaluar decay sobre la fuente de verdad (DB).
 
         Returns:
-            Lista de {sentinel_id, ticker, name, strategy_type}.
+            Lista de {sentinel_id, name, strategy_type, tickers: list[str]}.
+            tickers contiene solo los tickers activos (sentinel_tickers.is_active = TRUE).
+            Sentinels sin tickers asignados retornan tickers=[].
         """
         sql = """
-            SELECT sentinel_id, ticker, name, strategy_type
-            FROM sentinels
-            WHERE owner_id = $1 AND is_active = TRUE
+            SELECT
+                s.sentinel_id,
+                s.name,
+                s.strategy_type,
+                COALESCE(
+                    array_agg(st.ticker ORDER BY st.ticker)
+                        FILTER (WHERE st.ticker IS NOT NULL AND st.is_active = TRUE),
+                    ARRAY[]::VARCHAR[]
+                ) AS tickers
+            FROM sentinels s
+            LEFT JOIN sentinel_tickers st ON s.sentinel_id = st.sentinel_id
+            WHERE s.owner_id = $1 AND s.is_active = TRUE
+            GROUP BY s.sentinel_id, s.name, s.strategy_type
         """
         try:
             async with self.pool.acquire() as conn:
@@ -294,6 +306,29 @@ class Historian:
             return [dict(r) for r in rows]
         except asyncpg.PostgresError as e:
             logger.error(f"Error al obtener sentinels activos (owner={owner_id}): {e}")
+            raise
+
+    async def get_sentinel_tickers(self, sentinel_id: UUID) -> list[str]:
+        """
+        Retorna los tickers activos asignados a un Sentinel.
+        Útil para refrescar la lista de tickers de un Sentinel ya instanciado
+        sin recargar todos los Sentinels del owner.
+
+        Returns:
+            Lista de strings con los tickers activos.
+        """
+        sql = """
+            SELECT ticker
+            FROM sentinel_tickers
+            WHERE sentinel_id = $1 AND is_active = TRUE
+            ORDER BY ticker
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(sql, sentinel_id)
+            return [r["ticker"] for r in rows]
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al obtener tickers del sentinel {sentinel_id}: {e}")
             raise
 
     async def get_sentinel_scores(self, owner_id: UUID) -> list[dict]:

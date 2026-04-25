@@ -4,7 +4,10 @@
 # S-1 SMA Crossover, S-2 RSI Short, S-3 Bollinger Bounce, S-4 MACD+Volume,
 # S-5 ORB, S-6 EMA Triple, S-7 VWAP Reversion, S-8 RSI Divergence,
 # S-9 Bollinger Squeeze. (S-10 RegimeClassifier vive en regime_classifier.py.)
-# Cada Sentinel es un agente autónomo que emite señales hacia el Dispatcher.
+#
+# Cada Sentinel opera múltiples tickers en paralelo (relación 1:N en DB:
+# tabla sentinel_tickers). La protección contra señales duplicadas y los
+# estados intra-día (ORB, VWAP) se mantienen por ticker.
 
 import asyncio
 import logging
@@ -32,8 +35,9 @@ _FETCH_DAYS    = 10   # 10 días calendario → ~120-150 barras de 15min en día
 class BaseSentinel(ABC):
     """
     Contrato común para todos los Sentinels.
-    Implementa la protección contra señales duplicadas heredada del bot v0.0.
-    Centraliza fetch_bars / run para que cada subclase solo defina analyze().
+    Multi-ticker: cada Sentinel opera una lista de tickers en paralelo.
+    Mantiene last_signal por ticker para preservar la protección anti-duplicado
+    heredada del bot v0.0 sin que el estado de un ticker afecte a otro.
     """
 
     def __init__(
@@ -41,65 +45,57 @@ class BaseSentinel(ABC):
         sentinel_id: UUID,
         owner_id: UUID,
         name: str,
-        ticker: str,
+        tickers: list[str],
         strategy_type: str,
     ):
+        if not tickers:
+            raise ValueError(f"Sentinel {name} no puede inicializarse sin tickers.")
         self.sentinel_id    = sentinel_id
         self.owner_id       = owner_id
         self.name           = name
-        self.ticker         = ticker
+        self.tickers        = list(tickers)
         self.strategy_type  = strategy_type
-        self.last_signal: Optional[str] = None  # protección contra señales duplicadas (v0.0)
+        # last_signal por ticker — el estado de un ticker no afecta a otro
+        self.last_signal: dict[str, Optional[str]] = {t: None for t in self.tickers}
 
     @abstractmethod
-    async def analyze(self, bars) -> dict:
+    async def analyze(self, bars, ticker: str) -> dict:
         """
         Lógica de análisis específica de cada estrategia.
-
-        Recibe barras OHLCV como DataFrame y retorna:
+        Recibe barras OHLCV (DataFrame) de UN ticker y el nombre del ticker
+        (para logs). Retorna:
             {signal_type: 'BUY'|'SELL'|'HOLD', price: float, qty: float}
         """
 
-    def should_emit(self, signal_type: str) -> bool:
+    def should_emit(self, signal_type: str, ticker: str) -> bool:
         """
-        Valida si la señal puede emitirse. Solo lee estado, no lo muta.
-
-        Retorna False si:
-            - signal_type == "HOLD"
-            - signal_type es igual al último confirmado (duplicado)
-
-        Llamar confirm_signal() en run() DESPUÉS de decidir emitir,
-        no aquí — así last_signal solo avanza cuando la señal se envía realmente.
+        Valida si la señal puede emitirse para este ticker. Solo lee estado.
+        Retorna False si signal_type es HOLD o duplica el último confirmado
+        para el mismo ticker.
         """
         if signal_type == "HOLD":
             return False
-        if signal_type == self.last_signal:
-            logger.debug(f"{self.name} | Señal duplicada ignorada: {signal_type}")
+        if signal_type == self.last_signal.get(ticker):
+            logger.debug(f"{self.name} | {ticker} | Señal duplicada ignorada: {signal_type}")
             return False
         return True
 
-    def confirm_signal(self, signal_type: str):
-        """
-        Confirma que la señal se va a emitir y actualiza last_signal.
-        Llamar solo desde run(), justo antes de retornar el paquete al Dispatcher.
-        """
-        self.last_signal = signal_type
+    def confirm_signal(self, signal_type: str, ticker: str):
+        """Avanza last_signal[ticker]. Llamar solo desde run() al emitir."""
+        self.last_signal[ticker] = signal_type
 
-    async def fetch_bars(self):
+    async def fetch_bars(self, ticker: str):
         """
-        Descarga las últimas _BARS_LOOKBACK barras de 15 minutos del ticker vía Alpaca.
-        Ejecuta el SDK síncrono en asyncio.to_thread.
-
-        Returns:
-            DataFrame con OHLCV, o None si falla.
+        Descarga las últimas _BARS_LOOKBACK barras de 15 minutos del ticker.
+        Returns: DataFrame con OHLCV o None si falla.
         """
         try:
-            return await asyncio.to_thread(self._fetch_bars_sync)
+            return await asyncio.to_thread(self._fetch_bars_sync, ticker)
         except Exception as e:
-            logger.warning(f"{self.name} | Error al descargar barras de {self.ticker}: {e}")
+            logger.warning(f"{self.name} | Error al descargar barras de {ticker}: {e}")
             return None
 
-    def _fetch_bars_sync(self):
+    def _fetch_bars_sync(self, ticker: str):
         """Descarga barras vía StockHistoricalDataClient. Ejecutado en thread."""
         from alpaca.data.historical import StockHistoricalDataClient
         from alpaca.data.requests import StockBarsRequest
@@ -115,7 +111,7 @@ class BaseSentinel(ABC):
         start = end - timedelta(days=_FETCH_DAYS)
 
         request = StockBarsRequest(
-            symbol_or_symbols = [self.ticker],
+            symbol_or_symbols = [ticker],
             timeframe         = TimeFrame(15, TimeFrameUnit.Minute),
             start             = start,
             end               = end,
@@ -123,44 +119,52 @@ class BaseSentinel(ABC):
         )
 
         bars_df = client.get_stock_bars(request).df
-        ticker_bars = bars_df.loc[self.ticker].reset_index()
+        ticker_bars = bars_df.loc[ticker].reset_index()
         return ticker_bars.tail(_BARS_LOOKBACK)
 
-    async def run(self) -> Optional[dict]:
-        """
-        Punto de entrada del grafo LangGraph para este Sentinel.
-
-        Flujo:
-            1. fetch_bars()
-            2. analyze(bars)
-            3. Si señal activa → retornar paquete completo para el Dispatcher
-            4. Si HOLD o error → retornar None
-
-        Returns:
-            {sentinel_id, owner_id, ticker, signal_type, price, qty, strategy_type}
-            o None si no hay señal que emitir.
-        """
-        bars = await self.fetch_bars()
+    async def _run_single(self, ticker: str) -> Optional[dict]:
+        """Procesa un único ticker: fetch + analyze. Retorna paquete o None."""
+        bars = await self.fetch_bars(ticker)
         if bars is None:
             return None
 
-        result = await self.analyze(bars)
+        result = await self.analyze(bars, ticker)
 
         if result["signal_type"] == "HOLD" or result["qty"] == 0.0:
             return None
 
-        # confirm_signal aquí — last_signal solo avanza cuando la señal se envía al Dispatcher
-        self.confirm_signal(result["signal_type"])
+        self.confirm_signal(result["signal_type"], ticker)
 
         return {
             "sentinel_id":   self.sentinel_id,
             "owner_id":      self.owner_id,
-            "ticker":        self.ticker,
+            "ticker":        ticker,
             "signal_type":   result["signal_type"],
             "price":         result["price"],
             "qty":           result["qty"],
             "strategy_type": self.strategy_type,
         }
+
+    async def run(self) -> list[dict]:
+        """
+        Punto de entrada por ciclo. Procesa todos los tickers en paralelo
+        con asyncio.gather. Cada ticker puede generar 0 o 1 señal.
+
+        Returns:
+            Lista de señales (dict). Vacía si ningún ticker emitió.
+        """
+        results = await asyncio.gather(
+            *[self._run_single(t) for t in self.tickers],
+            return_exceptions=True,
+        )
+        signals: list[dict] = []
+        for ticker, result in zip(self.tickers, results):
+            if isinstance(result, Exception):
+                logger.error(f"{self.name} | {ticker} | excepción: {result}")
+                continue
+            if result is not None:
+                signals.append(result)
+        return signals
 
 
 # =============================================================================
@@ -183,6 +187,11 @@ def _ema(closes, span: int):
     return closes.ewm(span=span, adjust=False).mean()
 
 
+def _default_tickers(tickers: Optional[list[str]]) -> list[str]:
+    """Default a [BASE_TICKER] si no se provee lista (evita default mutable)."""
+    return list(tickers) if tickers else [BASE_TICKER]
+
+
 # =============================================================================
 # S-1: SMA CROSSOVER — Trend Following
 # =============================================================================
@@ -192,14 +201,13 @@ class SentinelSMACrossover(BaseSentinel):
     S-1 — Trend Following por cruce de medias móviles simples.
     Golden cross (fast cruza arriba de slow) → BUY.
     Death cross  (fast cruza abajo de slow) → SELL.
-    Estrategia directamente derivada del bot v0.0.
     """
 
     def __init__(
         self,
         sentinel_id: UUID,
         owner_id: UUID,
-        ticker: str = BASE_TICKER,
+        tickers: Optional[list[str]] = None,
         sma_fast: int = 10,
         sma_slow: int = 50,
     ):
@@ -207,27 +215,18 @@ class SentinelSMACrossover(BaseSentinel):
             sentinel_id   = sentinel_id,
             owner_id      = owner_id,
             name          = "S-1 SMA Crossover",
-            ticker        = ticker,
+            tickers       = _default_tickers(tickers),
             strategy_type = "sma_crossover",
         )
         self.sma_fast = sma_fast
         self.sma_slow = sma_slow
 
-    async def analyze(self, bars) -> dict:
-        """
-        Detecta cruces de SMA sobre las últimas barras de 15 minutos.
-
-        Cruce alcista: SMA_fast[i-1] <= SMA_slow[i-1] y SMA_fast[i] > SMA_slow[i] → BUY
-        Cruce bajista: SMA_fast[i-1] >= SMA_slow[i-1] y SMA_fast[i] < SMA_slow[i] → SELL
-
-        qty = 1.0 como sugerencia base; el Dispatcher la ajusta por allocation.
-        """
+    async def analyze(self, bars, ticker: str) -> dict:
         if bars is None or len(bars) < self.sma_slow + 2:
-            logger.warning(f"{self.name} | Barras insuficientes para calcular SMAs.")
+            logger.warning(f"{self.name} | {ticker} | Barras insuficientes para SMAs.")
             return {"signal_type": "HOLD", "price": 0.0, "qty": 0.0}
 
         closes = bars["close"]
-
         sma_fast_series = closes.rolling(self.sma_fast).mean()
         sma_slow_series = closes.rolling(self.sma_slow).mean()
 
@@ -251,11 +250,11 @@ class SentinelSMACrossover(BaseSentinel):
         else:
             signal_type = "HOLD"
 
-        if not self.should_emit(signal_type):
+        if not self.should_emit(signal_type, ticker):
             return {"signal_type": "HOLD", "price": price, "qty": 0.0}
 
         logger.info(
-            f"{self.name} | {self.ticker} | {signal_type} @ {price:.4f} "
+            f"{self.name} | {ticker} | {signal_type} @ {price:.4f} "
             f"(SMA{self.sma_fast}={fast_curr:.4f} / SMA{self.sma_slow}={slow_curr:.4f})"
         )
         return {"signal_type": signal_type, "price": price, "qty": 1.0}
@@ -267,16 +266,15 @@ class SentinelSMACrossover(BaseSentinel):
 
 class SentinelRSIShort(BaseSentinel):
     """
-    S-2 — RSI de período muy corto (2) para detectar extremos de muy corto plazo.
-    RSI < 15 → BUY (sobrevendido extremo).
-    RSI > 85 → SELL (sobrecomprado extremo).
+    S-2 — RSI período 2 para extremos de muy corto plazo.
+    RSI < 15 → BUY (sobrevendido extremo). RSI > 85 → SELL.
     """
 
     def __init__(
         self,
         sentinel_id: UUID,
         owner_id: UUID,
-        ticker: str = BASE_TICKER,
+        tickers: Optional[list[str]] = None,
         rsi_period: int = 2,
         oversold: float = 15.0,
         overbought: float = 85.0,
@@ -285,16 +283,16 @@ class SentinelRSIShort(BaseSentinel):
             sentinel_id   = sentinel_id,
             owner_id      = owner_id,
             name          = "S-2 RSI Short",
-            ticker        = ticker,
+            tickers       = _default_tickers(tickers),
             strategy_type = "rsi_short",
         )
         self.rsi_period = rsi_period
         self.oversold   = oversold
         self.overbought = overbought
 
-    async def analyze(self, bars) -> dict:
+    async def analyze(self, bars, ticker: str) -> dict:
         if bars is None or len(bars) < self.rsi_period + 2:
-            logger.warning(f"{self.name} | Barras insuficientes para RSI({self.rsi_period}).")
+            logger.warning(f"{self.name} | {ticker} | Barras insuficientes para RSI.")
             return {"signal_type": "HOLD", "price": 0.0, "qty": 0.0}
 
         closes = bars["close"]
@@ -313,11 +311,11 @@ class SentinelRSIShort(BaseSentinel):
         else:
             signal_type = "HOLD"
 
-        if not self.should_emit(signal_type):
+        if not self.should_emit(signal_type, ticker):
             return {"signal_type": "HOLD", "price": price, "qty": 0.0}
 
         logger.info(
-            f"{self.name} | {self.ticker} | {signal_type} @ {price:.4f} "
+            f"{self.name} | {ticker} | {signal_type} @ {price:.4f} "
             f"(RSI{self.rsi_period}={rsi_curr:.2f})"
         )
         return {"signal_type": signal_type, "price": price, "qty": 1.0}
@@ -329,16 +327,15 @@ class SentinelRSIShort(BaseSentinel):
 
 class SentinelBollingerBounce(BaseSentinel):
     """
-    S-3 — Bandas de Bollinger clásicas SMA(20) ± 2*std.
-    Cierre bajo banda inferior → BUY (rebote esperado).
-    Cierre sobre banda superior → SELL (reversión esperada).
+    S-3 — Bandas de Bollinger SMA(20) ± 2*std.
+    Cierre bajo banda inferior → BUY. Cierre sobre banda superior → SELL.
     """
 
     def __init__(
         self,
         sentinel_id: UUID,
         owner_id: UUID,
-        ticker: str = BASE_TICKER,
+        tickers: Optional[list[str]] = None,
         bb_period: int = 20,
         bb_std: float = 2.0,
     ):
@@ -346,15 +343,15 @@ class SentinelBollingerBounce(BaseSentinel):
             sentinel_id   = sentinel_id,
             owner_id      = owner_id,
             name          = "S-3 Bollinger Bounce",
-            ticker        = ticker,
+            tickers       = _default_tickers(tickers),
             strategy_type = "bollinger_bounce",
         )
         self.bb_period = bb_period
         self.bb_std    = bb_std
 
-    async def analyze(self, bars) -> dict:
+    async def analyze(self, bars, ticker: str) -> dict:
         if bars is None or len(bars) < self.bb_period + 1:
-            logger.warning(f"{self.name} | Barras insuficientes para Bollinger.")
+            logger.warning(f"{self.name} | {ticker} | Barras insuficientes para Bollinger.")
             return {"signal_type": "HOLD", "price": 0.0, "qty": 0.0}
 
         closes = bars["close"]
@@ -374,11 +371,11 @@ class SentinelBollingerBounce(BaseSentinel):
         else:
             signal_type = "HOLD"
 
-        if not self.should_emit(signal_type):
+        if not self.should_emit(signal_type, ticker):
             return {"signal_type": "HOLD", "price": last_close, "qty": 0.0}
 
         logger.info(
-            f"{self.name} | {self.ticker} | {signal_type} @ {last_close:.4f} "
+            f"{self.name} | {ticker} | {signal_type} @ {last_close:.4f} "
             f"(BB lower={last_lower:.4f} / upper={last_upper:.4f})"
         )
         return {"signal_type": signal_type, "price": last_close, "qty": 1.0}
@@ -390,9 +387,7 @@ class SentinelBollingerBounce(BaseSentinel):
 
 class SentinelMACDVolume(BaseSentinel):
     """
-    S-4 — MACD(12,26,9) confirmado con volumen > 1.5x SMA(20) de volumen.
-    Cruce alcista MACD/Signal + volumen confirmando → BUY.
-    Cruce bajista MACD/Signal + volumen confirmando → SELL.
+    S-4 — MACD(12,26,9) confirmado con volumen > 1.5×SMA(20).
     Sin confirmación de volumen → HOLD aunque haya cruce.
     """
 
@@ -400,7 +395,7 @@ class SentinelMACDVolume(BaseSentinel):
         self,
         sentinel_id: UUID,
         owner_id: UUID,
-        ticker: str = BASE_TICKER,
+        tickers: Optional[list[str]] = None,
         ema_fast: int = 12,
         ema_slow: int = 26,
         signal_span: int = 9,
@@ -411,7 +406,7 @@ class SentinelMACDVolume(BaseSentinel):
             sentinel_id   = sentinel_id,
             owner_id      = owner_id,
             name          = "S-4 MACD+Volume",
-            ticker        = ticker,
+            tickers       = _default_tickers(tickers),
             strategy_type = "macd_volume",
         )
         self.ema_fast          = ema_fast
@@ -420,10 +415,10 @@ class SentinelMACDVolume(BaseSentinel):
         self.volume_window     = volume_window
         self.volume_multiplier = volume_multiplier
 
-    async def analyze(self, bars) -> dict:
+    async def analyze(self, bars, ticker: str) -> dict:
         min_required = self.ema_slow + self.signal_span + 2
         if bars is None or len(bars) < min_required:
-            logger.warning(f"{self.name} | Barras insuficientes para MACD.")
+            logger.warning(f"{self.name} | {ticker} | Barras insuficientes para MACD.")
             return {"signal_type": "HOLD", "price": 0.0, "qty": 0.0}
 
         closes  = bars["close"]
@@ -453,11 +448,11 @@ class SentinelMACDVolume(BaseSentinel):
         else:
             signal_type = "HOLD"
 
-        if not self.should_emit(signal_type):
+        if not self.should_emit(signal_type, ticker):
             return {"signal_type": "HOLD", "price": price, "qty": 0.0}
 
         logger.info(
-            f"{self.name} | {self.ticker} | {signal_type} @ {price:.4f} "
+            f"{self.name} | {ticker} | {signal_type} @ {price:.4f} "
             f"(MACD={macd_curr:.4f} sig={sig_curr:.4f} vol={vol_curr:.0f} avg={vol_avg:.0f})"
         )
         return {"signal_type": signal_type, "price": price, "qty": 1.0}
@@ -470,16 +465,14 @@ class SentinelMACDVolume(BaseSentinel):
 class SentinelORB(BaseSentinel):
     """
     S-5 — Marca high/low de la primera vela del día (apertura ET 9:30).
-    Cierre rompe arriba del high del rango con volumen > 1.5x SMA(20) → BUY.
-    Cierre rompe abajo del low del rango con volumen > 1.5x SMA(20) → SELL.
-    El opening range se resetea al cambiar de día (timezone-aware ET).
+    Estado de opening range mantenido por ticker (multi-ticker safe).
     """
 
     def __init__(
         self,
         sentinel_id: UUID,
         owner_id: UUID,
-        ticker: str = BASE_TICKER,
+        tickers: Optional[list[str]] = None,
         volume_window: int = 20,
         volume_multiplier: float = 1.5,
     ):
@@ -487,18 +480,17 @@ class SentinelORB(BaseSentinel):
             sentinel_id   = sentinel_id,
             owner_id      = owner_id,
             name          = "S-5 ORB",
-            ticker        = ticker,
+            tickers       = _default_tickers(tickers),
             strategy_type = "orb_breakout",
         )
         self.volume_window     = volume_window
         self.volume_multiplier = volume_multiplier
-        self.opening_range_high: Optional[float] = None
-        self.opening_range_low:  Optional[float] = None
-        self.opening_range_date = None
+        # Estado por ticker: {ticker: {"high": float, "low": float, "date": date}}
+        self.opening_ranges: dict[str, dict] = {}
 
-    async def analyze(self, bars) -> dict:
+    async def analyze(self, bars, ticker: str) -> dict:
         if bars is None or len(bars) < self.volume_window + 1:
-            logger.warning(f"{self.name} | Barras insuficientes para ORB.")
+            logger.warning(f"{self.name} | {ticker} | Barras insuficientes para ORB.")
             return {"signal_type": "HOLD", "price": 0.0, "qty": 0.0}
 
         ts_et    = bars["timestamp"].dt.tz_convert("America/New_York")
@@ -509,33 +501,38 @@ class SentinelORB(BaseSentinel):
             return {"signal_type": "HOLD", "price": 0.0, "qty": 0.0}
 
         opening = today_bars.iloc[0]
-        if self.opening_range_date != today_et:
-            self.opening_range_high = float(opening["high"])
-            self.opening_range_low  = float(opening["low"])
-            self.opening_range_date = today_et
+        cached  = self.opening_ranges.get(ticker)
+        if cached is None or cached["date"] != today_et:
+            self.opening_ranges[ticker] = {
+                "high": float(opening["high"]),
+                "low":  float(opening["low"]),
+                "date": today_et,
+            }
             logger.info(
-                f"{self.name} | Nuevo opening range {today_et}: "
-                f"high={self.opening_range_high:.4f} low={self.opening_range_low:.4f}"
+                f"{self.name} | {ticker} | Nuevo opening range {today_et}: "
+                f"high={self.opening_ranges[ticker]['high']:.4f} "
+                f"low={self.opening_ranges[ticker]['low']:.4f}"
             )
 
+        rng = self.opening_ranges[ticker]
         last_close = float(bars["close"].iloc[-1])
         last_vol   = float(bars["volume"].iloc[-1])
         vol_avg    = float(bars["volume"].rolling(self.volume_window).mean().iloc[-1])
         confirmed  = last_vol > self.volume_multiplier * vol_avg
 
-        if last_close > self.opening_range_high and confirmed:
+        if last_close > rng["high"] and confirmed:
             signal_type = "BUY"
-        elif last_close < self.opening_range_low and confirmed:
+        elif last_close < rng["low"] and confirmed:
             signal_type = "SELL"
         else:
             signal_type = "HOLD"
 
-        if not self.should_emit(signal_type):
+        if not self.should_emit(signal_type, ticker):
             return {"signal_type": "HOLD", "price": last_close, "qty": 0.0}
 
         logger.info(
-            f"{self.name} | {self.ticker} | {signal_type} @ {last_close:.4f} "
-            f"(ORB high={self.opening_range_high:.4f} low={self.opening_range_low:.4f} "
+            f"{self.name} | {ticker} | {signal_type} @ {last_close:.4f} "
+            f"(ORB high={rng['high']:.4f} low={rng['low']:.4f} "
             f"vol={last_vol:.0f} avg={vol_avg:.0f})"
         )
         return {"signal_type": signal_type, "price": last_close, "qty": 1.0}
@@ -547,17 +544,15 @@ class SentinelORB(BaseSentinel):
 
 class SentinelEMATriple(BaseSentinel):
     """
-    S-6 — Tres EMAs (8, 21, 55) verificando alineación de tendencia.
-    EMA8 > EMA21 > EMA55 → BUY (tendencia alcista confirmada).
-    EMA8 < EMA21 < EMA55 → SELL (tendencia bajista confirmada).
-    Cualquier mezcla → HOLD.
+    S-6 — EMA 8, 21, 55 verificando alineación.
+    EMA8 > EMA21 > EMA55 → BUY. EMA8 < EMA21 < EMA55 → SELL. Mezcla → HOLD.
     """
 
     def __init__(
         self,
         sentinel_id: UUID,
         owner_id: UUID,
-        ticker: str = BASE_TICKER,
+        tickers: Optional[list[str]] = None,
         ema_short: int = 8,
         ema_mid: int = 21,
         ema_long: int = 55,
@@ -566,16 +561,16 @@ class SentinelEMATriple(BaseSentinel):
             sentinel_id   = sentinel_id,
             owner_id      = owner_id,
             name          = "S-6 EMA Triple",
-            ticker        = ticker,
+            tickers       = _default_tickers(tickers),
             strategy_type = "ema_triple",
         )
         self.ema_short = ema_short
         self.ema_mid   = ema_mid
         self.ema_long  = ema_long
 
-    async def analyze(self, bars) -> dict:
+    async def analyze(self, bars, ticker: str) -> dict:
         if bars is None or len(bars) < self.ema_long + 2:
-            logger.warning(f"{self.name} | Barras insuficientes para EMA Triple.")
+            logger.warning(f"{self.name} | {ticker} | Barras insuficientes para EMA Triple.")
             return {"signal_type": "HOLD", "price": 0.0, "qty": 0.0}
 
         closes = bars["close"]
@@ -591,11 +586,11 @@ class SentinelEMATriple(BaseSentinel):
         else:
             signal_type = "HOLD"
 
-        if not self.should_emit(signal_type):
+        if not self.should_emit(signal_type, ticker):
             return {"signal_type": "HOLD", "price": price, "qty": 0.0}
 
         logger.info(
-            f"{self.name} | {self.ticker} | {signal_type} @ {price:.4f} "
+            f"{self.name} | {ticker} | {signal_type} @ {price:.4f} "
             f"(EMA{self.ema_short}={e_s:.4f} EMA{self.ema_mid}={e_m:.4f} EMA{self.ema_long}={e_l:.4f})"
         )
         return {"signal_type": signal_type, "price": price, "qty": 1.0}
@@ -607,17 +602,15 @@ class SentinelEMATriple(BaseSentinel):
 
 class SentinelVWAPReversion(BaseSentinel):
     """
-    S-7 — VWAP intradía con bandas de ±2*std del precio típico vs VWAP.
-    Precio < VWAP - 2*std → BUY (subvalorado vs fair value).
-    Precio > VWAP + 2*std → SELL (sobrevalorado vs fair value).
-    El VWAP se resetea cada día (intraday only).
+    S-7 — VWAP intradía con bandas ±2*std del precio típico vs VWAP.
+    Reset diario natural: el filtro por today_et descarta barras de días previos.
     """
 
     def __init__(
         self,
         sentinel_id: UUID,
         owner_id: UUID,
-        ticker: str = BASE_TICKER,
+        tickers: Optional[list[str]] = None,
         std_multiplier: float = 2.0,
         min_intraday_bars: int = 5,
     ):
@@ -625,13 +618,13 @@ class SentinelVWAPReversion(BaseSentinel):
             sentinel_id   = sentinel_id,
             owner_id      = owner_id,
             name          = "S-7 VWAP Reversion",
-            ticker        = ticker,
+            tickers       = _default_tickers(tickers),
             strategy_type = "vwap_reversion",
         )
         self.std_multiplier    = std_multiplier
         self.min_intraday_bars = min_intraday_bars
 
-    async def analyze(self, bars) -> dict:
+    async def analyze(self, bars, ticker: str) -> dict:
         if bars is None or len(bars) == 0:
             return {"signal_type": "HOLD", "price": 0.0, "qty": 0.0}
 
@@ -665,11 +658,11 @@ class SentinelVWAPReversion(BaseSentinel):
         else:
             signal_type = "HOLD"
 
-        if not self.should_emit(signal_type):
+        if not self.should_emit(signal_type, ticker):
             return {"signal_type": "HOLD", "price": price, "qty": 0.0}
 
         logger.info(
-            f"{self.name} | {self.ticker} | {signal_type} @ {price:.4f} "
+            f"{self.name} | {ticker} | {signal_type} @ {price:.4f} "
             f"(VWAP={v_last:.4f} std={std:.4f})"
         )
         return {"signal_type": signal_type, "price": price, "qty": 1.0}
@@ -682,7 +675,7 @@ class SentinelVWAPReversion(BaseSentinel):
 def _find_swings(values, side: str, k: int = 3) -> list[int]:
     """
     Devuelve índices (posicionales) de swings.
-    Swing high: high[i] mayor que las k barras anteriores y k siguientes.
+    Swing high: high[i] > las k barras anteriores y k siguientes.
     Swing low : análogo con low.
     """
     out: list[int] = []
@@ -704,17 +697,14 @@ def _find_swings(values, side: str, k: int = 3) -> list[int]:
 
 class SentinelRSIDivergence(BaseSentinel):
     """
-    S-8 — Detección de divergencias entre precio y RSI(14).
-    Divergencia bajista: nuevo high de precio sin nuevo high de RSI → SELL.
-    Divergencia alcista: nuevo low de precio sin nuevo low de RSI → BUY.
-    Compara los últimos 2 swing highs/lows confirmados (k=3 barras a cada lado).
+    S-8 — Divergencias entre precio y RSI(14) sobre los últimos 2 swings.
     """
 
     def __init__(
         self,
         sentinel_id: UUID,
         owner_id: UUID,
-        ticker: str = BASE_TICKER,
+        tickers: Optional[list[str]] = None,
         rsi_period: int = 14,
         swing_k: int = 3,
     ):
@@ -722,15 +712,15 @@ class SentinelRSIDivergence(BaseSentinel):
             sentinel_id   = sentinel_id,
             owner_id      = owner_id,
             name          = "S-8 RSI Divergence",
-            ticker        = ticker,
+            tickers       = _default_tickers(tickers),
             strategy_type = "rsi_divergence",
         )
         self.rsi_period = rsi_period
         self.swing_k    = swing_k
 
-    async def analyze(self, bars) -> dict:
+    async def analyze(self, bars, ticker: str) -> dict:
         if bars is None or len(bars) < self.rsi_period + 2 * self.swing_k + 5:
-            logger.warning(f"{self.name} | Barras insuficientes para RSI Divergence.")
+            logger.warning(f"{self.name} | {ticker} | Barras insuficientes para divergencia.")
             return {"signal_type": "HOLD", "price": 0.0, "qty": 0.0}
 
         closes = bars["close"]
@@ -780,10 +770,10 @@ class SentinelRSIDivergence(BaseSentinel):
                     f"RSI {rsi_vals[prev_i]:.2f}→{rsi_vals[last_i]:.2f}"
                 )
 
-        if not self.should_emit(signal_type):
+        if not self.should_emit(signal_type, ticker):
             return {"signal_type": "HOLD", "price": price, "qty": 0.0}
 
-        logger.info(f"{self.name} | {self.ticker} | {signal_type} @ {price:.4f} ({detail})")
+        logger.info(f"{self.name} | {ticker} | {signal_type} @ {price:.4f} ({detail})")
         return {"signal_type": signal_type, "price": price, "qty": 1.0}
 
 
@@ -793,9 +783,7 @@ class SentinelRSIDivergence(BaseSentinel):
 
 class SentinelBollingerSqueeze(BaseSentinel):
     """
-    S-9 — Bollinger Band Width (BBW) en percentil 10 indica baja volatilidad (squeeze).
-    Squeeze activo + cierre rompe banda superior → BUY.
-    Squeeze activo + cierre rompe banda inferior → SELL.
+    S-9 — BBW en percentil 10 (squeeze) + breakout de bandas.
     Sin squeeze → HOLD (no operar en volatilidad normal).
     """
 
@@ -803,7 +791,7 @@ class SentinelBollingerSqueeze(BaseSentinel):
         self,
         sentinel_id: UUID,
         owner_id: UUID,
-        ticker: str = BASE_TICKER,
+        tickers: Optional[list[str]] = None,
         bb_period: int = 20,
         bb_std: float = 2.0,
         squeeze_window: int = 100,
@@ -813,7 +801,7 @@ class SentinelBollingerSqueeze(BaseSentinel):
             sentinel_id   = sentinel_id,
             owner_id      = owner_id,
             name          = "S-9 Bollinger Squeeze",
-            ticker        = ticker,
+            tickers       = _default_tickers(tickers),
             strategy_type = "bollinger_squeeze",
         )
         self.bb_period        = bb_period
@@ -821,10 +809,10 @@ class SentinelBollingerSqueeze(BaseSentinel):
         self.squeeze_window   = squeeze_window
         self.squeeze_quantile = squeeze_quantile
 
-    async def analyze(self, bars) -> dict:
+    async def analyze(self, bars, ticker: str) -> dict:
         min_required = self.bb_period + self.squeeze_window
         if bars is None or len(bars) < min_required:
-            logger.warning(f"{self.name} | Barras insuficientes para Squeeze.")
+            logger.warning(f"{self.name} | {ticker} | Barras insuficientes para Squeeze.")
             return {"signal_type": "HOLD", "price": 0.0, "qty": 0.0}
 
         closes = bars["close"]
@@ -853,11 +841,11 @@ class SentinelBollingerSqueeze(BaseSentinel):
         else:
             signal_type = "HOLD"
 
-        if not self.should_emit(signal_type):
+        if not self.should_emit(signal_type, ticker):
             return {"signal_type": "HOLD", "price": last_close, "qty": 0.0}
 
         logger.info(
-            f"{self.name} | {self.ticker} | {signal_type} @ {last_close:.4f} "
+            f"{self.name} | {ticker} | {signal_type} @ {last_close:.4f} "
             f"(BBW={last_bbw:.6f} threshold={threshold:.6f} "
             f"upper={last_upper:.4f} lower={last_lower:.4f})"
         )
