@@ -129,7 +129,9 @@ class Historian:
 
     async def update_trade_status(
         self,
-        trade_id: UUID,
+        *,
+        trade_id: Optional[UUID] = None,
+        order_id: Optional[str] = None,
         status: str,
         filled_price: Optional[float] = None,
         slippage: Optional[float] = None,
@@ -137,38 +139,59 @@ class Historian:
         """
         Actualiza el status de un trade PENDING → FILLED o CANCELLED.
 
+        Identificación: pasar trade_id (UUID de la tabla) O order_id (string
+        de Alpaca, persistido en la columna trades.order_id desde la migración
+        003). Exactamente uno de los dos. (#H-6)
+
         Si status es FILLED y no se provee slippage, lo calcula como:
             filled_price - price_at_signal (del signal original asociado).
         Si el trade no tiene signal_id asociado, slippage queda en None.
         """
+        if trade_id is None and order_id is None:
+            raise ValueError("Debe proveerse trade_id u order_id")
+        if trade_id is not None and order_id is not None:
+            raise ValueError("Debe proveerse SOLO uno: trade_id O order_id, no ambos")
+
+        # Identificador a usar en el WHERE (solo uno está poblado por las
+        # validaciones de arriba). El nombre de columna se interpola en el SQL
+        # — es seguro porque el valor está hardcoded acá, no viene de input.
+        if trade_id is not None:
+            where_col: str = "trade_id"
+            where_value: object = trade_id
+            id_label = f"trade_id={trade_id}"
+        else:
+            where_col = "order_id"
+            where_value = order_id
+            id_label = f"order_id={order_id}"
+
         try:
             async with self.pool.acquire() as conn:
                 if status == "FILLED" and filled_price is not None and slippage is None:
                     row = await conn.fetchrow(
-                        """
+                        f"""
                         SELECT s.price_at_signal
                         FROM trades t
                         LEFT JOIN signals s ON t.signal_id = s.signal_id
-                        WHERE t.trade_id = $1
+                        WHERE t.{where_col} = $1
                         """,
-                        trade_id,
+                        where_value,
                     )
                     if row and row["price_at_signal"] is not None:
                         slippage = filled_price - float(row["price_at_signal"])
 
                 await conn.execute(
-                    """
+                    f"""
                     UPDATE trades
                     SET status = $1, filled_price = $2, slippage = $3
-                    WHERE trade_id = $4
+                    WHERE {where_col} = $4
                     """,
-                    status, filled_price, slippage, trade_id,
+                    status, filled_price, slippage, where_value,
                 )
             logger.info(
-                f"Trade {trade_id} → {status} | filled={filled_price} slippage={slippage}"
+                f"Trade {id_label} → {status} | filled={filled_price} slippage={slippage}"
             )
         except asyncpg.PostgresError as e:
-            logger.error(f"Error al actualizar trade {trade_id}: {e}")
+            logger.error(f"Error al actualizar trade {id_label}: {e}")
             raise
 
     async def calculate_performance(self, sentinel_id: UUID, ticker: str) -> dict:
