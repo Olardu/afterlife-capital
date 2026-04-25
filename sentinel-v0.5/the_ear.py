@@ -48,6 +48,10 @@ class TheEar:
         self.parking_brake_active: bool = False
         self._last_vix_change: float | None = None
         self._last_spy_change: float | None = None
+        # evaluate() es llamado en paralelo por start_polling() (task background)
+        # y por Dispatcher.run_cycle() (task principal). Sin lock, ambos mutan
+        # el estado compartido y duplican filas en macro_events. (#H-2)
+        self._eval_lock = asyncio.Lock()
 
     async def fetch_news(self) -> list[dict]:
         """
@@ -242,44 +246,48 @@ class TheEar:
 
         can_trade es False si cualquier protección está activa o risk_score > 0.7.
 
+        El cuerpo se envuelve en self._eval_lock para evitar ejecución concurrente
+        desde start_polling() y Dispatcher.run_cycle() — ver __init__ y #H-2.
+
         Returns:
             dict con risk_score, circuit_breaker, parking_brake y can_trade.
         """
-        parking_brake = self.check_parking_brake()
+        async with self._eval_lock:
+            parking_brake = self.check_parking_brake()
 
-        articles   = await self.fetch_news()
-        risk_score = self.calculate_risk_score(articles)
-        if articles:
-            self.last_risk_score = risk_score
-        else:
-            risk_score = self.last_risk_score
+            articles   = await self.fetch_news()
+            risk_score = self.calculate_risk_score(articles)
+            if articles:
+                self.last_risk_score = risk_score
+            else:
+                risk_score = self.last_risk_score
 
-        circuit_breaker = await self.check_circuit_breaker()
+            circuit_breaker = await self.check_circuit_breaker()
 
-        try:
-            await self.historian.record_macro_event(
-                risk_score=risk_score,
-                vix_level=self._last_vix_change,
-                spy_change_15min=self._last_spy_change,
-                circuit_breaker_triggered=circuit_breaker,
+            try:
+                await self.historian.record_macro_event(
+                    risk_score=risk_score,
+                    vix_level=self._last_vix_change,
+                    spy_change_15min=self._last_spy_change,
+                    circuit_breaker_triggered=circuit_breaker,
+                )
+            except Exception as e:
+                logger.error(f"Error al persistir macro event: {e}")
+
+            can_trade = not (parking_brake or circuit_breaker or risk_score > RISK_SCORE_VETO_THRESHOLD)
+
+            logger.info(
+                f"Ear evaluate — risk={risk_score:.4f} "
+                f"circuit_breaker={circuit_breaker} parking_brake={parking_brake} "
+                f"can_trade={can_trade}"
             )
-        except Exception as e:
-            logger.error(f"Error al persistir macro event: {e}")
 
-        can_trade = not (parking_brake or circuit_breaker or risk_score > RISK_SCORE_VETO_THRESHOLD)
-
-        logger.info(
-            f"Ear evaluate — risk={risk_score:.4f} "
-            f"circuit_breaker={circuit_breaker} parking_brake={parking_brake} "
-            f"can_trade={can_trade}"
-        )
-
-        return {
-            "risk_score":      risk_score,
-            "circuit_breaker": circuit_breaker,
-            "parking_brake":   parking_brake,
-            "can_trade":       can_trade,
-        }
+            return {
+                "risk_score":      risk_score,
+                "circuit_breaker": circuit_breaker,
+                "parking_brake":   parking_brake,
+                "can_trade":       can_trade,
+            }
 
     async def start_polling(self):
         """
