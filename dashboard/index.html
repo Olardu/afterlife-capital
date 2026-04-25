@@ -299,21 +299,62 @@ table tr:hover td { background: var(--card-bg); }
 .signal-sell { color: var(--bad);  font-weight: bold; }
 .signal-hold { color: var(--text-dim); }
 
-/* ───── LOGS ───── */
-details.logs {
-  border: 1px solid var(--card-bd); background: var(--card-bg);
+/* ───── TERMINAL (logs estilo macOS) ───── */
+.terminal {
+  border: 1px solid var(--card-bd);
+  background: #000;
+  overflow: hidden;
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+}
+.terminal-header {
+  display: grid; grid-template-columns: auto 1fr auto;
+  align-items: center; gap: 12px;
   padding: 10px 14px;
+  background: linear-gradient(180deg, #2a2a2a, #1a1a1a);
+  border-bottom: 1px solid #000;
+  user-select: none; cursor: pointer;
 }
-details.logs summary {
-  cursor: pointer; font-family: var(--font-head); letter-spacing: 2px;
-  font-size: 12px; color: var(--primary);
+.terminal-dots { display: flex; gap: 7px; align-items: center; }
+.terminal-dots span {
+  width: 12px; height: 12px; border-radius: 50%;
+  display: inline-block;
+  border: 1px solid rgba(0,0,0,0.4);
 }
-details.logs pre {
-  margin-top: 12px; padding: 12px; background: var(--bg-2);
-  font-family: var(--font-mono); font-size: 11px;
-  color: var(--text-dim); max-height: 280px; overflow-y: auto;
-  white-space: pre-wrap;
+.terminal-dots .dot-red    { background: #ff5f57; }
+.terminal-dots .dot-yellow { background: #febc2e; }
+.terminal-dots .dot-green  { background: #28c840; }
+.terminal-title {
+  text-align: center;
+  font-family: var(--font-mono); font-size: 12px; color: #bbb;
+  letter-spacing: 1px;
 }
+.terminal-toggle {
+  font-family: var(--font-mono); font-size: 10px; color: #888;
+  letter-spacing: 1px;
+}
+.terminal-body {
+  padding: 14px 16px;
+  background: #000;
+  color: #cfe7ee;
+  font-family: var(--font-mono); font-size: 11.5px;
+  max-height: 320px; overflow-y: auto;
+  white-space: pre-wrap; word-break: break-word;
+  line-height: 1.6;
+  margin: 0;
+}
+.terminal.collapsed .terminal-body { display: none; }
+.log-line { display: block; }
+.log-time  { color: #6b8a93; }
+.log-info  { color: #00f5ff; }
+.log-warn  { color: #ffcc00; }
+.log-error { color: #ff4466; font-weight: bold; }
+[data-theme="sobrio"] .terminal-header {
+  background: linear-gradient(180deg, #2a2a2a, #1f1f1f);
+}
+[data-theme="sobrio"] .log-info  { color: #6ea8fe; }
+[data-theme="sobrio"] .log-warn  { color: #d8b15c; }
+[data-theme="sobrio"] .log-error { color: #d57380; }
 
 /* ───── FOOTER ───── */
 footer {
@@ -403,10 +444,19 @@ footer #last-update { color: var(--primary); margin-left: 8px; }
 </section>
 
 <section data-detailed>
-  <details class="logs">
-    <summary data-i18n-key="logs_title">LOGS DEL SISTEMA</summary>
-    <pre id="logs-pre">—</pre>
-  </details>
+  <h2 data-i18n-key="logs_title">LOGS DEL SISTEMA</h2>
+  <div class="terminal" id="terminal">
+    <div class="terminal-header" id="terminal-header" role="button" tabindex="0" aria-label="toggle logs">
+      <div class="terminal-dots">
+        <span class="dot-red"></span>
+        <span class="dot-yellow"></span>
+        <span class="dot-green"></span>
+      </div>
+      <div class="terminal-title">sentinel.log — risk monitor</div>
+      <div class="terminal-toggle" id="terminal-toggle">[−]</div>
+    </div>
+    <pre class="terminal-body" id="terminal-body">—</pre>
+  </div>
 </section>
 
 </main>
@@ -1191,16 +1241,37 @@ function renderEquity() {
 }
 
 /* ============================================================ *
- * RENDER — logs                                                 *
+ * RENDER — terminal logs (estilo macOS)                         *
  * ============================================================ */
+function escapeHtml(str) {
+  return String(str ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function renderLogs() {
-  const pre = $("#logs-pre");
-  const lines = (STATE.macro.recent_events || []).slice(0, 30).map(ev =>
-    `[${fmtTs(ev.created_at)}] EAR risk=${fmtNum(ev.risk_score, 4)} ` +
-    `vix=${fmtNum(ev.vix_level, 2)} spy=${fmtNum(ev.spy_change_15min, 2)} ` +
-    `circuit=${ev.circuit_breaker_triggered}`
-  );
-  pre.textContent = lines.length ? lines.join("\n") : "—";
+  const body = $("#terminal-body");
+  const evs = STATE.macro.recent_events || [];
+  if (!evs.length) { body.innerHTML = "—"; return; }
+
+  body.innerHTML = evs.slice(0, 30).map(ev => {
+    const ts   = escapeHtml(fmtTs(ev.created_at));
+    const risk = ev.risk_score == null ? 0 : Number(ev.risk_score);
+    const lvl  = ev.circuit_breaker_triggered ? "ERROR"
+               : risk > 0.5                   ? "WARN"
+               :                                "INFO";
+    const lvlClass = lvl === "ERROR" ? "log-error" : lvl === "WARN" ? "log-warn" : "log-info";
+    return `<span class="log-line">` +
+           `<span class="log-time">[${ts}]</span> ` +
+           `<span class="${lvlClass}">${lvl}</span> ` +
+           `EAR risk=${escapeHtml(fmtNum(risk, 4))} ` +
+           `vix=${escapeHtml(fmtNum(ev.vix_level, 2))} ` +
+           `spy=${escapeHtml(fmtNum(ev.spy_change_15min, 2))} ` +
+           `circuit=${ev.circuit_breaker_triggered ? "true" : "false"}` +
+           `</span>`;
+  }).join("");
 }
 
 /* ============================================================ *
@@ -1278,6 +1349,21 @@ function setupUI() {
       ? T("sobrio") : T("cyberpunk");
     renderEquity();   // re-render para que el chart agarre el nuevo tema
   });
+
+  // Toggle terminal logs
+  const termHeader = $("#terminal-header");
+  if (termHeader) {
+    const toggle = () => {
+      const t = $("#terminal");
+      t.classList.toggle("collapsed");
+      const tg = $("#terminal-toggle");
+      if (tg) tg.textContent = t.classList.contains("collapsed") ? "[+]" : "[−]";
+    };
+    termHeader.addEventListener("click", toggle);
+    termHeader.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+    });
+  }
 
   $("#download-report").addEventListener("click", async () => {
     const ranges = [
