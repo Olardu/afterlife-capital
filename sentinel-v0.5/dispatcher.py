@@ -364,7 +364,9 @@ class Dispatcher:
                 "sentinel_id": sentinel_id,
             })
 
-        approved = order_result.get("status") != "CANCELLED"
+        # PENDING (limit orders en background, FIX #H-6) NO se cuenta como aprobada
+        # hasta que el background task confirme FILLED via update_trade_status.
+        approved = order_result.get("status") == "FILLED"
         logger.info(
             f"Pipeline completo | {ticker} {side} qty={final_qty:.2f} "
             f"status={order_result.get('status')} regime={regime} "
