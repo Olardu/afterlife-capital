@@ -90,7 +90,13 @@ class BaseSentinel(ABC):
         Returns: DataFrame con OHLCV o None si falla.
         """
         try:
-            return await asyncio.to_thread(self._fetch_bars_sync, ticker)
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._fetch_bars_sync, ticker),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"{self.name} | Timeout (15s) al descargar barras de {ticker}")
+            return None
         except Exception as e:
             logger.warning(f"{self.name} | Error al descargar barras de {ticker}: {e}")
             return None

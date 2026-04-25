@@ -59,7 +59,13 @@ class Dispatcher:
         Loggea discrepancias entre el estado local y el de Alpaca.
         """
         try:
-            alpaca_positions = await asyncio.to_thread(self._get_alpaca_positions)
+            alpaca_positions = await asyncio.wait_for(
+                asyncio.to_thread(self._get_alpaca_positions),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            logger.error("Timeout (15s) al sincronizar posiciones con Alpaca")
+            return
         except Exception as e:
             logger.error(f"Error al sincronizar posiciones con Alpaca: {e}")
             return
@@ -247,7 +253,13 @@ class Dispatcher:
         sentinel_alloc = allocation.get(str(sentinel_id), MIN_CAPITAL_PER_SENTINEL)
         if account_equity is None:
             try:
-                account_equity = await asyncio.to_thread(self._get_account_equity)
+                account_equity = await asyncio.wait_for(
+                    asyncio.to_thread(self._get_account_equity),
+                    timeout=15.0,
+                )
+            except asyncio.TimeoutError:
+                logger.error("Timeout (15s) al obtener equity de cuenta")
+                account_equity = 0.0
             except Exception as e:
                 logger.error(f"Error al obtener equity de cuenta: {e}")
                 account_equity = 0.0
@@ -393,9 +405,15 @@ class Dispatcher:
             return {"order_id": None, "filled_price": None, "status": "CANCELLED"}
 
         try:
-            submit_result = await asyncio.to_thread(
-                self._submit_order_sync, ticker, side, qty, strategy_type, limit_price
+            submit_result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._submit_order_sync, ticker, side, qty, strategy_type, limit_price
+                ),
+                timeout=15.0,
             )
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout (15s) al enviar orden {ticker} {side} qty={qty}")
+            return {"order_id": None, "filled_price": None, "status": "CANCELLED"}
         except Exception as e:
             logger.error(f"Alpaca rechazó la orden {ticker} {side} qty={qty}: {e}")
             return {"order_id": None, "filled_price": None, "status": "CANCELLED"}
@@ -412,7 +430,13 @@ class Dispatcher:
         await asyncio.sleep(60)
 
         try:
-            return await asyncio.to_thread(self._check_and_cancel_limit_sync, order_id)
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._check_and_cancel_limit_sync, order_id),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout (15s) al verificar/cancelar limit order {order_id}")
+            return {"order_id": order_id, "filled_price": None, "status": "CANCELLED"}
         except Exception as e:
             logger.error(f"Error al verificar limit order {order_id}: {e}")
             return {"order_id": order_id, "filled_price": None, "status": "CANCELLED"}
@@ -516,7 +540,12 @@ class Dispatcher:
 
         logger.critical("KILL SWITCH ACTIVADO — cerrando todas las posiciones.")
         try:
-            await asyncio.to_thread(self._close_all_sync)
+            await asyncio.wait_for(
+                asyncio.to_thread(self._close_all_sync),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            logger.critical("Timeout (15s) durante liquidación del kill switch — verificar Alpaca manualmente")
         except Exception as e:
             logger.critical(f"Error durante liquidación del kill switch: {e}")
 
@@ -595,7 +624,13 @@ class Dispatcher:
                 cycle_allocation = {}
 
             try:
-                cycle_equity = await asyncio.to_thread(self._get_account_equity)
+                cycle_equity = await asyncio.wait_for(
+                    asyncio.to_thread(self._get_account_equity),
+                    timeout=15.0,
+                )
+            except asyncio.TimeoutError:
+                logger.error("Timeout (15s) obteniendo equity en run_cycle")
+                cycle_equity = 0.0
             except Exception as e:
                 logger.error(f"Error obteniendo equity en run_cycle: {e}")
                 cycle_equity = 0.0

@@ -138,9 +138,15 @@ class TheEar:
             True si el circuit breaker se activa en esta llamada.
         """
         try:
-            vix_change, spy_change = await asyncio.to_thread(self._fetch_price_changes)
+            vix_change, spy_change = await asyncio.wait_for(
+                asyncio.to_thread(self._fetch_price_changes),
+                timeout=15.0,
+            )
             self._last_vix_change = vix_change
             self._last_spy_change = spy_change
+        except asyncio.TimeoutError:
+            logger.warning("Timeout (15s) al consultar precios Alpaca para circuit breaker")
+            return self.circuit_breaker_active
         except Exception as e:
             logger.warning(f"Error al consultar precios Alpaca para circuit breaker: {e}")
             return self.circuit_breaker_active
