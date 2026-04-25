@@ -302,6 +302,23 @@ async def main_loop(system: dict):
 # ENTRY POINT
 # =============================================================================
 
+def _ear_task_done(task: asyncio.Task):
+    """
+    Callback para detectar fallas silenciosas del task de The Ear polling.
+    Sin esto, una excepción no capturada en start_polling muere en silencio
+    y el sistema sigue corriendo sin macro context. (#TECHDEBT promovido)
+    """
+    try:
+        exc = task.exception()
+    except asyncio.CancelledError:
+        logger.info("ear_task cancelado limpiamente.")
+        return
+    if exc is not None:
+        logger.critical(f"ear_task murió inesperadamente: {exc!r}", exc_info=exc)
+    else:
+        logger.warning("ear_task terminó sin excepción pero sin estar cancelado.")
+
+
 async def main():
     """Inicializa el sistema, arranca The Ear en background y entra al main loop."""
     system = await initialize()
@@ -311,6 +328,7 @@ async def main():
         system["the_ear"].start_polling(),
         name="the_ear_polling",
     )
+    ear_task.add_done_callback(_ear_task_done)
     logger.info("The Ear polling iniciado en background.")
 
     try:
