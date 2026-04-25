@@ -93,11 +93,15 @@ class Historian:
         filled_price: Optional[float],
         slippage: Optional[float],
         status: str,
+        order_id: Optional[str] = None,
     ) -> UUID:
         """
         Inserta un trade en la tabla trades.
 
         signal_id puede ser None para trades manuales sin señal previa.
+        order_id (str) es el identificador retornado por Alpaca al submit;
+        se persiste para que el background task de limit orders pueda
+        reconciliar el trade vía update_trade_status(order_id=...). (#H-6)
 
         Returns:
             trade_id del registro insertado.
@@ -105,8 +109,8 @@ class Historian:
         sql = """
             INSERT INTO trades
                 (signal_id, sentinel_id, owner_id, ticker, side, qty,
-                 filled_price, slippage, status)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 filled_price, slippage, status, order_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING trade_id
         """
         try:
@@ -114,7 +118,7 @@ class Historian:
                 row = await conn.fetchrow(
                     sql,
                     signal_id, sentinel_id, owner_id,
-                    ticker, side, qty, filled_price, slippage, status,
+                    ticker, side, qty, filled_price, slippage, status, order_id,
                 )
             trade_id = row["trade_id"]
             logger.info(f"Trade registrado: {trade_id} | {ticker} {side} qty={qty} status={status}")
