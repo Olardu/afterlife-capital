@@ -31,6 +31,18 @@ _REGIME_MULTIPLIERS = {
     "BEAR":    0.50,
 }
 
+# Strategy types que ejecutan como Limit order (precio de señal). El resto
+# va como Market. Se usa set explícito en lugar de substring matching para
+# evitar el bug de bollinger_bounce/etc. NO ejecutando como limit por no
+# contener la palabra "mean_reversion" en su strategy_type.
+_LIMIT_STRATEGIES = {
+    "bollinger_bounce",
+    "rsi_short",
+    "vwap_reversion",
+    "bollinger_squeeze",
+    "rsi_divergence",
+}
+
 
 class Dispatcher:
     def __init__(
@@ -372,8 +384,7 @@ class Dispatcher:
 
     @staticmethod
     def _is_limit_strategy(strategy_type: str) -> bool:
-        st = strategy_type.lower()
-        return "mean_reversion" in st or "pairs" in st
+        return strategy_type.lower() in _LIMIT_STRATEGIES
 
     async def execute_order(
         self,
