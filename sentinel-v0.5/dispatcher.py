@@ -59,7 +59,9 @@ class Dispatcher:
         self.regime_classifier  = regime_classifier
         self.owner_id           = owner_id
         self.kill_switch_active = False
-        self.open_positions: list[dict] = []   # [{ticker, qty, sentinel_id, side}]
+        # Indexado por ticker para detección O(1) de duplicados intra-cycle (#H-5).
+        # Estructura: {ticker: {ticker, qty, sentinel_id, side}}
+        self.open_positions: dict[str, dict] = {}
 
     # -------------------------------------------------------------------------
     # Sincronización con Alpaca
@@ -82,8 +84,8 @@ class Dispatcher:
             logger.error(f"Error al sincronizar posiciones con Alpaca: {e}")
             return
 
-        alpaca_tickers = {p["ticker"] for p in alpaca_positions}
-        local_tickers  = {p["ticker"] for p in self.open_positions}
+        alpaca_tickers = set(alpaca_positions.keys())
+        local_tickers  = set(self.open_positions.keys())
 
         ghost   = local_tickers - alpaca_tickers   # locales que Alpaca no conoce
         missing = alpaca_tickers - local_tickers   # en Alpaca pero no locales
@@ -96,21 +98,27 @@ class Dispatcher:
         self.open_positions = alpaca_positions
         logger.debug(f"Posiciones sincronizadas: {len(self.open_positions)} abiertas.")
 
-    def _get_alpaca_positions(self) -> list[dict]:
-        """Obtiene posiciones abiertas vía TradingClient. Ejecutado en thread."""
+    def _get_alpaca_positions(self) -> dict[str, dict]:
+        """Obtiene posiciones abiertas vía TradingClient. Ejecutado en thread.
+
+        Returns:
+            {ticker: {ticker, qty, side, sentinel_id}}. Indexado por ticker
+            para que el caller (sync_positions_from_alpaca) reemplace el dict
+            entero sin tener que reconstruirlo.
+        """
         from alpaca.trading.client import TradingClient
 
         client    = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
         positions = client.get_all_positions()
-        return [
-            {
+        return {
+            p.symbol: {
                 "ticker":      p.symbol,
                 "qty":         float(p.qty),
                 "side":        "BUY" if float(p.qty) > 0 else "SELL",
                 "sentinel_id": None,   # Alpaca no conoce el sentinel_id; se cruza por ticker si es necesario
             }
             for p in positions
-        ]
+        }
 
     # -------------------------------------------------------------------------
     # Distribución de capital
@@ -289,10 +297,11 @@ class Dispatcher:
             scores = []
 
         try:
+            # CorrelationGuard espera list[dict] — convertir desde nuestro dict.
             guard_result = await self.correlation_guard.evaluate_signal(
                 incoming_ticker    = ticker,
                 incoming_qty       = qty,
-                open_positions     = self.open_positions,
+                open_positions     = list(self.open_positions.values()),
                 performance_scores = scores,
             )
         except Exception as e:
@@ -309,9 +318,14 @@ class Dispatcher:
         # v0.5 es long-only. Short selling se habilita explícitamente cuando se
         # implementen estrategias que lo requieran.
         side = "BUY" if signal_type == "BUY" else "SELL"
+        # Descartar BUY si ya hay posición abierta del mismo ticker en este cycle (#H-5).
+        # Sin esto, dos sentinels emitiendo BUY del mismo ticker en el mismo cycle
+        # generan doble-compra — el CorrelationGuard solo reduce qty, no descarta.
+        if side == "BUY" and ticker in self.open_positions:
+            logger.info(f"Señal BUY {ticker} omitida — ya hay posición abierta este cycle.")
+            return {**base_result, "reason": "duplicate_ticker_buy"}
         if side == "SELL":
-            has_position = any(p["ticker"] == ticker for p in self.open_positions)
-            if not has_position:
+            if ticker not in self.open_positions:
                 logger.info(f"Señal SELL para {ticker} rechazada — sin posición abierta.")
                 return {**base_result, "reason": "no_open_position"}
         try:
@@ -357,12 +371,12 @@ class Dispatcher:
 
         # Actualizar posiciones locales si se ejecutó
         if order_result.get("status") == "FILLED":
-            self.open_positions.append({
+            self.open_positions[ticker] = {
                 "ticker":      ticker,
                 "qty":         final_qty,
                 "side":        side,
                 "sentinel_id": sentinel_id,
-            })
+            }
 
         # PENDING (limit orders en background, FIX #H-6) NO se cuenta como aprobada
         # hasta que el background task confirme FILLED via update_trade_status.
