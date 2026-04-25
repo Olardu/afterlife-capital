@@ -228,11 +228,22 @@ section h2::before { content: "▌ "; color: var(--accent); }
 .sent-stats { font-size: 12px; color: var(--text-dim); }
 .sent-stats span.alloc { color: var(--accent); }
 
-/* ───── DETAIL ───── */
-.sentinel-detail {
-  border: 1px solid var(--accent);
-  background: var(--card-bg);
-  padding: 24px;
+/* ───── ACCORDION (detalle inline por sentinel) ───── */
+.sent-card.expanded {
+  border-color: var(--accent);
+  grid-column: 1 / -1;
+}
+.sent-detail {
+  max-height: 0; overflow: hidden;
+  opacity: 0; margin-top: 0;
+  transition: max-height .35s ease, opacity .25s ease,
+              margin-top .2s ease, padding-top .2s ease;
+}
+.sent-card.expanded .sent-detail {
+  max-height: 1400px;
+  opacity: 1;
+  margin-top: 14px; padding-top: 14px;
+  border-top: 1px solid var(--card-bd);
 }
 .detail-quote {
   font-style: italic; color: var(--accent); margin: 8px 0 12px;
@@ -240,6 +251,10 @@ section h2::before { content: "▌ "; color: var(--accent); }
   padding-left: 12px;
 }
 .detail-desc { color: var(--text); margin-bottom: 16px; font-size: 14px; }
+.sent-card.expanded::after {
+  content: "▼"; position: absolute; bottom: 8px; right: 12px;
+  color: var(--accent); font-size: 10px;
+}
 
 /* ───── TABLES ───── */
 .table-container {
@@ -361,29 +376,6 @@ footer #last-update { color: var(--primary); margin-left: 8px; }
 <section>
   <h2 data-i18n-key="sentinels_title">SENTINELS</h2>
   <div id="sentinels-grid" class="sentinels-grid"></div>
-</section>
-
-<section id="sentinel-detail-section" data-detailed style="display:none">
-  <h2 data-i18n-key="detail_title">DETALLE DE SENTINEL</h2>
-  <div class="sentinel-detail" id="sentinel-detail">
-    <div class="sent-name" id="detail-name">—</div>
-    <div class="sent-strategy" id="detail-strategy">—</div>
-    <div class="detail-quote" id="detail-quote">—</div>
-    <div class="detail-desc" id="detail-desc">—</div>
-    <div class="table-container">
-      <table>
-        <thead><tr>
-          <th data-i18n-key="th_ticker">TICKER</th>
-          <th data-i18n-key="th_signal">SEÑAL</th>
-          <th data-i18n-key="th_signal_at">CUÁNDO</th>
-          <th data-i18n-key="th_winrate">WIN%</th>
-          <th data-i18n-key="th_sharpe">SHARPE</th>
-          <th data-i18n-key="th_trades">TRADES</th>
-        </tr></thead>
-        <tbody id="detail-tickers-body"></tbody>
-      </table>
-    </div>
-  </div>
 </section>
 
 <section data-detailed>
@@ -873,8 +865,41 @@ function renderSummary() {
 }
 
 /* ============================================================ *
- * RENDER — sentinels grid + detail al click                     *
+ * RENDER — sentinels grid con accordion inline                  *
  * ============================================================ */
+function renderSentinelDetail(s) {
+  const display = SENTINEL_DISPLAY[s.strategy_type] || { name: s.name, subtitle: s.strategy_type, quote: {}, desc: {} };
+  const quote = display.quote[STATE.lang] || display.quote.es || "";
+  const desc  = display.desc[STATE.lang]  || display.desc.es  || "";
+  const rows = s.tickers.map(t => `
+    <tr>
+      <td><strong>${t.ticker}</strong></td>
+      <td class="signal-${(t.last_signal || 'hold').toLowerCase()}">${t.last_signal || "—"}</td>
+      <td>${fmtTs(t.last_signal_at)}</td>
+      <td>${fmtPct(t.win_rate)}</td>
+      <td>${fmtNum(t.sharpe_ratio, 3)}</td>
+      <td>${(t.win_rate || t.sharpe_ratio) ? "·" : "—"}</td>
+    </tr>`).join("");
+  return `
+    <div class="sent-detail">
+      <div class="detail-quote">${quote}</div>
+      <div class="detail-desc">${desc}</div>
+      <div class="table-container">
+        <table>
+          <thead><tr>
+            <th>${T("th_ticker")}</th>
+            <th>${T("th_signal")}</th>
+            <th>${T("th_signal_at")}</th>
+            <th>${T("th_winrate")}</th>
+            <th>${T("th_sharpe")}</th>
+            <th>${T("th_trades")}</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
 function renderSentinels() {
   const grid = $("#sentinels-grid");
   if (!STATE.sentinels.length) {
@@ -898,34 +923,23 @@ function renderSentinels() {
           ${T("th_trades")}: ${s.total_trades}
           ${s.decay_status ? ` · <span class="signal-sell">DECAY</span>` : ""}
         </div>
+        ${renderSentinelDetail(s)}
       </div>`;
   }).join("");
   $$(".sent-card").forEach(card => {
-    card.addEventListener("click", () => showDetail(card.dataset.sid));
+    card.addEventListener("click", () => toggleSentinelCard(card));
   });
 }
 
-function showDetail(sentinelId) {
-  const s = STATE.sentinels.find(x => x.sentinel_id === sentinelId);
-  if (!s) return;
-  const display = SENTINEL_DISPLAY[s.strategy_type] || { name: s.name, subtitle: s.strategy_type, quote: {}, desc: {} };
-  $("#detail-name").textContent = display.name;
-  $("#detail-strategy").textContent = display.subtitle;
-  $("#detail-quote").textContent = display.quote[STATE.lang] || display.quote.es || "";
-  $("#detail-desc").textContent = display.desc[STATE.lang] || display.desc.es || "";
-  $("#detail-tickers-body").innerHTML = s.tickers.map(t => `
-    <tr>
-      <td><strong>${t.ticker}</strong></td>
-      <td class="signal-${(t.last_signal || 'hold').toLowerCase()}">${t.last_signal || "—"}</td>
-      <td>${fmtTs(t.last_signal_at)}</td>
-      <td>${fmtPct(t.win_rate)}</td>
-      <td>${fmtNum(t.sharpe_ratio, 3)}</td>
-      <td>${(t.win_rate || t.sharpe_ratio) ? "·" : "—"}</td>
-    </tr>
-  `).join("");
-  const section = $("#sentinel-detail-section");
-  section.style.display = "";
-  section.scrollIntoView({ behavior: "smooth", block: "start" });
+function toggleSentinelCard(card) {
+  const wasExpanded = card.classList.contains("expanded");
+  // Cierra cualquier otra card abierta — solo una a la vez
+  $$(".sent-card.expanded").forEach(c => c.classList.remove("expanded"));
+  if (!wasExpanded) {
+    card.classList.add("expanded");
+    // Asegurar que la card expandida queda visible en viewport
+    setTimeout(() => card.scrollIntoView({ behavior: "smooth", block: "nearest" }), 50);
+  }
 }
 
 /* ============================================================ *
