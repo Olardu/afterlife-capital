@@ -363,6 +363,7 @@ class Dispatcher:
                 filled_price = order_result.get("filled_price"),
                 slippage     = slippage,
                 status       = order_result.get("status", "PENDING"),
+                order_id     = order_result.get("order_id"),  # para reconciliación post-fill (#H-6)
             )
         except Exception as e:
             logger.error(f"Error al persistir señal/trade en Historian: {e}")
@@ -448,25 +449,41 @@ class Dispatcher:
         if not is_limit:
             return submit_result
 
-        # Timeout de 60s para limit orders
         order_id = submit_result.get("order_id")
         if not order_id:
+            # Submit falló o devolvió None → no hay nada que verificar después
             return submit_result
 
-        logger.info(f"Limit order {order_id} enviada — esperando 60s para confirmar fill.")
-        await asyncio.sleep(60)
+        # Lanzar verificación en background — no bloquear el cycle (#H-6).
+        # Antes esto era `await asyncio.sleep(60)` síncrono, lo cual retrasaba
+        # el procesamiento del resto de las señales del cycle.
+        # TODO: reconciliación post-restart (sesiones futuras) — si el sistema
+        # cae con tasks pendientes, las órdenes en Alpaca quedan activas pero
+        # el sistema no las rastrea al restart. Requiere persistir tasks en DB.
+        async def _check_later(oid: str):
+            await asyncio.sleep(60)
+            try:
+                final = await asyncio.wait_for(
+                    asyncio.to_thread(self._check_and_cancel_limit_sync, oid),
+                    timeout=15.0,
+                )
+                # Reconciliar el trade en DB usando order_id (col agregada en migración 003)
+                try:
+                    await self.historian.update_trade_status(
+                        order_id=oid,
+                        status=final.get("status", "CANCELLED"),
+                        filled_price=final.get("filled_price"),
+                    )
+                except Exception as e:
+                    logger.error(f"Error actualizando trade order_id={oid} en DB: {e}")
+            except asyncio.TimeoutError:
+                logger.error(f"Timeout (15s) verificando limit {oid}")
+            except Exception as e:
+                logger.error(f"Limit check {oid}: {e}")
 
-        try:
-            return await asyncio.wait_for(
-                asyncio.to_thread(self._check_and_cancel_limit_sync, order_id),
-                timeout=15.0,
-            )
-        except asyncio.TimeoutError:
-            logger.error(f"Timeout (15s) al verificar/cancelar limit order {order_id}")
-            return {"order_id": order_id, "filled_price": None, "status": "CANCELLED"}
-        except Exception as e:
-            logger.error(f"Error al verificar limit order {order_id}: {e}")
-            return {"order_id": order_id, "filled_price": None, "status": "CANCELLED"}
+        logger.info(f"Limit order {order_id} enviada — verificación agendada en 60s (background).")
+        asyncio.create_task(_check_later(order_id), name=f"limit_check_{order_id}")
+        return submit_result   # devuelve PENDING inmediatamente — no bloquea el cycle
 
     def _submit_order_sync(
         self,
