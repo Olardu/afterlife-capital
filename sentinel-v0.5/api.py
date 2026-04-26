@@ -485,6 +485,55 @@ async def api_report(range: str = Query("today", regex="^(today|last_week|last_m
 
 
 # =============================================================================
+# KILL SWITCH — endpoints de control remoto (#H-7)
+# api.py y main.py corren en procesos separados; system_state actúa como
+# canal IPC. main.py pollea halt_requested cada 5s y dispara el kill switch
+# del Dispatcher cuando el flag pasa a "true".
+# TODO: proteger con auth (sesión 4).
+# =============================================================================
+
+@app.get("/api/system/state")
+async def api_system_state():
+    # TODO: proteger con auth (sesión 4).
+    try:
+        flag = await historian.get_system_flag("halt_requested")
+        return {"halt_requested": flag == "true"}
+    except Exception as e:
+        _http_500("/api/system/state", e)
+
+
+@app.post("/api/system/halt")
+async def api_system_halt():
+    # TODO: proteger con auth (sesión 4).
+    try:
+        flag = await historian.get_system_flag("halt_requested")
+        if flag == "true":
+            return {"status": "already_halted"}
+        await historian.set_system_flag("halt_requested", "true")
+        logger.warning("HALT solicitado vía API")
+        return {
+            "status":  "halt_requested",
+            "message": "Kill switch se activará en máximo 5 segundos",
+        }
+    except Exception as e:
+        _http_500("/api/system/halt", e)
+
+
+@app.post("/api/system/resume")
+async def api_system_resume():
+    # TODO: proteger con auth (sesión 4).
+    try:
+        flag = await historian.get_system_flag("halt_requested")
+        if flag != "true":
+            return {"status": "already_running"}
+        await historian.set_system_flag("halt_requested", "false")
+        logger.warning("RESUME solicitado vía API")
+        return {"status": "resumed"}
+    except Exception as e:
+        _http_500("/api/system/resume", e)
+
+
+# =============================================================================
 # SSE — push periódico de actualización al dashboard
 # =============================================================================
 
