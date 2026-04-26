@@ -47,6 +47,23 @@ class Historian:
             logger.error(f"Error al conectar con PostgreSQL: {e}")
             raise
 
+        # Asegurar que la tabla system_state existe (idempotente).
+        # Es el canal IPC entre api.py y main.py para el kill switch (#H-7).
+        # La migración 004 también crea esta tabla — este DDL es la red de
+        # seguridad para entornos donde la migración no se aplicó manualmente.
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS system_state (
+                    key         TEXT PRIMARY KEY,
+                    value       TEXT NOT NULL,
+                    updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """)
+            await conn.execute("""
+                INSERT INTO system_state (key, value) VALUES ('halt_requested', 'false')
+                ON CONFLICT (key) DO NOTHING
+            """)
+
     async def close(self):
         """Cierra el pool de conexiones limpiamente."""
         if self.pool:
@@ -470,4 +487,43 @@ class Historian:
             return event_id
         except asyncpg.PostgresError as e:
             logger.error(f"Error al registrar macro event: {e}")
+            raise
+
+    async def get_system_flag(self, key: str) -> Optional[str]:
+        """
+        Lee un flag de system_state. Retorna el value o None si la key no existe.
+
+        Usado por el kill switch poller en main.py para detectar pedidos de
+        halt remoto vía API (#H-7).
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT value FROM system_state WHERE key = $1",
+                    key,
+                )
+            return row["value"] if row else None
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al leer system_state[{key}]: {e}")
+            raise
+
+    async def set_system_flag(self, key: str, value: str) -> None:
+        """
+        Upsert de un flag en system_state. Actualiza updated_at automáticamente.
+
+        Usado por api.py (endpoints halt/resume) y por el poller de main.py
+        (para resetear el flag tras consumir el evento) (#H-7).
+        """
+        sql = """
+            INSERT INTO system_state (key, value, updated_at)
+            VALUES ($1, $2, NOW())
+            ON CONFLICT (key) DO UPDATE SET
+                value      = EXCLUDED.value,
+                updated_at = NOW()
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute(sql, key, value)
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al escribir system_state[{key}]={value}: {e}")
             raise
