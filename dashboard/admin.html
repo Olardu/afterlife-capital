@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Admin · Sentinel Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:        #030610;
+      --bg2:      #0a1220;
+      --fg:       #eaeefb;
+      --muted:    #aab2c8;
+      --cyan:    #00f5ff;
+      --magenta: #ff00ff;
+      --green:   #00ff88;
+      --red:     #ff4466;
+      --line:    rgba(0,245,255,0.15);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: 'Share Tech Mono', ui-monospace, monospace;
+      min-height: 100vh;
+    }
+    .grid-bg {
+      position: fixed; inset: 0;
+      background-image:
+        linear-gradient(rgba(0,245,255,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,245,255,0.04) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none; z-index: 0;
+    }
+    .container {
+      position: relative; z-index: 1;
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 32px 24px 80px;
+    }
+
+    /* Header */
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; flex-wrap: wrap;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 28px;
+    }
+    .brand {
+      font-family: 'Orbitron', sans-serif;
+      letter-spacing: 6px;
+      color: var(--cyan);
+      font-size: 14px; font-weight: 700;
+    }
+    .title {
+      font-family: 'Orbitron', sans-serif;
+      letter-spacing: 4px;
+      color: var(--magenta);
+      font-size: 24px; margin: 4px 0 0 0;
+    }
+    .back-link {
+      color: var(--cyan);
+      text-decoration: none;
+      border: 1px solid var(--cyan);
+      padding: 8px 14px;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 11px; letter-spacing: 2px;
+      transition: background 0.15s;
+    }
+    .back-link:hover { background: rgba(0,245,255,0.08); }
+
+    /* Sections */
+    section {
+      background: rgba(10,18,32,0.6);
+      border: 1px solid var(--line);
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+    section h2 {
+      font-family: 'Orbitron', sans-serif;
+      letter-spacing: 3px;
+      color: var(--cyan);
+      font-size: 13px; font-weight: 700;
+      margin: 0 0 16px 0;
+      text-transform: uppercase;
+    }
+    section h2::before { content: "// "; color: var(--magenta); }
+
+    /* Tabla */
+    table {
+      width: 100%; border-collapse: collapse;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 13px;
+    }
+    th, td {
+      padding: 12px 10px;
+      text-align: left;
+      border-bottom: 1px solid rgba(0,245,255,0.08);
+    }
+    th {
+      color: var(--muted);
+      font-weight: 400;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      font-size: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+    tr:hover td { background: rgba(0,245,255,0.03); }
+    .badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border: 1px solid;
+      font-size: 10px;
+      letter-spacing: 2px;
+      font-family: 'Orbitron', sans-serif;
+      font-weight: 700;
+    }
+    .badge.admin  { color: var(--cyan);  border-color: var(--cyan); }
+    .badge.viewer { color: var(--green); border-color: var(--green); }
+    .owner-tag {
+      color: var(--magenta);
+      font-size: 10px;
+      letter-spacing: 1px;
+      margin-left: 8px;
+    }
+
+    /* Botones */
+    button, .btn {
+      font-family: 'Orbitron', sans-serif;
+      letter-spacing: 2px;
+      font-size: 11px;
+      padding: 8px 14px;
+      background: transparent;
+      color: var(--cyan);
+      border: 1px solid var(--cyan);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    button:hover { background: rgba(0,245,255,0.08); }
+    button.danger {
+      color: var(--red);
+      border-color: var(--red);
+    }
+    button.danger:hover { background: rgba(255,68,102,0.08); }
+    button.primary {
+      background: var(--cyan);
+      color: var(--bg);
+      font-weight: 700;
+    }
+    button.primary:hover { background: #4dffff; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Form */
+    .form-row {
+      display: flex; gap: 12px; align-items: stretch; flex-wrap: wrap;
+    }
+    input, select {
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--line);
+      padding: 10px 12px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus, select:focus { border-color: var(--cyan); }
+    input { flex: 1; min-width: 240px; }
+
+    /* Footer */
+    footer {
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid var(--line);
+      display: flex; justify-content: space-between; align-items: center;
+      color: var(--muted);
+      font-size: 11px; letter-spacing: 1px;
+    }
+    footer a {
+      color: var(--red); text-decoration: none;
+      border: 1px solid var(--red); padding: 6px 12px;
+      font-family: 'Orbitron', sans-serif; font-size: 10px; letter-spacing: 2px;
+    }
+    footer a:hover { background: rgba(255,68,102,0.08); }
+
+    .empty {
+      color: var(--muted); padding: 24px; text-align: center;
+      font-style: italic;
+    }
+    .toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      background: var(--bg2); border: 1px solid var(--cyan);
+      padding: 12px 24px; color: var(--cyan);
+      font-family: 'Share Tech Mono', monospace; font-size: 13px;
+      z-index: 100; opacity: 0; transition: opacity 0.2s;
+    }
+    .toast.show  { opacity: 1; }
+    .toast.error { color: var(--red);   border-color: var(--red); }
+    .toast.ok    { color: var(--green); border-color: var(--green); }
+  </style>
+</head>
+<body>
+  <div class="grid-bg"></div>
+  <div class="container">
+
+    <header>
+      <div>
+        <div class="brand">AFTERLIFE CAPITAL</div>
+        <h1 class="title">+ ADMIN PANEL</h1>
+      </div>
+      <a class="back-link" href="/">&larr; VOLVER AL DASHBOARD</a>
+    </header>
+
+    <section>
+      <h2>Usuarios registrados</h2>
+      <table id="usersTable">
+        <thead>
+          <tr>
+            <th>Email</th>
+            <th>Rol</th>
+            <th>Username</th>
+            <th>Registrado</th>
+            <th style="text-align:right;">Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="usersBody">
+          <tr><td colspan="5" class="empty">Cargando...</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Agregar usuario</h2>
+      <form id="addForm" class="form-row" autocomplete="off">
+        <input type="email" id="newEmail" placeholder="correo@ejemplo.com" required>
+        <select id="newRole">
+          <option value="VIEWER">VIEWER</option>
+          <option value="ADMIN">ADMIN</option>
+        </select>
+        <button type="submit" class="primary" id="addBtn">+ AGREGAR</button>
+      </form>
+    </section>
+
+    <footer>
+      <span>Sentinel v0.5 &middot; Admin Panel</span>
+      <a href="/auth/logout">CERRAR SESIÓN</a>
+    </footer>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const OWNER_EMAIL = "***REMOVED-EMAIL***";
+
+    function showToast(msg, kind) {
+      const t = document.getElementById("toast");
+      t.textContent = msg;
+      t.className = "toast show " + (kind || "");
+      setTimeout(() => { t.classList.remove("show"); }, 3500);
+    }
+
+    function fmtDate(iso) {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      const pad = n => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+
+    async function fetchJSON(url, opts) {
+      const r = await fetch(url, opts);
+      if (r.status === 401) { window.location.href = "/auth/login"; return null; }
+      if (r.status === 403) {
+        const data = await r.json().catch(() => ({}));
+        showToast(data.message || "No tenés permisos para esta acción.", "error");
+        return null;
+      }
+      const data = await r.json().catch(() => null);
+      if (!r.ok) {
+        const msg = (data && (data.error || data.detail)) || `${r.status} ${r.statusText}`;
+        return { _error: msg, _status: r.status, ...data };
+      }
+      return data;
+    }
+
+    async function loadUsers() {
+      const data = await fetchJSON("/api/admin/users");
+      const tbody = document.getElementById("usersBody");
+      if (data === null) return;
+      if (data._error) {
+        tbody.innerHTML = `<tr><td colspan="5" class="empty">Error: ${data._error}</td></tr>`;
+        return;
+      }
+      if (!Array.isArray(data) || data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty">No hay usuarios.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = data.map(u => {
+        const isOwner = (u.email || "").toLowerCase() === OWNER_EMAIL;
+        const badge = u.role === "ADMIN" ? "admin" : "viewer";
+        const ownerTag = isOwner ? '<span class="owner-tag">[OWNER]</span>' : "";
+        const action = isOwner
+          ? '<span style="color:var(--muted);font-size:11px;">— protegido —</span>'
+          : `<button class="danger" data-uid="${u.user_id}" data-email="${u.email}">ELIMINAR</button>`;
+        return `<tr>
+          <td>${escapeHtml(u.email)}${ownerTag}</td>
+          <td><span class="badge ${badge}">${u.role}</span></td>
+          <td style="color:var(--muted);">${escapeHtml(u.username || "")}</td>
+          <td style="color:var(--muted);">${fmtDate(u.created_at)}</td>
+          <td style="text-align:right;">${action}</td>
+        </tr>`;
+      }).join("");
+
+      tbody.querySelectorAll("button.danger").forEach(btn => {
+        btn.addEventListener("click", () => removeUser(btn.dataset.uid, btn.dataset.email));
+      });
+    }
+
+    function escapeHtml(s) {
+      return String(s || "").replace(/[&<>"']/g, c => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[c]));
+    }
+
+    async function removeUser(uid, email) {
+      if (!confirm(`¿Eliminar al usuario "${email}"?\n\nEsta acción es inmediata y se enviará un email de notificación.`)) return;
+      const r = await fetchJSON(`/api/admin/users/${encodeURIComponent(uid)}`, { method: "DELETE" });
+      if (r === null) return;
+      if (r._error) {
+        showToast(`Error: ${r._error}`, "error");
+        return;
+      }
+      showToast("Usuario eliminado. Email de notificación enviado.", "ok");
+      loadUsers();
+    }
+
+    document.getElementById("addForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = document.getElementById("newEmail").value.trim().toLowerCase();
+      const role  = document.getElementById("newRole").value;
+      if (!email) return;
+      const btn = document.getElementById("addBtn");
+      btn.disabled = true;
+      try {
+        const r = await fetchJSON("/api/admin/users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, role }),
+        });
+        if (r === null) return;
+        if (r._error) {
+          if (r._status === 409 || r.error === "email_exists") {
+            showToast("Ese email ya está registrado.", "error");
+          } else {
+            showToast(`Error: ${r._error}`, "error");
+          }
+          return;
+        }
+        showToast("Usuario agregado. Email de bienvenida enviado.", "ok");
+        document.getElementById("newEmail").value = "";
+        document.getElementById("newRole").value = "VIEWER";
+        loadUsers();
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    loadUsers();
+  </script>
+</body>
+</html>
