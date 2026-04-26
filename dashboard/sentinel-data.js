@@ -615,9 +615,75 @@ function setupKillSwitch() {
   }, true);
 }
 
+function hideDetenerForViewer() {
+  const btn = document.getElementById('detenerBtn');
+  if (btn) {
+    btn.style.display = 'none';
+  } else {
+    setTimeout(hideDetenerForViewer, 200);
+  }
+}
+
+/* ============ ADMIN LINK ============
+ * Si el usuario logueado tiene role=ADMIN, inyectamos un badge "ADMIN" en
+ * el header del dashboard que linkea a /admin. Para VIEWER NO se muestra
+ * el link (no debe siquiera saber que /admin existe).
+ * ============================================================ */
+async function setupAdminLink() {
+  try {
+    const r = await fetch('/auth/me');
+    if (r.status === 401) return;   // sin sesión — el resto del flujo redirige
+    if (!r.ok) return;
+    const me = await r.json();
+    if (!me || me.role !== 'ADMIN') {
+      // VIEWER no puede operar el kill switch — ocultar botón DETENER.
+      // setupAdminLink() puede correr antes de que el DOM tenga #detenerBtn
+      // (script en head + parseo HTML en curso). Reintentamos cada 200ms
+      // hasta encontrarlo.
+      hideDetenerForViewer();
+      return;
+    }
+
+    if (!document.getElementById('sentinel-adminlink-style')) {
+      const style = document.createElement('style');
+      style.id = 'sentinel-adminlink-style';
+      style.textContent = `
+        #adminLink {
+          display: inline-block;
+          margin-right: 10px;
+          padding: 6px 12px;
+          color: #ff00ff;
+          border: 1px solid #ff00ff;
+          background: transparent;
+          font-family: 'Orbitron', sans-serif;
+          font-size: 11px;
+          letter-spacing: 2px;
+          text-decoration: none;
+          font-weight: 700;
+          transition: background 0.15s;
+        }
+        #adminLink:hover { background: rgba(255,0,255,0.08); }
+      `;
+      document.head.appendChild(style);
+    }
+
+    const detener = document.getElementById('detenerBtn');
+    if (!detener || detener.parentElement.querySelector('#adminLink')) return;
+    const a = document.createElement('a');
+    a.id = 'adminLink';
+    a.href = '/admin';
+    a.textContent = 'ADMIN';
+    a.title = 'Panel de administración de usuarios';
+    detener.parentElement.insertBefore(a, detener);
+  } catch (e) {
+    console.warn('[sentinel-data] setupAdminLink:', e);
+  }
+}
+
 /* ============ BOOT ============ */
 setupPersistence();
 setupKillSwitch();
+setupAdminLink();
 
 // Disparar la primera carga + abrir SSE. No esperamos a DOMContentLoaded —
 // sentinel-app.js corre sincrónico justo después de este archivo y popula

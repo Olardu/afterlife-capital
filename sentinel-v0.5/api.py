@@ -30,7 +30,7 @@ import os
 
 import uvicorn
 from authlib.integrations.starlette_client import OAuth, OAuthError
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -50,6 +50,7 @@ from config import (
     SESSION_SECRET,
     TIMEZONE,
 )
+from email_service import send_removal_email, send_welcome_email
 from historian import Historian
 
 
@@ -155,8 +156,12 @@ _PUBLIC_PATHS = {
 }
 _PUBLIC_PREFIXES = ("/assets/",)
 
-# Endpoints que requieren role=ADMIN. Cambios futuros: agregar acá.
-_ADMIN_PATHS = {"/api/system/halt", "/api/system/resume"}
+# Endpoints/paths que requieren role=ADMIN.
+# - _ADMIN_PATHS: paths exactos POST-only (kill switch).
+# - _ADMIN_PREFIXES: prefijos donde TODO método (GET/POST/DELETE) requiere ADMIN
+#                   (panel admin de usuarios).
+_ADMIN_PATHS    = {"/api/system/halt", "/api/system/resume"}
+_ADMIN_PREFIXES = ("/api/admin/",)
 
 
 @app.middleware("http")
@@ -166,7 +171,10 @@ async def auth_middleware(request: Request, call_next):
 
     - /auth/*, assets, favicon: público.
     - / (dashboard): redirect 302 a /auth/login si no hay sesión.
-    - /api/*: 401 si no hay sesión. /api/system/{halt,resume} además 403 si role != ADMIN.
+    - /admin (panel admin HTML): redirect a login sin sesión, 403 si VIEWER.
+    - /api/*: 401 si no hay sesión.
+        · /api/system/{halt,resume} POST: 403 si role != ADMIN.
+        · /api/admin/* (cualquier método): 403 si role != ADMIN.
     - Cualquier otra ruta: pasa (StaticFiles atrás del mount root maneja errores).
     """
     path   = request.url.path
@@ -176,6 +184,15 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     user = _get_session_user(request)
+
+    if path == "/admin":
+        if user is None:
+            return RedirectResponse(url="/auth/login", status_code=302)
+        if user.get("role") != "ADMIN":
+            # VIEWER no debería siquiera saber que /admin existe — silent
+            # redirect al dashboard en lugar de 403 explícito.
+            return RedirectResponse(url="/", status_code=302)
+        return await call_next(request)
 
     if path == "/":
         if user is None:
@@ -189,6 +206,12 @@ async def auth_middleware(request: Request, call_next):
             return JSONResponse(
                 {"error":   "forbidden",
                  "message": "Solo administradores pueden controlar el sistema"},
+                status_code=403,
+            )
+        if any(path.startswith(p) for p in _ADMIN_PREFIXES) and user.get("role") != "ADMIN":
+            return JSONResponse(
+                {"error":   "forbidden",
+                 "message": "Solo administradores pueden gestionar usuarios"},
                 status_code=403,
             )
         return await call_next(request)
@@ -724,6 +747,90 @@ async def api_system_resume():
         }
     except Exception as e:
         _http_500("/api/system/resume", e)
+
+
+# =============================================================================
+# ADMIN — panel de gestión de usuarios
+# Todos los paths bajo /api/admin/* y la ruta /admin requieren role=ADMIN
+# (gating en auth_middleware). Los emails de welcome/removal se envían en
+# background — fire-and-forget, no bloquea la respuesta si Resend falla.
+# =============================================================================
+
+@app.get("/admin")
+async def admin_page():
+    admin_file = DASHBOARD_DIR / "admin.html"
+    if not admin_file.is_file():
+        raise HTTPException(status_code=404, detail="admin.html no encontrado")
+    return FileResponse(str(admin_file))
+
+
+@app.get("/api/admin/users")
+async def admin_list_users():
+    try:
+        users = await historian.list_users()
+        return [_to_json(u) for u in users]
+    except Exception as e:
+        _http_500("/api/admin/users GET", e)
+
+
+@app.post("/api/admin/users")
+async def admin_add_user(request: Request, background_tasks: BackgroundTasks):
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid_json")
+
+    email = (payload.get("email") or "").strip().lower()
+    role  = payload.get("role") or "VIEWER"
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="invalid_email")
+    if role not in ("ADMIN", "VIEWER"):
+        raise HTTPException(status_code=400, detail="invalid_role")
+
+    try:
+        user = await historian.add_user(email, role)
+    except ValueError as e:
+        if str(e) == "email_exists":
+            return JSONResponse({"error": "email_exists"}, status_code=409)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        _http_500("/api/admin/users POST", e)
+
+    background_tasks.add_task(send_welcome_email, email, role)
+    logger.info(f"Admin agregó usuario: {email} ({role})")
+    return {"status": "created", "user": _to_json(user)}
+
+
+@app.delete("/api/admin/users/{user_id}")
+async def admin_remove_user(user_id: str, background_tasks: BackgroundTasks):
+    try:
+        try:
+            uid = UUID(user_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid_user_id")
+
+        async with historian.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT email FROM users WHERE user_id = $1", uid,
+            )
+        if row is None:
+            raise HTTPException(status_code=404, detail="not_found")
+        email = row["email"]
+
+        try:
+            await historian.remove_user(uid)
+        except ValueError as e:
+            if str(e) == "cannot_remove_owner":
+                return JSONResponse({"error": "cannot_remove_owner"}, status_code=403)
+            raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        _http_500("/api/admin/users DELETE", e)
+
+    background_tasks.add_task(send_removal_email, email)
+    logger.info(f"Admin eliminó usuario: {email}")
+    return {"status": "removed"}
 
 
 # =============================================================================

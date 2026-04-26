@@ -31,6 +31,12 @@ _TRADING_DAYS_PER_YEAR = 252
 _SHARPE_ANNUALIZATION_FACTOR = math.sqrt(_TRADING_DAYS_PER_YEAR * _BARS_PER_TRADING_DAY)
 
 
+# Email del owner del sistema — protegido contra eliminación desde el panel
+# admin. Coincide con el UPDATE idempotente de connect() y con la cuenta
+# Google que tiene acceso ADMIN garantizado.
+_OWNER_EMAIL = "***REMOVED-EMAIL***"
+
+
 class Historian:
     def __init__(self, database_url: str):
         self.database_url = database_url
@@ -542,6 +548,105 @@ class Historian:
             return dict(row) if row else None
         except asyncpg.PostgresError as e:
             logger.error(f"Error al buscar usuario por email ({email}): {e}")
+            raise
+
+    async def list_users(self) -> list[dict]:
+        """
+        Lista todos los usuarios para el panel admin. Ordenados por created_at
+        ascendente (el owner aparece primero).
+        """
+        sql = """
+            SELECT user_id, username, email, role, created_at
+            FROM users
+            ORDER BY created_at ASC
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(sql)
+            return [dict(r) for r in rows]
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al listar usuarios: {e}")
+            raise
+
+    async def add_user(self, email: str, role: str = "VIEWER") -> dict:
+        """
+        Inserta un usuario nuevo. El username se deriva del local part del
+        email; si colisiona con uno existente (UNIQUE) le agregamos un sufijo
+        numérico. Retorna el dict del registro creado.
+
+        Raises:
+            ValueError si el email ya existe o el role es inválido.
+        """
+        if role not in ("ADMIN", "VIEWER"):
+            raise ValueError(f"role inválido: {role!r}")
+        email = email.strip().lower()
+        if not email or "@" not in email:
+            raise ValueError(f"email inválido: {email!r}")
+
+        # Generar username único a partir del local part del email.
+        base = email.split("@", 1)[0][:50] or "user"
+        username = base
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.transaction():
+                    suffix = 1
+                    while await conn.fetchval(
+                        "SELECT 1 FROM users WHERE username = $1", username,
+                    ):
+                        suffix += 1
+                        candidate = f"{base[:46]}_{suffix}"
+                        username = candidate
+
+                    try:
+                        row = await conn.fetchrow(
+                            """
+                            INSERT INTO users (username, email, role)
+                            VALUES ($1, $2, $3)
+                            RETURNING user_id, username, email, role, created_at
+                            """,
+                            username, email, role,
+                        )
+                    except asyncpg.UniqueViolationError as e:
+                        # Email duplicado (la unicidad de username ya la cubrimos arriba)
+                        raise ValueError("email_exists") from e
+            logger.info(f"Usuario creado: {email} ({role}) | username={username}")
+            return dict(row)
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al crear usuario ({email}, {role}): {e}")
+            raise
+
+    async def remove_user(self, user_id: str) -> bool:
+        """
+        Elimina un usuario. Retorna True si la fila fue eliminada, False si
+        no existía. NO permite eliminar al owner del sistema (***REMOVED-EMAIL***).
+
+        Raises:
+            ValueError("cannot_remove_owner") si se intenta eliminar al owner.
+        """
+        try:
+            uid = UUID(user_id) if not isinstance(user_id, UUID) else user_id
+        except (ValueError, AttributeError):
+            raise ValueError(f"user_id inválido: {user_id!r}")
+
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT email FROM users WHERE user_id = $1", uid,
+                )
+                if row is None:
+                    return False
+                if (row["email"] or "").lower() == _OWNER_EMAIL:
+                    raise ValueError("cannot_remove_owner")
+                result = await conn.execute(
+                    "DELETE FROM users WHERE user_id = $1", uid,
+                )
+            # asyncpg devuelve "DELETE n" — extraemos n
+            deleted = result.startswith("DELETE ") and result.split()[-1] != "0"
+            if deleted:
+                logger.info(f"Usuario eliminado: user_id={uid} email={row['email']}")
+            return deleted
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al eliminar usuario {user_id}: {e}")
             raise
 
     async def get_system_flag(self, key: str) -> Optional[str]:
