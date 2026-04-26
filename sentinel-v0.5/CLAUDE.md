@@ -24,7 +24,9 @@ Sistema de trading algorítmico multi-agente. 9 estrategias autónomas (Sentinel
 | `correlation_guard.py` | Pearson manual sobre rolling 60 velas, umbral 0.75 |
 | `regime_classifier.py` | S-10 RandomForest BULL/NEUTRAL/BEAR — **DESACTIVADO** |
 | `sentinels/__init__.py` | BaseSentinel + 9 estrategias |
+| `api.py` | FastAPI backend (REST + SSE) en puerto 8080. Sirve dashboard estático. |
 | `db/schema.sql` | 7 tablas con multi-tenant `owner_id` |
+| `db/003_add_order_id_to_trades.sql` | Migración aplicada 2026-04-25: columna order_id en trades. |
 
 ## 9 Sentinels operativos
 
@@ -55,9 +57,24 @@ Requiere PostgreSQL servicio activo y `.env` con credenciales.
 ## Estado actual (2026-04-25)
 
 ✅ **Operativo y testeado**:
-- DB con 9 Sentinels insertados (5% allocation cada uno, 45% total)
+- DB con 9 Sentinels insertados (5% allocation cada uno, 45% total). Multi-ticker: 27 tickers en `sentinel_tickers`.
 - Tests integración: The Ear, Dispatcher pipeline, run_cycle vacío — sin errores
+- API FastAPI en `localhost:8080` y `sentinel.afterlifecapital.co` (Cloudflare tunnel)
+- Dashboard handoff Design integrado y conectado a `/api/*`
 - Pendiente: primera corrida real lunes 9:30 ET
+
+### Hardening post-auditoría (sesiones 1, 2 y 2.5 — 2026-04-25)
+
+11 commits aplicados sobre `feature/design-handoff-integration`:
+- `#H-2` Race en TheEar.evaluate → `asyncio.Lock`.
+- `#H-3` Sin timeouts → asyncpg pool con `command_timeout=10`/`timeout=5` + `asyncio.wait_for(timeout=15)` en los 11 call sites de Alpaca.
+- `#H-5` open_positions desync → refactor `list[dict]` → `dict[str, dict]` + check explícito de duplicado BUY.
+- `#H-6` Limit orders bloqueaban cycle → migración 003 con `order_id`, `record_trade` lo persiste, `_check_later` background task con `asyncio.create_task` reconcilia tras 60s vía `update_trade_status(order_id=...)`.
+- `_is_limit_strategy` → set explícito (5 estrategias mean-reversion-like).
+- `approved` ahora es `status == "FILLED"`, no `!= "CANCELLED"` (PENDING ya no se cuenta).
+- `done_callback` en ear_task para detectar fallas silenciosas.
+
+Issues 🟠 ALTOS pendientes (3): `#H-1` API sin auth, `#H-4` float→Decimal en cálculos, `#H-7` kill switch operacional inaccesible.
 
 ## Decisiones clave
 
@@ -80,6 +97,10 @@ Requiere PostgreSQL servicio activo y `.env` con credenciales.
 
 - Ninguno bloqueante al cierre 2026-04-25.
 - ORB y VWAP retornan `price=0.0` cuando no hay barras del día actual ET (sábado/domingo o pre-market). El `run()` filtra por `qty=0.0` así que no afecta el pipeline, pero es estéticamente raro en logs.
+- `record_trade` falla si la migración 003 no se aplicó (no validamos schema al startup). Aplicada manualmente en local.
+- `update_trade_status` no warns si 0 rows afectados (ej. order_id no existe en DB).
+- `record_trade` se hace en el mismo try que `record_signal`; si `record_signal` falla, la orden ya está en Alpaca pero sin fila DB.
+- Reconciliación post-restart de limit orders: si el sistema cae con tasks `_check_later` en vuelo, mueren con el proceso. La orden Alpaca queda activa pero sin tracking. TODO en `dispatcher.execute_order`.
 
 ## Seguridad
 
