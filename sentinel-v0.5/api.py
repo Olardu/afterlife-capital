@@ -125,31 +125,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="SENTINEL v0.5 API", lifespan=lifespan)
 
-# SessionMiddleware firma cookies con SESSION_SECRET (HMAC vía itsdangerous).
-# Authlib lo usa para guardar el state CSRF durante el OAuth flow, y nosotros
-# lo reusamos para almacenar la sesión de usuario {email, role, user_id}.
-# `https_only` es configurable via SESSION_HTTPS_ONLY (default true). Sobre
-# HTTP localhost la cookie no se setea — por eso el smoke test OAuth real
-# se hace contra el dominio público (ver INSTRUCCIONES OPERATIVAS).
-_HTTPS_ONLY = os.environ.get("SESSION_HTTPS_ONLY", "true").lower() != "false"
-
-app.add_middleware(
-    SessionMiddleware,
-    secret_key      = SESSION_SECRET,
-    session_cookie  = SESSION_COOKIE_NAME,
-    max_age         = SESSION_MAX_AGE_SECONDS,
-    same_site       = "lax",
-    https_only      = _HTTPS_ONLY,
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins     = ["*"],
-    allow_credentials = False,
-    allow_methods     = ["*"],
-    allow_headers     = ["*"],
-)
-
 
 # =============================================================================
 # OAUTH — Google
@@ -168,6 +143,88 @@ oauth.register(
 def _get_session_user(request: Request) -> Optional[dict]:
     """Lee el usuario autenticado de la sesión firmada. None si no hay login."""
     return request.session.get("user")
+
+
+# Rutas públicas: /auth/* (login flow) + assets estáticos del dashboard.
+# El resto requiere sesión. /auth/me responde 401 desde su handler para
+# evitar duplicar la lógica acá.
+_PUBLIC_PATHS = {
+    "/auth/login", "/auth/callback", "/auth/logout",
+    "/sentinel-data.js", "/sentinel-app.js", "/sentinel-i18n.js",
+    "/favicon.ico",
+}
+_PUBLIC_PREFIXES = ("/assets/",)
+
+# Endpoints que requieren role=ADMIN. Cambios futuros: agregar acá.
+_ADMIN_PATHS = {"/api/system/halt", "/api/system/resume"}
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """
+    Gate de autenticación + autorización por rutas (#H-1).
+
+    - /auth/*, assets, favicon: público.
+    - / (dashboard): redirect 302 a /auth/login si no hay sesión.
+    - /api/*: 401 si no hay sesión. /api/system/{halt,resume} además 403 si role != ADMIN.
+    - Cualquier otra ruta: pasa (StaticFiles atrás del mount root maneja errores).
+    """
+    path   = request.url.path
+    method = request.method
+
+    if path in _PUBLIC_PATHS or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
+        return await call_next(request)
+
+    user = _get_session_user(request)
+
+    if path == "/":
+        if user is None:
+            return RedirectResponse(url="/auth/login", status_code=302)
+        return await call_next(request)
+
+    if path.startswith("/api/"):
+        if user is None:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        if method == "POST" and path in _ADMIN_PATHS and user.get("role") != "ADMIN":
+            return JSONResponse(
+                {"error":   "forbidden",
+                 "message": "Solo administradores pueden controlar el sistema"},
+                status_code=403,
+            )
+        return await call_next(request)
+
+    return await call_next(request)
+
+
+# Orden de registro de middlewares — IMPORTANTE.
+# Starlette envuelve outside-in: el último `add_middleware` queda más afuera
+# (procesa primero en inbound). El decorator @app.middleware("http") de
+# auth_middleware se registró antes de estos add_middleware, así que queda
+# más adentro que ambos. Resultado del stack inbound:
+#   SessionMiddleware → CORSMiddleware → auth_middleware → handler
+# Esto garantiza que auth_middleware ya tiene request.session poblada.
+#
+# `https_only` es configurable via SESSION_HTTPS_ONLY (default true). Sobre
+# HTTP localhost la cookie no se setea — por eso el smoke test OAuth real
+# se hace contra el dominio público (ver INSTRUCCIONES OPERATIVAS).
+_HTTPS_ONLY = os.environ.get("SESSION_HTTPS_ONLY", "true").lower() != "false"
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins     = ["*"],
+    allow_credentials = False,
+    allow_methods     = ["*"],
+    allow_headers     = ["*"],
+)
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key      = SESSION_SECRET,
+    session_cookie  = SESSION_COOKIE_NAME,
+    max_age         = SESSION_MAX_AGE_SECONDS,
+    same_site       = "lax",
+    https_only      = _HTTPS_ONLY,
+)
 
 
 _LOGIN_DENIED_HTML = """<!doctype html>
