@@ -453,6 +453,19 @@ function setupPersistence() {
       if (icon) icon.innerHTML =
         '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
     }
+
+    const brand = document.querySelector('header .brand');
+    if (brand) {
+      brand.style.cursor = 'pointer';
+      brand.setAttribute('role', 'link');
+      brand.setAttribute('tabindex', '0');
+      brand.setAttribute('aria-label', 'Afterlife Capital — landing');
+      const goLanding = () => window.open('https://www.afterlifecapital.co', '_blank', 'noopener,noreferrer');
+      brand.addEventListener('click', goLanding);
+      brand.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goLanding(); }
+      });
+    }
   });
 
   // Guardar al click (event delegation, después de los handlers de app.js)
