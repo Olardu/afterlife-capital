@@ -70,10 +70,29 @@ class Historian:
                     updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
                 )
             """)
-            await conn.execute("""
-                INSERT INTO system_state (key, value) VALUES ('halt_requested', 'false')
-                ON CONFLICT (key) DO NOTHING
-            """)
+            for flag in ("halt_requested", "system_halted", "resume_requested"):
+                await conn.execute(
+                    """
+                    INSERT INTO system_state (key, value) VALUES ($1, 'false')
+                    ON CONFLICT (key) DO NOTHING
+                    """,
+                    flag,
+                )
+
+            # Asegurar email + role=ADMIN del owner (#H-1). La columna `email`
+            # ya existe en schema.sql desde la creación de la DB (multi-tenant
+            # base). Este UPDATE solo corre cuando el email persistido no
+            # coincide con el del admin OAuth — idempotente.
+            await conn.execute(
+                """
+                UPDATE users
+                SET email = '***REMOVED-EMAIL***',
+                    role  = 'ADMIN'
+                WHERE username = 'roman'
+                  AND (email IS DISTINCT FROM '***REMOVED-EMAIL***'
+                       OR role IS DISTINCT FROM 'ADMIN')
+                """
+            )
 
     async def close(self):
         """Cierra el pool de conexiones limpiamente."""
@@ -500,6 +519,29 @@ class Historian:
             return event_id
         except asyncpg.PostgresError as e:
             logger.error(f"Error al registrar macro event: {e}")
+            raise
+
+    async def get_user_by_email(self, email: str) -> Optional[dict]:
+        """
+        Busca un usuario por email. Usado por el callback OAuth para validar
+        que el email autenticado por Google está registrado como ADMIN o
+        VIEWER en la DB antes de emitir cookie de sesión (#H-1).
+
+        Returns:
+            dict {user_id, username, email, role} o None si no existe.
+        """
+        sql = """
+            SELECT user_id, username, email, role
+            FROM users
+            WHERE email = $1
+            LIMIT 1
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(sql, email)
+            return dict(row) if row else None
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al buscar usuario por email ({email}): {e}")
             raise
 
     async def get_system_flag(self, key: str) -> Optional[str]:
