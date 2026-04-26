@@ -16,14 +16,29 @@ ALPACA_BASE_URL   = os.environ.get("ALPACA_BASE_URL", "https://paper-api.alpaca.
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 NEWS_API_KEY = os.environ.get("NEWS_API_KEY")
-SECRET_KEY   = os.environ.get("SECRET_KEY")   # sesiones FastAPI / Google OAuth
+SECRET_KEY   = os.environ.get("SECRET_KEY")   # legacy — uso histórico, no tocar
+
+# Google OAuth — credenciales del proyecto "Afterlife Capital".
+# Authorized redirect URI debe coincidir con OAUTH_REDIRECT_URI abajo.
+GOOGLE_CLIENT_ID     = os.environ.get("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
+SESSION_SECRET       = os.environ.get("SESSION_SECRET")   # firma cookies de sesión
+OAUTH_REDIRECT_URI   = os.environ.get(
+    "OAUTH_REDIRECT_URI",
+    "https://sentinel.afterlifecapital.co/auth/callback",
+)
+SESSION_COOKIE_NAME    = "sentinel_session"
+SESSION_MAX_AGE_SECONDS = 24 * 60 * 60   # 24 horas
 
 _CRITICAL_CREDENTIALS = {
-    "ALPACA_API_KEY":    ALPACA_API_KEY,
-    "ALPACA_SECRET_KEY": ALPACA_SECRET_KEY,
-    "DATABASE_URL":      DATABASE_URL,
-    "NEWS_API_KEY":      NEWS_API_KEY,
-    "SECRET_KEY":        SECRET_KEY,
+    "ALPACA_API_KEY":       ALPACA_API_KEY,
+    "ALPACA_SECRET_KEY":    ALPACA_SECRET_KEY,
+    "DATABASE_URL":         DATABASE_URL,
+    "NEWS_API_KEY":         NEWS_API_KEY,
+    "SECRET_KEY":           SECRET_KEY,
+    "GOOGLE_CLIENT_ID":     GOOGLE_CLIENT_ID,
+    "GOOGLE_CLIENT_SECRET": GOOGLE_CLIENT_SECRET,
+    "SESSION_SECRET":       SESSION_SECRET,
 }
 
 # =============================================================================
