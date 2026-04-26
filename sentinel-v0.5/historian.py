@@ -20,6 +20,17 @@ from config import (
 logger = logging.getLogger("sentinel.historian")
 
 
+# Annualization factor para Sharpe sobre barras de 15 minutos.
+# Equity market: 252 días hábiles × 26 barras/día (6.5h × 4 barras/hora) = 6552
+# bars/year. El factor escala el Sharpe per-period a Sharpe anual estándar,
+# que es la escala asumida por SHARPE_MINIMUM = 0.5 en config.py.
+# Sin esto, el threshold se aplicaba contra Sharpe per-period y rechazaba
+# estrategias razonables como decay (#TECHDEBT promovido).
+_BARS_PER_TRADING_DAY = 26
+_TRADING_DAYS_PER_YEAR = 252
+_SHARPE_ANNUALIZATION_FACTOR = math.sqrt(_TRADING_DAYS_PER_YEAR * _BARS_PER_TRADING_DAY)
+
+
 class Historian:
     def __init__(self, database_url: str):
         self.database_url = database_url
@@ -263,7 +274,9 @@ class Historian:
             mean_r   = sum(returns) / total_trades
             variance = sum((r - mean_r) ** 2 for r in returns) / (total_trades - 1)
             std_r    = math.sqrt(variance) if variance > 0 else 0.0
-            sharpe_ratio = mean_r / std_r if std_r > 0 else 0.0
+            # Annualizar: per-period × sqrt(periods/year). Asume returns iid
+            # — aproximación estándar, suficiente para gating de decay.
+            sharpe_ratio = (mean_r / std_r) * _SHARPE_ANNUALIZATION_FACTOR if std_r > 0 else 0.0
 
         logger.debug(
             f"Performance ({sentinel_id}, {ticker}): "
