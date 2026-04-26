@@ -30,6 +30,10 @@ OAUTH_REDIRECT_URI   = os.environ.get(
 SESSION_COOKIE_NAME    = "sentinel_session"
 SESSION_MAX_AGE_SECONDS = 24 * 60 * 60   # 24 horas
 
+# Resend — emails transaccionales (welcome / removal del panel admin).
+# Dominio verificado: afterlifecapital.co. Sender: noreply@afterlifecapital.co.
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
+
 _CRITICAL_CREDENTIALS = {
     "ALPACA_API_KEY":       ALPACA_API_KEY,
     "ALPACA_SECRET_KEY":    ALPACA_SECRET_KEY,
@@ -39,6 +43,7 @@ _CRITICAL_CREDENTIALS = {
     "GOOGLE_CLIENT_ID":     GOOGLE_CLIENT_ID,
     "GOOGLE_CLIENT_SECRET": GOOGLE_CLIENT_SECRET,
     "SESSION_SECRET":       SESSION_SECRET,
+    "RESEND_API_KEY":       RESEND_API_KEY,
 }
 
 # =============================================================================
