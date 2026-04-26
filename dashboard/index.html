@@ -1,1186 +1,767 @@
 <!DOCTYPE html>
-<html lang="es" data-theme="cyberpunk" data-view="completa">
+<html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AFTERLIFE CAPITAL — SENTINEL v0.5</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<title>AFTERLIFE CAPITAL — Sentinel Control v0.5</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><defs><clipPath id='l'><rect x='0' y='0' width='32' height='64'/></clipPath><clipPath id='r'><rect x='32' y='0' width='32' height='64'/></clipPath></defs><g clip-path='url(%23l)'><polygon points='32,8 56,52 8,52' fill='none' stroke='%2300f5ff' stroke-width='3.5' stroke-linejoin='round'/></g><g clip-path='url(%23r)'><polygon points='32,8 56,52 8,52' fill='none' stroke='%23ff00ff' stroke-width='3.5' stroke-linejoin='round'/></g></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg:        #030610;
-  --bg-2:      #07101e;
-  --primary:   #00f5ff;
-  --accent:    #ff00ff;
-  --good:      #00ff88;
-  --bad:       #ff4466;
-  --warn:      #ffcc00;
-  --text:      #cfe7ee;
-  --text-dim:  #6b8a93;
-  --card-bg:   rgba(0,245,255,0.04);
-  --card-bd:   rgba(0,245,255,0.35);
-  --grid:      rgba(0,245,255,0.10);
-  --shadow:    0 0 18px rgba(0,245,255,0.18);
-  --font-head: 'Orbitron', sans-serif;
-  --font-mono: 'Share Tech Mono', monospace;
+  --bg: #030610;
+  --bg-2: #060a18;
+  --panel: #07091a;
+  --panel-2: #0a0e1f;
+  --border: rgba(0,245,255,0.18);
+  --border-soft: rgba(0,245,255,0.08);
+  --text: #d8e6f5;
+  --dim: #6a7a96;
+  --faint: #3a4660;
+  --cyan: #00f5ff;
+  --magenta: #ff00d4;
+  --yellow: #ffe000;
+  --green: #00ff88;
+  --red: #ff2060;
+  --amber: #ff9e2c;
+  --display: 'Orbitron', monospace;
+  --mono: 'Share Tech Mono', monospace;
+  --code: 'JetBrains Mono', 'Share Tech Mono', monospace;
+  --shadow-cyan: 0 0 14px rgba(0,245,255,0.4);
+  --shadow-magenta: 0 0 14px rgba(255,0,212,0.4);
 }
-[data-theme="sobrio"] {
-  --bg:       #161616;
-  --bg-2:     #1f1f1f;
-  --primary:  #6ea8fe;
-  --accent:   #b39bd6;
-  --good:     #6cc78c;
-  --bad:      #d57380;
-  --warn:     #d8b15c;
-  --text:     #e2e2e2;
-  --text-dim: #8a8a8a;
-  --card-bg:  rgba(255,255,255,0.03);
-  --card-bd:  rgba(255,255,255,0.12);
-  --grid:     rgba(255,255,255,0.07);
-  --shadow:   0 0 0 transparent;
+[data-theme="sober"] {
+  --bg: #f5f6f8;
+  --bg-2: #ffffff;
+  --panel: #ffffff;
+  --panel-2: #f8f9fb;
+  --border: rgba(20,30,50,0.14);
+  --border-soft: rgba(20,30,50,0.07);
+  --text: #1a2030;
+  --dim: #5a6478;
+  --faint: #8a94a8;
+  --cyan: #1d6fb8;
+  --magenta: #8a2db5;
+  --yellow: #b8861d;
+  --green: #1d8a52;
+  --red: #c4334a;
+  --amber: #c47a1d;
+  --shadow-cyan: none;
+  --shadow-magenta: none;
 }
-*,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { overflow-x: hidden; max-width: 100vw; }
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-mono);
-  min-height: 100vh;
-  line-height: 1.5;
-}
-[data-theme="cyberpunk"] body::before {
-  content: "";
-  position: fixed; inset: 0; pointer-events: none; z-index: 0;
-  background:
-    linear-gradient(var(--grid) 1px, transparent 1px) 0 0/40px 40px,
-    linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0/40px 40px,
-    radial-gradient(ellipse at top, rgba(0,245,255,0.05), transparent 60%);
-}
-main, header, footer { position: relative; z-index: 1; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--bg); color: var(--text); font-family: var(--mono); min-height: 100vh; -webkit-font-smoothing: antialiased; font-size: 14px; overflow-x: hidden; max-width: 100%; }
+*, *::before, *::after { min-width: 0; }
 
-/* ───── HEADER ───── */
-header.topbar {
-  display: grid; grid-template-columns: 1fr auto auto; gap: 16px;
-  align-items: center;
-  padding: 18px 28px; border-bottom: 1px solid var(--card-bd);
-  background: var(--bg-2);
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(0,245,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,245,255,0.025) 1px, transparent 1px);
+  background-size: 50px 50px;
 }
-.logo {
-  font-family: var(--font-head); font-weight: 900; font-size: 18px;
-  letter-spacing: 2px; color: var(--primary);
-  text-shadow: var(--shadow);
-}
-.logo span { color: var(--accent); margin-left: 6px; }
-.status-pills { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
-.pill {
-  font-family: var(--font-head); font-size: 11px; letter-spacing: 1.5px;
-  padding: 6px 12px; border: 1px solid var(--card-bd);
-  background: var(--card-bg); color: var(--text);
-  border-radius: 2px; white-space: nowrap;
-}
-.pill.online { color: var(--good); border-color: var(--good); }
-.pill.warn   { color: var(--warn); border-color: var(--warn); }
-.pill.bad    { color: var(--bad);  border-color: var(--bad); }
-.controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.controls select, .controls button {
-  font-family: var(--font-head); font-size: 11px; letter-spacing: 1px;
-  background: transparent; color: var(--primary);
-  border: 1px solid var(--card-bd); padding: 8px 12px;
-  cursor: pointer; transition: all .15s ease;
-  text-transform: uppercase;
-}
-.controls button:hover, .controls select:hover {
-  background: var(--card-bg); box-shadow: var(--shadow);
-}
-.controls #download-report {
-  color: var(--accent); border-color: var(--accent);
-}
+[data-theme="sober"] body::before { display: none; }
 
-/* ───── SECTIONS ───── */
-section { padding: 32px 28px; max-width: 1400px; margin: 0 auto; }
-section h2 {
-  font-family: var(--font-head); font-weight: 700;
-  font-size: 14px; letter-spacing: 3px; color: var(--primary);
-  margin-bottom: 18px; padding-bottom: 8px;
-  border-bottom: 1px solid var(--card-bd);
+/* ============ HEADER FIJO ============ */
+.header-fixed {
+  position: sticky; top: 0; z-index: 100;
+  background: var(--bg); border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(10px);
 }
-section h2::before { content: "▌ "; color: var(--accent); }
+[data-theme="sober"] .header-fixed { background: var(--bg-2); box-shadow: 0 1px 0 rgba(0,0,0,0.04); }
 
-/* ───── CARDS ───── */
-.card {
-  background: var(--card-bg);
-  border: 1px solid var(--card-bd);
-  padding: 16px;
+.header-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 24px; gap: 20px; flex-wrap: wrap;
+}
+.brand {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--display); font-weight: 900; font-size: 16px; letter-spacing: 0.15em; color: var(--text);
+  text-shadow: var(--shadow-cyan);
+}
+.brand .ico { width: 22px; height: 22px; flex-shrink: 0; filter: drop-shadow(0 0 6px rgba(0,245,255,0.6)); }
+.brand .v { color: var(--cyan); }
+[data-theme="sober"] .brand .ico { filter: none; }
+
+/* status indicators inline */
+.hdr-stats { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+.hs { display: flex; flex-direction: column; gap: 2px; }
+.hs .k { font-size: 9px; color: var(--faint); letter-spacing: 0.18em; }
+.hs .v { font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: 0.06em; color: var(--text); display: flex; align-items: center; gap: 6px; }
+.hs .v.green { color: var(--green); }
+.hs .v.red { color: var(--red); }
+.hs .v.yellow { color: var(--yellow); }
+.hs .v.cyan { color: var(--cyan); }
+.hs .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 6px currentColor; animation: pulseDot 1.6s infinite; }
+[data-theme="sober"] .hs .dot { box-shadow: none; }
+@keyframes pulseDot { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+.hdr-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ctrl-group { display: inline-flex; border: 1px solid var(--border); }
+.ctrl-group button {
+  background: transparent; color: var(--dim); border: none;
+  font-family: var(--mono); font-size: 10px; padding: 5px 10px; cursor: pointer; letter-spacing: 0.12em;
+}
+.ctrl-group button.active { background: var(--cyan); color: #000; }
+[data-theme="sober"] .ctrl-group button.active { background: var(--cyan); color: #fff; }
+.theme-mini {
+  background: transparent; border: 1px solid var(--border); color: var(--dim);
+  width: 30px; height: 26px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.theme-mini:hover { color: var(--cyan); }
+.theme-mini svg { width: 14px; height: 14px; }
+.detener-btn {
+  background: transparent; border: 1px solid var(--red); color: var(--red);
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em; padding: 6px 16px; cursor: pointer;
+  text-shadow: 0 0 6px rgba(255,32,96,0.5); transition: all 0.15s;
+}
+.detener-btn:hover { background: var(--red); color: #fff; text-shadow: none; }
+[data-theme="sober"] .detener-btn { text-shadow: none; }
+
+/* ============ TITLE ============ */
+.title-block { padding: 24px 24px 16px; position: relative; z-index: 1; max-width: 1600px; margin: 0 auto; }
+.title-tag { font-size: 10px; color: var(--cyan); letter-spacing: 0.22em; margin-bottom: 6px; }
+.title-block h1 {
+  font-family: var(--display); font-weight: 900; font-size: clamp(26px, 4.5vw, 48px);
+  letter-spacing: 0.04em; line-height: 1;
+  word-break: break-word; overflow-wrap: anywhere;
+}
+.title-block h1 .a { color: var(--cyan); text-shadow: 0 0 22px rgba(0,245,255,0.45); }
+.title-block h1 .b { color: var(--magenta); text-shadow: 0 0 22px rgba(255,0,212,0.45); margin-left: 8px; }
+[data-theme="sober"] .title-block h1 .a, [data-theme="sober"] .title-block h1 .b { text-shadow: none; }
+
+main { padding: 0 24px 32px; position: relative; z-index: 1; max-width: 1600px; margin: 0 auto; }
+
+/* ============ SECTIONS ============ */
+.section { margin-bottom: 24px; }
+.section-h {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: 12px; gap: 14px; flex-wrap: wrap;
+}
+.section-h .label {
+  font-family: var(--display); font-weight: 700; font-size: 13px;
+  color: var(--cyan); letter-spacing: 0.18em;
+}
+.section-h .meta { font-size: 11px; color: var(--dim); letter-spacing: 0.1em; }
+
+.panel {
+  background: var(--panel); border: 1px solid var(--border-soft);
   position: relative;
-  transition: all .2s ease;
 }
-.card:hover { border-color: var(--primary); box-shadow: var(--shadow); }
-.card.active::before {
-  content: ""; position: absolute; inset: -1px;
-  border: 1px solid var(--primary); pointer-events: none;
-  animation: pulse 2.4s ease-in-out infinite;
+.panel-h {
+  display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 11px; color: var(--cyan); letter-spacing: 0.16em;
 }
-[data-theme="sobrio"] .card.active::before { animation: none; opacity: .5; }
-@keyframes pulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 12px rgba(0,245,255,0.4); }
-  50%      { opacity: .35; box-shadow: 0 0 4px rgba(0,245,255,0.1); }
-}
-.card.dimmed { opacity: .5; }
-.card-title {
-  font-family: var(--font-head); font-size: 12px; letter-spacing: 2px;
-  color: var(--accent); margin-bottom: 8px;
-}
-.card-value {
-  font-family: var(--font-head); font-size: 22px; font-weight: 700;
-  color: var(--primary); margin-bottom: 4px;
-}
-.card-meta { font-size: 11px; color: var(--text-dim); }
+.panel-h .right { margin-left: auto; color: var(--dim); font-size: 10px; }
+.panel-body { padding: 16px; }
 
-/* ───── AGENTES ───── */
+/* ============ AGENT CARDS (5) ============ */
 .agents-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 14px;
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px;
 }
-
-/* ───── SUMMARY ───── */
-.summary-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
+@media (max-width: 1100px) { .agents-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 700px) { .agents-grid { grid-template-columns: repeat(2, 1fr); } }
+.agent-card {
+  background: var(--panel); border: 1px solid var(--border-soft);
+  padding: 16px; position: relative; transition: border-color 0.3s;
 }
+.agent-card.active {
+  border-color: var(--cyan);
+  animation: heartbeat 1.8s infinite;
+}
+@keyframes heartbeat {
+  0%, 100% { box-shadow: inset 0 0 0 0 rgba(0,245,255,0), 0 0 0 0 rgba(0,245,255,0); }
+  50% { box-shadow: inset 0 0 20px rgba(0,245,255,0.08), 0 0 12px rgba(0,245,255,0.25); }
+}
+[data-theme="sober"] .agent-card.active { animation: heartbeatSober 1.8s infinite; }
+@keyframes heartbeatSober {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(29,111,184,0); }
+  50% { box-shadow: 0 0 0 2px rgba(29,111,184,0.15); }
+}
+.agent-card .ag-icon {
+  width: 44px; height: 44px; margin-bottom: 12px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); color: var(--cyan);
+}
+.agent-card .ag-icon svg { width: 24px; height: 24px; }
+.agent-card .ag-name {
+  font-family: var(--display); font-weight: 900; font-size: 13px;
+  color: var(--text); letter-spacing: 0.12em; margin-bottom: 4px;
+}
+.agent-card .ag-sub {
+  font-size: 10px; color: var(--cyan); letter-spacing: 0.1em; margin-bottom: 10px;
+}
+.agent-card .ag-desc {
+  font-size: 11px; color: var(--dim); line-height: 1.5; min-height: 44px;
+}
+.agent-card .ag-status {
+  margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-soft);
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10px; letter-spacing: 0.16em;
+}
+.agent-card .ag-status .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.agent-card .ag-status.active { color: var(--green); }
+.agent-card .ag-status.idle { color: var(--dim); }
+.agent-card .ag-status.error { color: var(--red); }
 
-/* ───── NEWS ───── */
+/* ============ OPS SUMMARY ============ */
+.ops-summary {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 14px;
+}
+@media (max-width: 900px) { .ops-summary { grid-template-columns: repeat(2, 1fr); } }
+.os-item {
+  background: var(--panel); border: 1px solid var(--border-soft);
+  padding: 14px 18px;
+}
+.os-item .k { font-size: 9px; color: var(--faint); letter-spacing: 0.18em; margin-bottom: 4px; }
+.os-item .v { font-family: var(--display); font-weight: 900; font-size: 22px; letter-spacing: 0.04em; color: var(--text); }
+.os-item .v.green { color: var(--green); }
+.os-item .v.red { color: var(--red); }
+.os-item .v.cyan { color: var(--cyan); }
+.os-item .v.yellow { color: var(--yellow); }
+.os-item .sub { font-size: 10px; color: var(--dim); margin-top: 4px; letter-spacing: 0.06em; }
+
+/* news */
+.news-list { display: flex; flex-direction: column; gap: 0; }
 .news-item {
-  border-left: 2px solid var(--accent);
-  padding: 8px 12px; margin-bottom: 10px;
-  background: var(--card-bg);
-  font-size: 13px;
+  display: grid; grid-template-columns: 70px 1fr 100px;
+  gap: 14px; padding: 12px 16px; align-items: center;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
 }
-.news-item .ts { color: var(--text-dim); font-size: 11px; }
+.news-item:last-child { border-bottom: none; }
+.news-item .ts { color: var(--dim); font-family: var(--mono); }
+.news-item .title { color: var(--text); line-height: 1.4; }
+.news-item .badge {
+  font-family: var(--mono); font-size: 9px; padding: 3px 8px;
+  letter-spacing: 0.16em; border: 1px solid currentColor; text-align: center;
+}
+.news-item .badge.neutral { color: var(--dim); }
+.news-item .badge.risk { color: var(--yellow); }
+.news-item .badge.cb { color: var(--red); }
 
-/* ───── EQUITY ───── */
-.equity-wrap {
-  background: var(--card-bg); border: 1px solid var(--card-bd);
-  padding: 16px; height: 320px;
-}
+/* ============ EQUITY ============ */
+.eq-chart { width: 100%; height: 240px; display: block; }
+.eq-meta { display: flex; gap: 24px; margin-top: 12px; font-size: 10px; color: var(--dim); letter-spacing: 0.1em; flex-wrap: wrap; }
+.eq-meta b { color: var(--cyan); font-weight: normal; margin-left: 6px; }
+.eq-meta b.green { color: var(--green); }
+.eq-meta b.red { color: var(--red); }
 
-/* ───── SENTINELS GRID ───── */
-.sentinels-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 14px;
-}
+/* ============ SENTINEL CARDS ============ */
+.sent-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+@media (max-width: 1100px) { .sent-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 700px) { .sent-grid { grid-template-columns: 1fr; } }
 .sent-card {
-  background: var(--card-bg); border: 1px solid var(--card-bd);
-  padding: 16px; cursor: pointer; transition: all .2s ease;
-  position: relative;
+  background: var(--panel); border: 1px solid var(--border-soft);
+  padding: 18px 20px; position: relative; cursor: pointer;
+  transition: all 0.2s;
 }
 .sent-card:hover {
-  border-color: var(--primary); transform: translateY(-2px);
-  box-shadow: var(--shadow);
+  border-color: var(--cyan); transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(0,245,255,0.08);
 }
-.sent-card.has-signal::after {
-  content: ""; position: absolute; top: 8px; right: 8px;
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--accent); box-shadow: 0 0 8px var(--accent);
+[data-theme="sober"] .sent-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
+.sent-card .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.sent-card .name {
+  font-family: var(--display); font-weight: 900; font-size: 18px;
+  color: var(--cyan); letter-spacing: 0.12em;
+  text-shadow: 0 0 10px rgba(0,245,255,0.35);
 }
-.sent-name {
-  font-family: var(--font-head); font-size: 16px; font-weight: 900;
-  letter-spacing: 2px; color: var(--primary);
+[data-theme="sober"] .sent-card .name { text-shadow: none; }
+.sent-card .sid {
+  font-size: 9px; color: var(--faint); letter-spacing: 0.16em;
+  font-family: var(--mono);
 }
-.sent-strategy {
-  font-size: 11px; color: var(--text-dim); margin: 4px 0 12px;
-  letter-spacing: 1px;
+.sent-card .sig {
+  font-family: var(--mono); font-size: 10px; padding: 3px 10px;
+  letter-spacing: 0.18em; border: 1px solid currentColor;
 }
-.sent-tickers {
-  display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px;
-}
-.tk-chip {
-  font-family: var(--font-head); font-size: 10px;
-  border: 1px solid var(--card-bd); padding: 3px 8px;
-  letter-spacing: 1px; color: var(--text);
-}
-.tk-chip.buy  { color: var(--good); border-color: var(--good); }
-.tk-chip.sell { color: var(--bad);  border-color: var(--bad); }
-.sent-stats { font-size: 12px; color: var(--text-dim); }
-.sent-stats span.alloc { color: var(--accent); }
+.sent-card .sig.buy { color: var(--green); }
+.sent-card .sig.sell { color: var(--red); }
+.sent-card .sig.hold { color: var(--dim); }
+.sent-card .strat { font-size: 11px; color: var(--dim); letter-spacing: 0.08em; margin-bottom: 14px; }
+.sent-card .mini-eq { width: 100%; height: 64px; margin-bottom: 14px; }
+.sent-card .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.sent-card .stat { display: flex; flex-direction: column; gap: 4px; }
+.sent-card .stat .k { font-size: 9px; color: var(--faint); letter-spacing: 0.16em; }
+.sent-card .stat .v { font-family: var(--mono); font-size: 14px; color: var(--text); }
+.sent-card .stat .v.green { color: var(--green); }
+.sent-card .stat .v.red { color: var(--red); }
 
-/* ───── DETAIL ───── */
-.sentinel-detail {
-  border: 1px solid var(--accent);
-  background: var(--card-bg);
-  padding: 24px;
+/* ============ DETAIL ACCORDION ============ */
+.detail-controls { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+.detail-controls button {
+  background: transparent; border: 1px solid var(--border); color: var(--dim);
+  font-family: var(--mono); font-size: 10px; padding: 6px 12px;
+  letter-spacing: 0.14em; cursor: pointer;
 }
+.detail-controls button:hover { color: var(--cyan); border-color: var(--cyan); }
+
+.detail-block {
+  background: var(--panel); border: 1px solid var(--border-soft);
+  margin-bottom: 10px; scroll-margin-top: 80px;
+}
+.detail-head {
+  padding: 14px 18px; cursor: pointer;
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s, background 0.2s;
+}
+.detail-head:hover { background: var(--panel-2); }
+.detail-block.open .detail-head { border-bottom-color: var(--border-soft); }
+.detail-head .name {
+  font-family: var(--display); font-weight: 900; font-size: 18px;
+  color: var(--cyan); letter-spacing: 0.12em;
+  text-shadow: 0 0 10px rgba(0,245,255,0.3);
+}
+[data-theme="sober"] .detail-head .name { text-shadow: none; }
+.detail-head .strat { font-size: 12px; color: var(--dim); letter-spacing: 0.06em; }
+.detail-head .chev { margin-left: auto; color: var(--dim); transition: transform 0.2s; font-size: 14px; }
+.detail-block.open .detail-head .chev { transform: rotate(90deg); color: var(--cyan); }
+
+.detail-body { padding: 0 18px 18px; display: none; }
+.detail-block.open .detail-body { display: block; }
 .detail-quote {
-  font-style: italic; color: var(--accent); margin: 8px 0 12px;
-  font-size: 13px; border-left: 2px solid var(--accent);
-  padding-left: 12px;
+  margin: 16px 0; padding: 12px 16px;
+  border-left: 2px solid var(--cyan);
+  background: var(--panel-2);
+  font-style: italic; color: var(--text); font-size: 13px;
 }
-.detail-desc { color: var(--text); margin-bottom: 16px; font-size: 14px; }
+.detail-quote .src { display: block; margin-top: 6px; font-size: 10px; color: var(--dim); font-style: normal; letter-spacing: 0.1em; }
+.detail-desc { color: var(--text); font-size: 13px; line-height: 1.6; margin-bottom: 18px; }
 
-/* ───── TABLES ───── */
-.table-container {
-  overflow-x: auto; max-width: 100%;
+.dt-subhead {
+  font-size: 10px; color: var(--cyan); letter-spacing: 0.18em;
+  margin: 14px 0 8px;
+}
+
+/* ============ TABLES ============ */
+.tbl-wrap {
+  width: 100%; max-width: 100%;
+  overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  border: 1px solid var(--card-bd);
 }
-table {
-  width: 100%; border-collapse: collapse;
-  font-family: var(--font-mono); font-size: 12px;
-}
-table th {
-  font-family: var(--font-head); font-size: 11px; letter-spacing: 1.5px;
-  color: var(--accent); text-align: left;
-  padding: 10px 12px; background: var(--bg-2);
-  border-bottom: 1px solid var(--card-bd); white-space: nowrap;
-}
-table td {
-  padding: 10px 12px; border-bottom: 1px solid var(--grid);
-  color: var(--text); white-space: nowrap;
-}
-table tr:hover td { background: var(--card-bg); }
-.empty-state {
-  padding: 24px; text-align: center; color: var(--text-dim);
-  border: 1px dashed var(--card-bd); font-style: italic;
-}
-.signal-buy  { color: var(--good); font-weight: bold; }
-.signal-sell { color: var(--bad);  font-weight: bold; }
-.signal-hold { color: var(--text-dim); }
+.tbl-wrap::-webkit-scrollbar { height: 6px; }
+.tbl-wrap::-webkit-scrollbar-thumb { background: var(--border); }
+.tbl { width: 100%; min-width: 560px; border-collapse: collapse; font-family: var(--code); font-size: 11px; }
+.tbl th { text-align: left; padding: 10px 14px; font-size: 9px; color: var(--faint); letter-spacing: 0.18em; font-weight: 400; border-bottom: 1px solid var(--border-soft); background: var(--bg-2); }
+.tbl td { padding: 10px 14px; border-bottom: 1px solid var(--border-soft); color: var(--text); }
+.tbl tr:hover td { background: var(--panel-2); }
+.tbl .empty { text-align: center; color: var(--faint); padding: 28px; letter-spacing: 0.14em; font-size: 11px; }
+.tbl td.r { text-align: right; }
+.tbl .sig-buy { color: var(--green); }
+.tbl .sig-sell { color: var(--red); }
+.tbl .sig-hold { color: var(--yellow); border: 1px solid var(--yellow); padding: 2px 8px; font-size: 9px; letter-spacing: 0.1em; }
 
-/* ───── LOGS ───── */
-details.logs {
-  border: 1px solid var(--card-bd); background: var(--card-bg);
-  padding: 10px 14px;
+/* ============ FULL VIEW PANELS ============ */
+.full-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
 }
-details.logs summary {
-  cursor: pointer; font-family: var(--font-head); letter-spacing: 2px;
-  font-size: 12px; color: var(--primary);
-}
-details.logs pre {
-  margin-top: 12px; padding: 12px; background: var(--bg-2);
-  font-family: var(--font-mono); font-size: 11px;
-  color: var(--text-dim); max-height: 280px; overflow-y: auto;
-  white-space: pre-wrap;
-}
+@media (max-width: 980px) { .full-grid { grid-template-columns: 1fr; } }
 
-/* ───── FOOTER ───── */
+/* gauge */
+.gauge-wrap { display: flex; align-items: center; gap: 20px; padding: 12px; }
+.gauge { width: 130px; height: 130px; flex-shrink: 0; }
+.gauge-meta { flex: 1; }
+.gauge-meta .lbl { font-size: 10px; color: var(--faint); letter-spacing: 0.14em; }
+.gauge-meta .val { font-family: var(--display); font-weight: 900; font-size: 32px; color: var(--cyan); margin: 4px 0; }
+.gauge-meta .desc { font-size: 11px; color: var(--dim); }
+
+.bb-row { display: flex; gap: 10px; margin-top: 10px; }
+.bb-toggle {
+  flex: 1; padding: 10px; border: 1px solid var(--border-soft);
+  text-align: center; font-size: 10px; letter-spacing: 0.16em; color: var(--dim);
+}
+.bb-toggle.on { color: var(--green); border-color: var(--green); }
+.bb-toggle.warning { color: var(--yellow); border-color: var(--yellow); }
+
+/* allocation bars */
+.alloc-bars { padding: 12px; }
+.alloc-row { display: grid; grid-template-columns: 90px 1fr 50px; gap: 12px; align-items: center; padding: 6px 0; font-size: 11px; }
+.alloc-row .name { color: var(--cyan); font-family: var(--display); font-weight: 700; letter-spacing: 0.08em; }
+.alloc-row .bar { position: relative; height: 14px; background: var(--bg-2); border: 1px solid var(--border-soft); }
+.alloc-row .bar .fill { position: absolute; top: 0; left: 0; bottom: 0; background: var(--cyan); }
+.alloc-row .bar .top-line, .alloc-row .bar .bot-line { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--magenta); }
+.alloc-row .pct { font-family: var(--mono); color: var(--text); text-align: right; }
+
+/* ============ LOGS COLLAPSIBLE ============ */
+.logs-section { background: var(--panel); border: 1px solid var(--border-soft); margin-bottom: 16px; }
+.logs-head {
+  display: flex; align-items: center; gap: 12px; padding: 14px 18px;
+  cursor: pointer; transition: background 0.2s;
+}
+.logs-head:hover { background: var(--panel-2); }
+.logs-head .label { font-family: var(--display); font-weight: 700; font-size: 12px; color: var(--cyan); letter-spacing: 0.18em; }
+.logs-head .meta { color: var(--dim); font-size: 10px; }
+.logs-head .chev { margin-left: auto; color: var(--dim); transition: transform 0.2s; }
+.logs-section.open .logs-head .chev { transform: rotate(90deg); color: var(--cyan); }
+
+.logs-body { display: none; padding: 0 18px 18px; }
+.logs-section.open .logs-body { display: block; }
+
+.terminal {
+  background: var(--bg-2); border: 1px solid var(--border-soft);
+  margin-bottom: 14px;
+}
+.terminal-head {
+  display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+  border-bottom: 1px solid var(--border-soft); background: rgba(0,245,255,0.03);
+  font-size: 11px; color: var(--dim); letter-spacing: 0.06em;
+}
+.terminal-head .dots { display: flex; gap: 5px; margin-right: 6px; }
+.terminal-head .dots i { width: 8px; height: 8px; border-radius: 50%; }
+.terminal-head .dots i:nth-child(1) { background: var(--red); }
+.terminal-head .dots i:nth-child(2) { background: var(--yellow); }
+.terminal-head .dots i:nth-child(3) { background: var(--green); }
+.terminal-head .path { color: var(--cyan); }
+.terminal-head .right { margin-left: auto; color: var(--dim); }
+.terminal-body { height: 320px; overflow-y: auto; overflow-x: hidden; padding: 12px 16px; font-family: var(--code); font-size: 12px; line-height: 1.55; }
+.terminal-body::-webkit-scrollbar { width: 6px; }
+.terminal-body::-webkit-scrollbar-thumb { background: var(--border); }
+.log-line { display: grid; grid-template-columns: 160px 70px minmax(0, 1fr); gap: 14px; padding: 1px 0; }
+.log-line .msg { color: var(--text); word-break: break-word; overflow-wrap: anywhere; }
+.log-line .ts { color: var(--dim); }
+.log-line .lvl { color: var(--cyan); }
+.log-line .lvl.warn { color: var(--amber); }
+.log-line .lvl.err { color: var(--red); }
+.log-line .sig-buy { color: var(--green); font-weight: 500; }
+.log-line .sig-sell { color: var(--red); font-weight: 500; }
+.log-line .sig-hold { color: var(--dim); }
+.log-line.new { animation: lineFlash 1.5s ease-out; }
+@keyframes lineFlash { 0% { background: rgba(0,245,255,0.15); } 100% { background: transparent; } }
+
+.dl-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding-top: 12px; border-top: 1px solid var(--border-soft); }
+.dl-bar .lbl { font-size: 10px; color: var(--dim); letter-spacing: 0.14em; }
+.dl-bar select {
+  background: var(--bg-2); border: 1px solid var(--border); color: var(--text);
+  font-family: var(--mono); font-size: 11px; padding: 6px 10px; letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.dl-bar .download-btn {
+  background: var(--cyan); color: #000; border: none;
+  font-family: var(--mono); font-weight: 700; font-size: 11px; letter-spacing: 0.18em;
+  padding: 9px 18px; cursor: pointer;
+  box-shadow: 0 0 14px rgba(0,245,255,0.5);
+  transition: all 0.15s;
+}
+.dl-bar .download-btn:hover { background: #fff; box-shadow: 0 0 22px rgba(0,245,255,0.8); }
+[data-theme="sober"] .dl-bar .download-btn { box-shadow: none; color: #fff; }
+[data-theme="sober"] .dl-bar .download-btn:hover { background: #154d80; }
+
+/* ============ FOOTER ============ */
 footer {
-  padding: 24px 28px; border-top: 1px solid var(--card-bd);
-  font-size: 11px; color: var(--text-dim); text-align: center;
-  font-family: var(--font-head); letter-spacing: 2px;
+  margin-top: 24px; padding: 18px 24px; border-top: 1px solid var(--border-soft);
+  display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
+  font-size: 10px; color: var(--dim); letter-spacing: 0.14em;
+  max-width: 1600px; margin-left: auto; margin-right: auto;
 }
-footer #last-update { color: var(--primary); margin-left: 8px; }
+footer .brand-mini { font-family: var(--display); font-weight: 900; font-size: 14px; color: var(--text); letter-spacing: 0.18em; }
+footer .meta { display: flex; gap: 18px; flex-wrap: wrap; }
+footer .meta b { color: var(--cyan); font-weight: normal; margin-left: 4px; }
 
-/* ───── SIMPLE / FULL ───── */
-[data-view="simple"] [data-detailed] { display: none; }
+/* hide full-only when simple */
+body[data-view="simple"] .full-only { display: none; }
 
-/* ───── RESPONSIVE ───── */
-@media (max-width: 768px) {
-  header.topbar { grid-template-columns: 1fr; gap: 10px; padding: 14px 16px; }
-  .status-pills { justify-content: flex-start; }
-  .controls { justify-content: flex-start; }
-  section { padding: 20px 16px; }
-  .logo { font-size: 14px; }
-  .agents-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
-  .agent-card.card { padding: 10px; }
-  .card-value { font-size: 16px; }
+@media (max-width: 720px) {
+  .header-row { padding: 10px 14px; gap: 10px; }
+  .title-block { padding: 18px 14px 14px; }
+  main { padding: 0 14px 24px; }
+  .news-item { grid-template-columns: 50px minmax(0,1fr) 80px; gap: 8px; padding: 10px; font-size: 11px; }
+  .news-item .title { word-break: break-word; }
+  .log-line { grid-template-columns: 110px 50px minmax(0,1fr); gap: 8px; font-size: 10px; }
+  .terminal-body { height: 260px; padding: 10px; font-size: 10px; }
+  .tbl th, .tbl td { padding: 7px 9px; }
+  .alloc-row { grid-template-columns: 70px minmax(0,1fr) 42px; gap: 8px; }
+  .ops-summary { grid-template-columns: 1fr 1fr; }
+  .gauge-wrap { gap: 14px; padding: 8px; }
+  .bb-toggle { font-size: 9px; padding: 8px 4px; letter-spacing: 0.1em; }
+  .detail-head { gap: 10px; padding: 12px 14px; }
+  .detail-head .name { font-size: 16px; }
+  .detail-head .strat { font-size: 11px; }
+  .detail-body { padding: 0 14px 14px; }
+  .sent-card { padding: 14px 16px; }
 }
-@media (max-width: 412px) {
-  .agents-grid { grid-template-columns: 1fr 1fr; }
+@media (max-width: 420px) {
+  .hdr-stats { gap: 12px; }
+  .hs .v { font-size: 11px; }
+  .hs .k { font-size: 8px; }
+  .ctrl-group button { padding: 4px 7px; font-size: 9px; }
+  .detener-btn { padding: 5px 10px; font-size: 10px; letter-spacing: 0.12em; }
+  .title-block h1 { font-size: 30px; }
+  .agent-card { padding: 12px; }
+  .os-item { padding: 12px 14px; }
+  .os-item .v { font-size: 18px; }
 }
 </style>
 </head>
-<body>
+<template id="__bundler_thumbnail">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+    <rect width="200" height="200" fill="#030610"/>
+    <g transform="translate(60 60)" fill="none" stroke="#00f5ff" stroke-width="3">
+      <rect x="0" y="0" width="80" height="80"/>
+      <path d="M0 60 L20 40 L40 50 L60 20 L80 30" stroke="#00ff88"/>
+      <circle cx="40" cy="40" r="6" fill="#00f5ff" stroke="none"/>
+    </g>
+    <text x="100" y="170" text-anchor="middle" fill="#00f5ff" font-family="monospace" font-size="14" font-weight="900" letter-spacing="2">SENTINEL</text>
+  </svg>
+</template>
+<body data-view="full" data-theme="cyber">
 
-<header class="topbar">
-  <div class="logo">AFTERLIFE CAPITAL — SENTINEL <span>v0.5</span></div>
-  <div class="status-pills" id="status-pills">
-    <span class="pill" id="pill-system">SYSTEM —</span>
-    <span class="pill" id="pill-active">— ACTIVE</span>
-    <span class="pill" id="pill-regime">— REGIME</span>
-    <span class="pill" id="pill-risk">— RISK</span>
-  </div>
-  <div class="controls">
-    <select id="lang" aria-label="Idioma">
-      <option value="es">ES</option>
-      <option value="en">EN</option>
-      <option value="ja">JA</option>
-      <option value="th">TH</option>
-    </select>
-    <button id="toggle-view" data-i18n-key="view_btn">SIMPLE</button>
-    <button id="toggle-theme" data-i18n-key="theme_btn">SOBRIO</button>
-    <button id="download-report" data-i18n-key="download_btn">REPORT</button>
+<!-- ============ HEADER FIJO ============ -->
+<header class="header-fixed">
+  <div class="header-row">
+    <div class="brand">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true">
+        <defs>
+          <clipPath id="hL"><rect x="0" y="0" width="32" height="64"/></clipPath>
+          <clipPath id="hR"><rect x="32" y="0" width="32" height="64"/></clipPath>
+        </defs>
+        <g clip-path="url(#hL)"><polygon points="32,8 56,52 8,52" fill="none" stroke="#00f5ff" stroke-width="4" stroke-linejoin="round"/></g>
+        <g clip-path="url(#hR)"><polygon points="32,8 56,52 8,52" fill="none" stroke="#ff00d4" stroke-width="4" stroke-linejoin="round"/></g>
+      </svg>
+      <span>AFTER<span class="v">LIFE</span></span>
+    </div>
+
+    <div class="hdr-stats">
+      <div class="hs"><span class="k" data-i18n="h_sistema">SISTEMA</span><span class="v green" id="hSistema"><span class="dot"></span><span data-i18n="h_online">ONLINE</span></span></div>
+      <div class="hs"><span class="k" data-i18n="h_sentinels">SENTINELS</span><span class="v cyan">9/9</span></div>
+      <div class="hs"><span class="k" data-i18n="h_regimen">RÉGIMEN</span><span class="v yellow" id="hRegimen">NEUTRAL</span></div>
+      <div class="hs"><span class="k" data-i18n="h_tickers">TICKERS</span><span class="v cyan">27</span></div>
+      <div class="hs"><span class="k" data-i18n="h_refresh">REFRESH</span><span class="v cyan">15MIN</span></div>
+      <div class="hs"><span class="k" data-i18n="h_risk">RISK</span><span class="v green" id="hRisk">0.12</span></div>
+    </div>
+
+    <div class="hdr-controls">
+      <div class="ctrl-group" id="viewToggle">
+        <button data-view="simple" data-i18n="view_simple">SIMPLE</button>
+        <button data-view="full" class="active" data-i18n="view_full">COMPLETA</button>
+      </div>
+      <button class="theme-mini" id="themeBtn" title="Theme">
+        <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      </button>
+      <div class="ctrl-group" id="langToggle">
+        <button data-lang="es" class="active">ES</button>
+        <button data-lang="en">EN</button>
+        <button data-lang="ja">JA</button>
+        <button data-lang="th">TH</button>
+      </div>
+      <button class="detener-btn" id="detenerBtn" data-i18n="btn_detener">+ DETENER</button>
+    </div>
   </div>
 </header>
 
+<!-- ============ TITLE ============ -->
+<div class="title-block">
+  <div class="title-tag" data-i18n="title_tag">// CUADRO DE OPERACIONES</div>
+  <h1><span class="a">SENTINEL</span> <span class="b">CONTROL</span></h1>
+</div>
+
 <main>
+  <!-- ============ SECCIÓN 1: AGENTES ============ -->
+  <div class="section">
+    <div class="section-h">
+      <span class="label" data-i18n="sec_agents">// AGENTES DEL SISTEMA</span>
+      <span class="meta"><span data-i18n="agents_meta">5 agentes activos</span></span>
+    </div>
+    <div class="agents-grid" id="agentsGrid"></div>
+  </div>
 
-<section>
-  <h2 data-i18n-key="agents_title">AGENTES</h2>
-  <div class="agents-grid" id="agents-grid"></div>
-</section>
+  <!-- ============ SECCIÓN 2: RESUMEN OPERACIONAL + NOTICIAS ============ -->
+  <div class="section">
+    <div class="section-h">
+      <span class="label" data-i18n="sec_ops_summary">// ESTADO DE OPERACIÓN</span>
+      <span class="meta"><span data-i18n="updated_ago">actualizado hace</span> <b id="opsAgo">3</b> <span data-i18n="min_ago">min</span></span>
+    </div>
+    <div class="ops-summary">
+      <div class="os-item"><div class="k" data-i18n="os_balance">BALANCE TOTAL</div><div class="v cyan">$<span id="osBalance">100,255.63</span></div></div>
+      <div class="os-item"><div class="k" data-i18n="os_pnl_day">P&L DEL DÍA</div><div class="v green">+$<span id="osPnl">425.80</span></div><div class="sub">+0.42%</div></div>
+      <div class="os-item"><div class="k" data-i18n="os_open_pos">POSICIONES ABIERTAS</div><div class="v">5</div></div>
+      <div class="os-item"><div class="k" data-i18n="os_signals">SEÑALES PROCESADAS</div><div class="v"><span id="osSigProc">23</span></div><div class="sub"><span data-i18n="os_approved">aprobadas</span>: <b style="color:var(--green)">18</b> · <span data-i18n="os_rejected">rechazadas</span>: <b style="color:var(--red)">5</b></div></div>
+    </div>
 
-<section>
-  <h2 data-i18n-key="summary_title">RESUMEN OPERACIONAL</h2>
-  <div class="summary-grid" id="summary-grid"></div>
-</section>
-
-<section data-detailed>
-  <h2 data-i18n-key="news_title">NOTICIAS QUE MOVIERON DECISIONES</h2>
-  <div id="news-list"></div>
-</section>
-
-<section data-detailed>
-  <h2 data-i18n-key="equity_title">CURVA DE EQUITY</h2>
-  <div class="equity-wrap"><canvas id="equity-chart"></canvas></div>
-</section>
-
-<section>
-  <h2 data-i18n-key="sentinels_title">SENTINELS</h2>
-  <div id="sentinels-grid" class="sentinels-grid"></div>
-</section>
-
-<section id="sentinel-detail-section" data-detailed style="display:none">
-  <h2 data-i18n-key="detail_title">DETALLE DE SENTINEL</h2>
-  <div class="sentinel-detail" id="sentinel-detail">
-    <div class="sent-name" id="detail-name">—</div>
-    <div class="sent-strategy" id="detail-strategy">—</div>
-    <div class="detail-quote" id="detail-quote">—</div>
-    <div class="detail-desc" id="detail-desc">—</div>
-    <div class="table-container">
-      <table>
-        <thead><tr>
-          <th data-i18n-key="th_ticker">TICKER</th>
-          <th data-i18n-key="th_signal">SEÑAL</th>
-          <th data-i18n-key="th_signal_at">CUÁNDO</th>
-          <th data-i18n-key="th_winrate">WIN%</th>
-          <th data-i18n-key="th_sharpe">SHARPE</th>
-          <th data-i18n-key="th_trades">TRADES</th>
-        </tr></thead>
-        <tbody id="detail-tickers-body"></tbody>
-      </table>
+    <div class="panel">
+      <div class="panel-h">
+        <span data-i18n="news_title">// NOTICIAS QUE MOVIERON DECISIONES</span>
+        <span class="right" id="newsCount">5 items</span>
+      </div>
+      <div class="news-list" id="newsList"></div>
     </div>
   </div>
-</section>
 
-<section data-detailed>
-  <h2 data-i18n-key="trades_title">OPERACIONES EJECUTADAS</h2>
-  <div id="trades-wrap"></div>
-</section>
+  <!-- ============ SECCIÓN 3: EQUITY ============ -->
+  <div class="section">
+    <div class="section-h">
+      <span class="label" data-i18n="sec_equity">// CURVA DE EQUITY</span>
+      <span class="meta" data-i18n="equity_24h">últimas 24h</span>
+    </div>
+    <div class="panel">
+      <div class="panel-body">
+        <svg class="eq-chart" viewBox="0 0 1200 240" preserveAspectRatio="none" id="eqChart"></svg>
+        <div class="eq-meta">
+          <span data-i18n="eq_capital">Capital</span><b id="eqCapital">$100,000.00</b>
+          <span data-i18n="eq_pnl">PnL día</span><b class="green" id="eqPnl">+$420.18</b>
+          <span data-i18n="eq_max_dd">Max DD</span><b>-1.24%</b>
+        </div>
+      </div>
+    </div>
+  </div>
 
-<section data-detailed>
-  <h2 data-i18n-key="flow_title">FLUJO DE SENTINELS</h2>
-  <div id="flow-wrap"></div>
-</section>
+  <!-- ============ SECCIÓN 4: 9 SENTINELS ============ -->
+  <div class="section">
+    <div class="section-h">
+      <span class="label" data-i18n="sec_sentinels">// 9 SENTINELS</span>
+      <span class="meta" data-i18n="click_card">Click en un Sentinel para ver detalle</span>
+    </div>
+    <div class="sent-grid" id="sentGrid"></div>
+  </div>
 
-<section data-detailed>
-  <details class="logs">
-    <summary data-i18n-key="logs_title">LOGS DEL SISTEMA</summary>
-    <pre id="logs-pre">—</pre>
-  </details>
-</section>
+  <!-- ============ SECCIÓN 5: DETALLE ACORDEÓN ============ -->
+  <div class="section">
+    <div class="section-h">
+      <span class="label" data-i18n="sec_detail">// DETALLE POR SENTINEL</span>
+      <div class="detail-controls">
+        <button id="expandAll" data-i18n="expand_all">+ EXPANDIR TODOS</button>
+        <button id="collapseAll" data-i18n="collapse_all">– COLAPSAR TODOS</button>
+      </div>
+    </div>
+    <div id="detailContainer"></div>
+  </div>
 
+  <!-- ============ FULL VIEW PANELS ============ -->
+  <div class="section full-only">
+    <div class="section-h">
+      <span class="label" data-i18n="sec_advanced">// PANELES AVANZADOS</span>
+      <span class="meta" data-i18n="advanced_meta">vista completa</span>
+    </div>
+    <div class="full-grid">
+      <!-- The Ear -->
+      <div class="panel">
+        <div class="panel-h"><span data-i18n="p_the_ear">// THE EAR — RISK SCORE</span></div>
+        <div class="panel-body">
+          <div class="gauge-wrap">
+            <svg class="gauge" viewBox="0 0 100 100" id="gaugeRisk"></svg>
+            <div class="gauge-meta">
+              <div class="lbl" data-i18n="g_risk_now">RISK SCORE ACTUAL</div>
+              <div class="val" id="gaugeVal">0.12</div>
+              <div class="desc" data-i18n="g_risk_desc">Envelope: 0.30 · Veto: ≥ 0.50</div>
+            </div>
+          </div>
+          <div class="bb-row">
+            <div class="bb-toggle on" id="bbCircuit"><span data-i18n="cb_off">CIRCUIT BREAKER · OFF</span></div>
+            <div class="bb-toggle on" id="bbParking"><span data-i18n="pb_off">PARKING BRAKE · OFF</span></div>
+          </div>
+        </div>
+      </div>
+      <!-- Correlation -->
+      <div class="panel">
+        <div class="panel-h"><span data-i18n="p_corr">// CORRELATION GUARD</span></div>
+        <div class="panel-body">
+          <div class="ops-summary" style="grid-template-columns:repeat(3,1fr);margin-bottom:0">
+            <div class="os-item"><div class="k" data-i18n="cg_avg">CORR PROMEDIO</div><div class="v yellow">0.42</div></div>
+            <div class="os-item"><div class="k" data-i18n="cg_reduced">SEÑALES REDUCIDAS</div><div class="v">5</div></div>
+            <div class="os-item"><div class="k" data-i18n="cg_discarded">DESCARTADAS</div><div class="v red">2</div></div>
+          </div>
+        </div>
+      </div>
+      <!-- Historian -->
+      <div class="panel">
+        <div class="panel-h"><span data-i18n="p_historian">// HISTORIAN — PERFORMANCE</span></div>
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead><tr id="histHead"></tr></thead>
+            <tbody id="histBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <!-- Dispatcher -->
+      <div class="panel">
+        <div class="panel-h"><span data-i18n="p_dispatcher">// DISPATCHER — ALLOCATION</span></div>
+        <div class="alloc-bars" id="allocBars"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ SECCIÓN 6: OPERACIONES ============ -->
+  <div class="section">
+    <div class="section-h">
+      <span class="label" data-i18n="sec_ops">// OPERACIONES EJECUTADAS</span>
+      <span class="meta" id="opsCount">0 trades</span>
+    </div>
+    <div class="panel">
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead><tr id="opsHead"></tr></thead>
+          <tbody id="opsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ SECCIÓN 7: FLUJO ============ -->
+  <div class="section">
+    <div class="section-h">
+      <span class="label" data-i18n="sec_flow">// FLUJO DE SENTINELS</span>
+      <span class="meta" id="flowCount">9 sentinels</span>
+    </div>
+    <div class="panel">
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead><tr id="flowHead"></tr></thead>
+          <tbody id="flowBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ SECCIÓN 8: LOGS ============ -->
+  <div class="section">
+    <div class="logs-section" id="logsSection">
+      <div class="logs-head" id="logsHead">
+        <span class="label" data-i18n="sec_logs">// LOGS DEL SISTEMA</span>
+        <span class="meta" id="logsCountMeta">17 lines</span>
+        <span class="chev">▶</span>
+      </div>
+      <div class="logs-body">
+        <div class="terminal">
+          <div class="terminal-head">
+            <div class="dots"><i></i><i></i><i></i></div>
+            <span class="path">~/sentinel/control@aftercapital — bash — 0.5x42</span>
+            <span class="right" id="logCount">0 lines</span>
+          </div>
+          <div class="terminal-body" id="terminalBody"></div>
+        </div>
+        <div class="dl-bar">
+          <span class="lbl" data-i18n="dl_range">RANGO:</span>
+          <select id="dlRange">
+            <option value="last_hour" data-i18n="r_hour">Última hora</option>
+            <option value="today" selected data-i18n="r_today">Hoy</option>
+            <option value="last_week" data-i18n="r_week">Última semana</option>
+            <option value="last_month" data-i18n="r_month">Último mes</option>
+            <option value="all" data-i18n="r_all">Todo</option>
+          </select>
+          <button class="download-btn" id="downloadBtn" data-i18n="dl_btn">DESCARGAR REPORTE JSON</button>
+        </div>
+      </div>
+    </div>
+  </div>
 </main>
 
 <footer>
-  AFTERLIFE CAPITAL — SENTINEL v0.5
-  <span data-i18n-key="last_update_label">· Última actualización:</span>
-  <span id="last-update">—</span>
+  <div class="brand-mini">AFTERLIFE</div>
+  <div class="meta">
+    <span><span data-i18n="foot_demo">Datos de demostración</span></span>
+    <span><span data-i18n="foot_updated">Actualizado</span>:<b id="footUpd">14:42:18</b></span>
+    <span><span data-i18n="foot_uptime">Uptime</span>:<b>168h</b></span>
+    <span><span data-i18n="foot_build">Build</span>:<b>0.5.42-a8c1f</b></span>
+  </div>
 </footer>
 
-<script>
-"use strict";
-
-/* ============================================================ *
- * I18N — strings UI en 4 idiomas                                *
- * ============================================================ */
-const I18N = {
-  es: {
-    view_btn: "SIMPLE", theme_btn: "SOBRIO", download_btn: "REPORTE",
-    agents_title: "AGENTES",
-    summary_title: "RESUMEN OPERACIONAL",
-    news_title: "NOTICIAS QUE MOVIERON DECISIONES",
-    equity_title: "CURVA DE EQUITY",
-    sentinels_title: "SENTINELS",
-    detail_title: "DETALLE DE SENTINEL",
-    trades_title: "OPERACIONES EJECUTADAS",
-    flow_title: "FLUJO DE SENTINELS",
-    logs_title: "LOGS DEL SISTEMA",
-    last_update_label: "· Última actualización:",
-    th_ticker: "TICKER", th_signal: "SEÑAL", th_signal_at: "CUÁNDO",
-    th_winrate: "WIN%", th_sharpe: "SHARPE", th_trades: "TRADES",
-    th_side: "LADO", th_qty: "CANTIDAD", th_price: "PRECIO",
-    th_status: "ESTADO", th_when: "MOMENTO", th_strategy: "ESTRATEGIA",
-    th_alloc: "ALLOC%", th_decay: "DECAY",
-    no_data: "Sin datos aún — esperando primera sesión de mercado",
-    online: "ONLINE", offline: "OFFLINE",
-    sentinels_active: "ACTIVOS", regime: "RÉGIMEN", risk: "RIESGO",
-    active: "ACTIVO", paused: "PAUSADO", standby: "STANDBY",
-    dispatcher: "DISPATCHER", correlation_guard: "CORRELATION GUARD",
-    the_ear: "THE EAR", historian: "HISTORIAN", regime_classifier: "S-10 RÉGIMEN",
-    threshold: "umbral", capital_total: "capital total",
-    rolling: "rolling", news_polling: "noticias c/15min",
-    trades_total: "trades persistidos",
-    classifier_disabled: "desactivado · NEUTRAL fijo",
-    no_news: "Sin noticias macro registradas todavía.",
-    equity_no_data: "Sin trades — la curva de equity arrancará tras la primera operación.",
-    download_today: "HOY", download_week: "SEMANA",
-    download_month: "MES", download_all: "TOTAL",
-    cyberpunk: "CYBER", sobrio: "SOBRIO",
-    completa: "COMPLETA", simple: "SIMPLE",
-  },
-  en: {
-    view_btn: "SIMPLE", theme_btn: "SOBER", download_btn: "REPORT",
-    agents_title: "AGENTS",
-    summary_title: "OPERATIONAL SUMMARY",
-    news_title: "NEWS THAT MOVED DECISIONS",
-    equity_title: "EQUITY CURVE",
-    sentinels_title: "SENTINELS",
-    detail_title: "SENTINEL DETAIL",
-    trades_title: "EXECUTED ORDERS",
-    flow_title: "SENTINEL FLOW",
-    logs_title: "SYSTEM LOGS",
-    last_update_label: "· Last update:",
-    th_ticker: "TICKER", th_signal: "SIGNAL", th_signal_at: "WHEN",
-    th_winrate: "WIN%", th_sharpe: "SHARPE", th_trades: "TRADES",
-    th_side: "SIDE", th_qty: "QTY", th_price: "PRICE",
-    th_status: "STATUS", th_when: "TIME", th_strategy: "STRATEGY",
-    th_alloc: "ALLOC%", th_decay: "DECAY",
-    no_data: "No data yet — waiting for first market session",
-    online: "ONLINE", offline: "OFFLINE",
-    sentinels_active: "ACTIVE", regime: "REGIME", risk: "RISK",
-    active: "ACTIVE", paused: "PAUSED", standby: "STANDBY",
-    dispatcher: "DISPATCHER", correlation_guard: "CORRELATION GUARD",
-    the_ear: "THE EAR", historian: "HISTORIAN", regime_classifier: "S-10 REGIME",
-    threshold: "threshold", capital_total: "total capital",
-    rolling: "rolling", news_polling: "news every 15min",
-    trades_total: "persisted trades",
-    classifier_disabled: "disabled · NEUTRAL fixed",
-    no_news: "No macro news recorded yet.",
-    equity_no_data: "No trades — equity curve will start after first execution.",
-    download_today: "TODAY", download_week: "WEEK",
-    download_month: "MONTH", download_all: "ALL",
-    cyberpunk: "CYBER", sobrio: "SOBER",
-    completa: "FULL", simple: "SIMPLE",
-  },
-  ja: {
-    view_btn: "簡易", theme_btn: "ソブリオ", download_btn: "レポート",
-    agents_title: "エージェント",
-    summary_title: "運用サマリー",
-    news_title: "決定を動かしたニュース",
-    equity_title: "エクイティカーブ",
-    sentinels_title: "センチネル",
-    detail_title: "センチネル詳細",
-    trades_title: "実行された取引",
-    flow_title: "センチネルフロー",
-    logs_title: "システムログ",
-    last_update_label: "· 最終更新:",
-    th_ticker: "銘柄", th_signal: "シグナル", th_signal_at: "時刻",
-    th_winrate: "勝率%", th_sharpe: "シャープ", th_trades: "取引数",
-    th_side: "売買", th_qty: "数量", th_price: "価格",
-    th_status: "状態", th_when: "時刻", th_strategy: "戦略",
-    th_alloc: "配分%", th_decay: "劣化",
-    no_data: "データなし — 最初の市場セッションを待機中",
-    online: "オンライン", offline: "オフライン",
-    sentinels_active: "稼働中", regime: "レジーム", risk: "リスク",
-    active: "稼働", paused: "停止", standby: "待機",
-    dispatcher: "ディスパッチャー", correlation_guard: "相関ガード",
-    the_ear: "ジ・イヤー", historian: "ヒストリアン", regime_classifier: "S-10 レジーム",
-    threshold: "閾値", capital_total: "総資本",
-    rolling: "ローリング", news_polling: "15分毎ニュース",
-    trades_total: "永続化された取引",
-    classifier_disabled: "無効 · NEUTRAL固定",
-    no_news: "マクロニュース未記録。",
-    equity_no_data: "取引なし — 初回実行後にカーブ開始。",
-    download_today: "本日", download_week: "週",
-    download_month: "月", download_all: "全",
-    cyberpunk: "サイバー", sobrio: "ソブリオ",
-    completa: "完全", simple: "簡易",
-  },
-  th: {
-    view_btn: "ง่าย", theme_btn: "เรียบ", download_btn: "รายงาน",
-    agents_title: "เอเจนต์",
-    summary_title: "สรุปการดำเนินงาน",
-    news_title: "ข่าวที่กระทบการตัดสินใจ",
-    equity_title: "เส้นทุน",
-    sentinels_title: "เซนติเนล",
-    detail_title: "รายละเอียดเซนติเนล",
-    trades_title: "คำสั่งที่ทำแล้ว",
-    flow_title: "การไหลของเซนติเนล",
-    logs_title: "บันทึกระบบ",
-    last_update_label: "· อัปเดตล่าสุด:",
-    th_ticker: "หุ้น", th_signal: "สัญญาณ", th_signal_at: "เวลา",
-    th_winrate: "ชนะ%", th_sharpe: "ชาร์ป", th_trades: "ครั้ง",
-    th_side: "ฝั่ง", th_qty: "จำนวน", th_price: "ราคา",
-    th_status: "สถานะ", th_when: "เวลา", th_strategy: "กลยุทธ์",
-    th_alloc: "จัดสรร%", th_decay: "เสื่อม",
-    no_data: "ยังไม่มีข้อมูล — รอการเปิดตลาดครั้งแรก",
-    online: "ออนไลน์", offline: "ออฟไลน์",
-    sentinels_active: "ทำงาน", regime: "ระบอบ", risk: "ความเสี่ยง",
-    active: "ทำงาน", paused: "หยุด", standby: "รอ",
-    dispatcher: "ตัวจ่ายงาน", correlation_guard: "ผู้พิทักษ์ความสัมพันธ์",
-    the_ear: "หู", historian: "นักประวัติ", regime_classifier: "S-10 ระบอบ",
-    threshold: "เกณฑ์", capital_total: "เงินทุนรวม",
-    rolling: "เลื่อน", news_polling: "ข่าวทุก 15 นาที",
-    trades_total: "เก็บแล้ว",
-    classifier_disabled: "ปิด · ตรึง NEUTRAL",
-    no_news: "ยังไม่มีข่าวมาโคร",
-    equity_no_data: "ไม่มีคำสั่ง — เส้นทุนจะเริ่มหลังการทำคำสั่งครั้งแรก",
-    download_today: "วันนี้", download_week: "สัปดาห์",
-    download_month: "เดือน", download_all: "ทั้งหมด",
-    cyberpunk: "ไซเบอร์", sobrio: "เรียบ",
-    completa: "เต็ม", simple: "ง่าย",
-  },
-};
-
-/* ============================================================ *
- * SENTINEL DISPLAY — código → nombre cyberpunk + cita + desc    *
- * ============================================================ */
-const SENTINEL_DISPLAY = {
-  sma_crossover: {
-    name: "MORPHEUS",
-    subtitle: "SMA Crossover — Trend Following",
-    quote: {
-      es: "«Él ve la señal, sigue la tendencia, guía el camino.» — Matrix",
-      en: "«He sees the signal, follows the trend, leads the way.» — Matrix",
-      ja: "「彼は信号を見て、トレンドを追い、道を示す。」— マトリックス",
-      th: "«เขาเห็นสัญญาณ ตามเทรนด์ นำทาง.» — Matrix",
-    },
-    desc: {
-      es: "Detecta cruces entre dos medias móviles (rápida 10, lenta 50). Cuando la rápida cruza por encima, compra; cuando cruza por debajo, vende.",
-      en: "Detects crossovers between two moving averages (fast 10, slow 50). Fast crossing above buys; crossing below sells.",
-      ja: "10と50の単純移動平均線のクロスを検出。短期が長期を上抜け→買い、下抜け→売り。",
-      th: "ตรวจการตัดของค่าเฉลี่ยเคลื่อนที่ 10 และ 50 ตัด ขึ้น = ซื้อ ตัดลง = ขาย",
-    },
-  },
-  rsi_short: {
-    name: "MANTIS",
-    subtitle: "RSI Short — Mean Reversion",
-    quote: {
-      es: "«Golpe rápido y preciso — entra y sale en un instante.» — Cyberpunk 2077",
-      en: "«Quick, precise strike — in and out in an instant.» — Cyberpunk 2077",
-      ja: "「速く正確な一撃 — 一瞬で入って出る。」— Cyberpunk 2077",
-      th: "«โจมตีรวดเร็วแม่นยำ — เข้าออกในพริบตา.» — Cyberpunk 2077",
-    },
-    desc: {
-      es: "RSI ultra-corto (2 barras) para detectar extremos. RSI < 15 compra, RSI > 85 vende.",
-      en: "Ultra-short RSI (2 periods) for extremes. RSI < 15 buys, RSI > 85 sells.",
-      ja: "超短期RSI(2期間)で極端値を検出。RSI<15で買い、RSI>85で売り。",
-      th: "RSI ระยะสั้นมาก (2 แท่ง) จับจุดสุดโต่ง RSI<15 ซื้อ RSI>85 ขาย",
-    },
-  },
-  bollinger_bounce: {
-    name: "ORACLE",
-    subtitle: "Bollinger Bounce — Mean Reversion",
-    quote: {
-      es: "«Predice el rebote, sabe que el precio vuelve a la media.» — Matrix",
-      en: "«Predicts the bounce, knows price returns to the mean.» — Matrix",
-      ja: "「反発を予知し、価格が平均に戻ることを知る。」— マトリックス",
-      th: "«ทำนายการดีดกลับ รู้ว่าราคาจะกลับสู่ค่าเฉลี่ย.» — Matrix",
-    },
-    desc: {
-      es: "Bandas de Bollinger clásicas (SMA 20 ± 2σ). Cierre bajo banda inferior compra, sobre banda superior vende.",
-      en: "Classic Bollinger Bands (SMA 20 ± 2σ). Close below lower band buys, above upper band sells.",
-      ja: "標準ボリンジャーバンド (SMA20 ± 2σ)。下バンド割れで買い、上バンド超えで売り。",
-      th: "Bollinger Bands มาตรฐาน (SMA20 ± 2σ) ปิดต่ำกว่าล่าง ซื้อ ปิดเหนือบน ขาย",
-    },
-  },
-  macd_volume: {
-    name: "SILVERHAND",
-    subtitle: "MACD + Volume — Trend Following",
-    quote: {
-      es: "«No actúa sin confirmación — necesita la presencia para moverse.» — Cyberpunk 2077",
-      en: "«Won't act without confirmation — needs the presence to move.» — Cyberpunk 2077",
-      ja: "「確認なしには動かない — 動くには存在が必要だ。」— Cyberpunk 2077",
-      th: "«ไม่ทำโดยไม่ยืนยัน — ต้องมีตัวตนถึงจะขยับ.» — Cyberpunk 2077",
-    },
-    desc: {
-      es: "MACD(12,26,9) con confirmación de volumen >1.5x SMA(20). Sin volumen, ignora la señal.",
-      en: "MACD(12,26,9) with volume >1.5x SMA(20) confirmation. Without volume, signal is ignored.",
-      ja: "MACD(12,26,9) と出来高 1.5x SMA(20) の確認。出来高なしならシグナル無視。",
-      th: "MACD(12,26,9) ยืนยันด้วยปริมาณ >1.5 เท่าค่าเฉลี่ย SMA(20)",
-    },
-  },
-  orb_breakout: {
-    name: "SMASHER",
-    subtitle: "Opening Range Breakout — Breakout",
-    quote: {
-      es: "«Rompe cualquier barrera — breakout puro.» — Cyberpunk 2077",
-      en: "«Breaks any barrier — pure breakout.» — Cyberpunk 2077",
-      ja: "「あらゆる障壁を突破する — 純粋なブレイクアウト。」— Cyberpunk 2077",
-      th: "«ทะลุทะลวงทุกกำแพง — ทะลุล้วน ๆ.» — Cyberpunk 2077",
-    },
-    desc: {
-      es: "Marca high/low de la primera vela del día (apertura ET 9:30). Rompe con volumen confirmando, opera.",
-      en: "Marks high/low of the first daily candle (ET 9:30 open). Breakouts confirmed by volume trigger trades.",
-      ja: "当日初足の高値/安値を記録(ET 9:30)。出来高確認のブレイクで発注。",
-      th: "บันทึกสูง-ต่ำของแท่งแรก (9:30 ET) ทะลุพร้อมวอลุ่ม = เทรด",
-    },
-  },
-  ema_triple: {
-    name: "TRINITY",
-    subtitle: "EMA Triple — Trend Following",
-    quote: {
-      es: "«Tres fuerzas alineadas. El nombre se pone solo.» — Matrix",
-      en: "«Three forces aligned. The name speaks for itself.» — Matrix",
-      ja: "「三つの力が揃う。名前は自ずと決まる。」— マトリックス",
-      th: "«สามแรงเรียงตัว ชื่อก็มาเอง.» — Matrix",
-    },
-    desc: {
-      es: "EMA 8, 21, 55 alineadas. Todas alcistas → compra; todas bajistas → vende; mezcla → no opera.",
-      en: "EMA 8, 21, 55 aligned. All bullish → buy; all bearish → sell; mixed → hold.",
-      ja: "EMA 8/21/55 が整列。全強気→買い、全弱気→売り、混合→見送り。",
-      th: "EMA 8, 21, 55 เรียงตัว ขึ้นทั้งหมด=ซื้อ ลงทั้งหมด=ขาย ผสม=ถือ",
-    },
-  },
-  vwap_reversion: {
-    name: "NETRUNNER",
-    subtitle: "VWAP Reversion — Mean Reversion",
-    quote: {
-      es: "«Encuentra el valor oculto en los datos.» — Cyberpunk 2077",
-      en: "«Finds hidden value in the data.» — Cyberpunk 2077",
-      ja: "「データの中に隠された価値を見つける。」— Cyberpunk 2077",
-      th: "«ค้นหามูลค่าที่ซ่อนอยู่ในข้อมูล.» — Cyberpunk 2077",
-    },
-    desc: {
-      es: "VWAP intradía con bandas ±2σ. Opera reversión al fair value cuando el precio se aleja.",
-      en: "Intraday VWAP with ±2σ bands. Trades reversion to fair value when price diverges.",
-      ja: "日中VWAP ±2σバンド。乖離時にフェアバリューへの回帰を狙う。",
-      th: "VWAP ภายในวัน ±2σ เทรดการกลับสู่ค่าจริง",
-    },
-  },
-  rsi_divergence: {
-    name: "NEO",
-    subtitle: "RSI Divergence — Reversal",
-    quote: {
-      es: "«Ve lo que otros no ven — la divergencia detrás de la superficie.» — Matrix",
-      en: "«Sees what others don't — divergence beneath the surface.» — Matrix",
-      ja: "「他が見えないものを見る — 表面下のダイバージェンス。」— マトリックス",
-      th: "«เห็นสิ่งที่คนอื่นไม่เห็น — ไดเวอร์เจนต์ใต้ผิว.» — Matrix",
-    },
-    desc: {
-      es: "Divergencia precio/RSI(14) en swings. Pocas señales, alta probabilidad de reversal.",
-      en: "Price/RSI(14) divergence on swings. Few signals, high reversal probability.",
-      ja: "スイングでの価格/RSI(14)ダイバージェンス。少シグナル・高反転確率。",
-      th: "ไดเวอร์เจนต์ราคา/RSI(14) ที่ swing สัญญาณน้อย กลับตัวสูง",
-    },
-  },
-  bollinger_squeeze: {
-    name: "ROGUE",
-    subtitle: "Bollinger Squeeze — Breakout",
-    quote: {
-      es: "«Espera en silencio hasta el momento perfecto, y entonces actúa.» — Cyberpunk 2077",
-      en: "«Waits silently for the perfect moment, then strikes.» — Cyberpunk 2077",
-      ja: "「完璧な瞬間まで静かに待ち、そして動く。」— Cyberpunk 2077",
-      th: "«รอเงียบ ๆ จนถึงจังหวะเหมาะ แล้วลงมือ.» — Cyberpunk 2077",
-    },
-    desc: {
-      es: "BBW en percentil 10 (compresión) + breakout de banda. Sin compresión, no opera.",
-      en: "BBW at 10th percentile (squeeze) + band breakout. No squeeze, no trade.",
-      ja: "BBWが10パーセンタイル(スクイーズ)+バンド抜け。圧縮なしなら不発注。",
-      th: "BBW เพอร์เซ็นไทล์ 10 (บีบ) + ทะลุแบนด์ ไม่บีบไม่เทรด",
-    },
-  },
-};
-
-/* ============================================================ *
- * STATE                                                         *
- * ============================================================ */
-const STATE = {
-  lang: "es",
-  view: "completa",
-  theme: "cyberpunk",
-  status: null,
-  sentinels: [],
-  trades: [],
-  macro: { recent_events: [], current_risk_score: 0 },
-  performance: [],
-  equityChart: null,
-  sse: null,
-};
-
-/* ============================================================ *
- * HELPERS                                                       *
- * ============================================================ */
-const T = (key) => I18N[STATE.lang][key] ?? key;
-const $ = (sel) => document.querySelector(sel);
-const $$ = (sel) => Array.from(document.querySelectorAll(sel));
-const fmtTs = (iso) => {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (isNaN(d)) return iso;
-  return d.toISOString().slice(0, 19).replace("T", " ") + "Z";
-};
-const fmtNum = (n, d = 2) => {
-  if (n == null || isNaN(n)) return "—";
-  return Number(n).toFixed(d);
-};
-const fmtPct = (n) => (n == null ? "—" : (Number(n) * 100).toFixed(1) + "%");
-
-async function fetchJSON(url) {
-  try {
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(r.status + " " + r.statusText);
-    return await r.json();
-  } catch (e) {
-    console.error("fetch", url, e);
-    return null;
-  }
-}
-
-/* ============================================================ *
- * RENDER — i18n a todos los nodos con data-i18n-key             *
- * ============================================================ */
-function applyI18n() {
-  $$("[data-i18n-key]").forEach((el) => {
-    el.textContent = T(el.dataset.i18nKey);
-  });
-  document.documentElement.lang = STATE.lang;
-}
-
-/* ============================================================ *
- * RENDER — header pills                                         *
- * ============================================================ */
-function renderStatus() {
-  const s = STATE.status;
-  if (!s) return;
-  const sys = $("#pill-system");
-  sys.textContent = `SYSTEM ${s.system}`;
-  sys.classList.toggle("online", s.system === "ONLINE");
-
-  $("#pill-active").textContent = `${T("sentinels_active")} ${s.sentinels_active}/${s.sentinels_total}`;
-  $("#pill-active").classList.toggle("online", s.sentinels_active > 0);
-
-  $("#pill-regime").textContent = `${T("regime")} ${s.regime}`;
-  const risk = s.risk_score ?? 0;
-  const riskPill = $("#pill-risk");
-  riskPill.textContent = `${T("risk")} ${(risk * 100).toFixed(0)}%`;
-  riskPill.classList.remove("online", "warn", "bad");
-  if (risk > 0.7) riskPill.classList.add("bad");
-  else if (risk > 0.4) riskPill.classList.add("warn");
-  else riskPill.classList.add("online");
-}
-
-/* ============================================================ *
- * RENDER — agentes (5 cards)                                    *
- * ============================================================ */
-function renderAgents() {
-  const s = STATE.status;
-  if (!s) return;
-  const agents = [
-    {
-      key: "dispatcher", title: T("dispatcher"),
-      value: T("active"),
-      meta: `${T("capital_total")} 45%`,
-      active: !s.circuit_breaker,
-    },
-    {
-      key: "correlation_guard", title: T("correlation_guard"),
-      value: "0.75",
-      meta: `${T("threshold")} · ${T("rolling")} 60`,
-      active: true,
-    },
-    {
-      key: "the_ear", title: T("the_ear"),
-      value: `${(s.risk_score * 100).toFixed(0)}%`,
-      meta: T("news_polling"),
-      active: !s.circuit_breaker,
-    },
-    {
-      key: "historian", title: T("historian"),
-      value: `${STATE.trades.length}`,
-      meta: T("trades_total"),
-      active: true,
-    },
-    {
-      key: "regime_classifier", title: T("regime_classifier"),
-      value: "NEUTRAL",
-      meta: T("classifier_disabled"),
-      active: false,
-    },
-  ];
-  $("#agents-grid").innerHTML = agents.map(a => `
-    <div class="card agent-card ${a.active ? 'active' : 'dimmed'}">
-      <div class="card-title">${a.title}</div>
-      <div class="card-value">${a.value}</div>
-      <div class="card-meta">${a.meta}</div>
-    </div>
-  `).join("");
-}
-
-/* ============================================================ *
- * RENDER — summary (mini cards)                                 *
- * ============================================================ */
-function renderSummary() {
-  const s = STATE.status;
-  if (!s) return;
-  const cards = [
-    { title: T("sentinels_active"), value: `${s.sentinels_active}/${s.sentinels_total}` },
-    { title: "TICKERS", value: `${s.tickers_total}` },
-    { title: T("regime"), value: s.regime },
-    { title: T("risk"), value: `${(s.risk_score * 100).toFixed(0)}%` },
-    { title: "REFRESH", value: s.refresh_interval },
-    { title: "TRADES", value: `${STATE.trades.length}` },
-  ];
-  $("#summary-grid").innerHTML = cards.map(c => `
-    <div class="card">
-      <div class="card-title">${c.title}</div>
-      <div class="card-value">${c.value}</div>
-    </div>
-  `).join("");
-}
-
-/* ============================================================ *
- * RENDER — sentinels grid + detail al click                     *
- * ============================================================ */
-function renderSentinels() {
-  const grid = $("#sentinels-grid");
-  if (!STATE.sentinels.length) {
-    grid.innerHTML = `<div class="empty-state">${T("no_data")}</div>`;
-    return;
-  }
-  grid.innerHTML = STATE.sentinels.map(s => {
-    const display = SENTINEL_DISPLAY[s.strategy_type] || { name: s.name, subtitle: s.strategy_type };
-    const anySignal = s.tickers.some(t => t.last_signal && t.last_signal !== "HOLD");
-    const chips = s.tickers.map(t => {
-      const cls = t.last_signal === "BUY" ? "buy" : t.last_signal === "SELL" ? "sell" : "";
-      return `<span class="tk-chip ${cls}">${t.ticker}</span>`;
-    }).join("");
-    return `
-      <div class="sent-card ${anySignal ? 'has-signal' : ''}" data-sid="${s.sentinel_id}">
-        <div class="sent-name">${display.name}</div>
-        <div class="sent-strategy">${display.subtitle}</div>
-        <div class="sent-tickers">${chips}</div>
-        <div class="sent-stats">
-          <span class="alloc">${s.allocation_pct.toFixed(1)}%</span> ·
-          ${T("th_trades")}: ${s.total_trades}
-          ${s.decay_status ? ` · <span class="signal-sell">DECAY</span>` : ""}
-        </div>
-      </div>`;
-  }).join("");
-  $$(".sent-card").forEach(card => {
-    card.addEventListener("click", () => showDetail(card.dataset.sid));
-  });
-}
-
-function showDetail(sentinelId) {
-  const s = STATE.sentinels.find(x => x.sentinel_id === sentinelId);
-  if (!s) return;
-  const display = SENTINEL_DISPLAY[s.strategy_type] || { name: s.name, subtitle: s.strategy_type, quote: {}, desc: {} };
-  $("#detail-name").textContent = display.name;
-  $("#detail-strategy").textContent = display.subtitle;
-  $("#detail-quote").textContent = display.quote[STATE.lang] || display.quote.es || "";
-  $("#detail-desc").textContent = display.desc[STATE.lang] || display.desc.es || "";
-  $("#detail-tickers-body").innerHTML = s.tickers.map(t => `
-    <tr>
-      <td><strong>${t.ticker}</strong></td>
-      <td class="signal-${(t.last_signal || 'hold').toLowerCase()}">${t.last_signal || "—"}</td>
-      <td>${fmtTs(t.last_signal_at)}</td>
-      <td>${fmtPct(t.win_rate)}</td>
-      <td>${fmtNum(t.sharpe_ratio, 3)}</td>
-      <td>${(t.win_rate || t.sharpe_ratio) ? "·" : "—"}</td>
-    </tr>
-  `).join("");
-  const section = $("#sentinel-detail-section");
-  section.style.display = "";
-  section.scrollIntoView({ behavior: "smooth", block: "start" });
-}
-
-/* ============================================================ *
- * RENDER — trades table                                         *
- * ============================================================ */
-function renderTrades() {
-  const wrap = $("#trades-wrap");
-  if (!STATE.trades.length) {
-    wrap.innerHTML = `<div class="empty-state">${T("no_data")}</div>`;
-    return;
-  }
-  wrap.innerHTML = `
-    <div class="table-container">
-      <table>
-        <thead><tr>
-          <th>${T("th_when")}</th>
-          <th>SENTINEL</th>
-          <th>${T("th_ticker")}</th>
-          <th>${T("th_side")}</th>
-          <th>${T("th_qty")}</th>
-          <th>${T("th_price")}</th>
-          <th>SLIPPAGE</th>
-          <th>${T("th_status")}</th>
-        </tr></thead>
-        <tbody>
-          ${STATE.trades.map(t => `
-            <tr>
-              <td>${fmtTs(t.created_at)}</td>
-              <td>${t.sentinel_name}</td>
-              <td>${t.ticker}</td>
-              <td class="signal-${(t.side || '').toLowerCase()}">${t.side}</td>
-              <td>${fmtNum(t.qty, 2)}</td>
-              <td>${fmtNum(t.filled_price, 4)}</td>
-              <td>${fmtNum(t.slippage, 4)}</td>
-              <td>${t.status}</td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-    </div>`;
-}
-
-/* ============================================================ *
- * RENDER — flujo (un row por sentinel × ticker)                 *
- * ============================================================ */
-function renderFlow() {
-  const wrap = $("#flow-wrap");
-  if (!STATE.sentinels.length) {
-    wrap.innerHTML = `<div class="empty-state">${T("no_data")}</div>`;
-    return;
-  }
-  const rows = [];
-  STATE.sentinels.forEach(s => {
-    const display = SENTINEL_DISPLAY[s.strategy_type] || { name: s.name };
-    s.tickers.forEach(t => {
-      rows.push({
-        name: display.name,
-        strategy: s.strategy_type,
-        ticker: t.ticker,
-        signal: t.last_signal,
-        signalAt: t.last_signal_at,
-        winRate: t.win_rate,
-        sharpe: t.sharpe_ratio,
-        alloc: s.allocation_pct,
-        decay: s.decay_status,
-      });
-    });
-  });
-  wrap.innerHTML = `
-    <div class="table-container">
-      <table>
-        <thead><tr>
-          <th>SENTINEL</th>
-          <th>${T("th_strategy")}</th>
-          <th>${T("th_ticker")}</th>
-          <th>${T("th_signal")}</th>
-          <th>${T("th_signal_at")}</th>
-          <th>${T("th_winrate")}</th>
-          <th>${T("th_sharpe")}</th>
-          <th>${T("th_alloc")}</th>
-          <th>${T("th_decay")}</th>
-        </tr></thead>
-        <tbody>
-          ${rows.map(r => `
-            <tr>
-              <td><strong>${r.name}</strong></td>
-              <td>${r.strategy}</td>
-              <td>${r.ticker}</td>
-              <td class="signal-${(r.signal || 'hold').toLowerCase()}">${r.signal || "—"}</td>
-              <td>${fmtTs(r.signalAt)}</td>
-              <td>${fmtPct(r.winRate)}</td>
-              <td>${fmtNum(r.sharpe, 3)}</td>
-              <td>${r.alloc.toFixed(1)}%</td>
-              <td>${r.decay ? '<span class="signal-sell">YES</span>' : "—"}</td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-    </div>`;
-}
-
-/* ============================================================ *
- * RENDER — noticias (macro events recientes)                    *
- * ============================================================ */
-function renderNews() {
-  const list = $("#news-list");
-  const evs = STATE.macro.recent_events || [];
-  if (!evs.length) {
-    list.innerHTML = `<div class="empty-state">${T("no_news")}</div>`;
-    return;
-  }
-  list.innerHTML = evs.slice(0, 10).map(ev => `
-    <div class="news-item">
-      <div class="ts">${fmtTs(ev.created_at)}</div>
-      risk_score: <strong>${fmtNum(ev.risk_score, 4)}</strong>
-      ${ev.vix_level != null ? ` · VIX Δ: ${fmtNum(ev.vix_level, 2)}%` : ""}
-      ${ev.spy_change_15min != null ? ` · SPY Δ: ${fmtNum(ev.spy_change_15min, 2)}%` : ""}
-      ${ev.circuit_breaker_triggered ? ` · <span class="signal-sell">CIRCUIT BREAKER</span>` : ""}
-    </div>
-  `).join("");
-}
-
-/* ============================================================ *
- * RENDER — equity chart                                         *
- * ============================================================ */
-function renderEquity() {
-  const ctx = $("#equity-chart");
-  if (!ctx) return;
-  const trades = STATE.trades;
-  if (!trades.length) {
-    if (STATE.equityChart) { STATE.equityChart.destroy(); STATE.equityChart = null; }
-    const parent = ctx.parentElement;
-    parent.innerHTML = `<div class="empty-state">${T("equity_no_data")}</div>`;
-    return;
-  }
-  // PnL acumulado naive desde slippage * qty con signo SELL/BUY. Placeholder visual hasta que haya FIFO real.
-  const sorted = [...trades].reverse();   // ASC por created_at
-  let acc = 0;
-  const data = sorted.map(t => {
-    const sign = t.side === "SELL" ? 1 : -1;
-    const slip = Number(t.slippage) || 0;
-    acc += sign * slip * (Number(t.qty) || 1);
-    return { x: t.created_at, y: acc };
-  });
-  if (STATE.equityChart) STATE.equityChart.destroy();
-  STATE.equityChart = new Chart(ctx, {
-    type: "line",
-    data: {
-      labels: data.map(d => d.x),
-      datasets: [{
-        label: "Equity",
-        data: data.map(d => d.y),
-        borderColor: "#00f5ff",
-        backgroundColor: "rgba(0,245,255,0.15)",
-        tension: 0.2, fill: true, pointRadius: 2,
-      }],
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      scales: {
-        x: { ticks: { color: "#6b8a93", maxTicksLimit: 8 }, grid: { color: "rgba(0,245,255,0.08)" } },
-        y: { ticks: { color: "#6b8a93" }, grid: { color: "rgba(0,245,255,0.08)" } },
-      },
-      plugins: { legend: { display: false } },
-    },
-  });
-}
-
-/* ============================================================ *
- * RENDER — logs                                                 *
- * ============================================================ */
-function renderLogs() {
-  const pre = $("#logs-pre");
-  const lines = (STATE.macro.recent_events || []).slice(0, 30).map(ev =>
-    `[${fmtTs(ev.created_at)}] EAR risk=${fmtNum(ev.risk_score, 4)} ` +
-    `vix=${fmtNum(ev.vix_level, 2)} spy=${fmtNum(ev.spy_change_15min, 2)} ` +
-    `circuit=${ev.circuit_breaker_triggered}`
-  );
-  pre.textContent = lines.length ? lines.join("\n") : "—";
-}
-
-/* ============================================================ *
- * RENDER — todo                                                 *
- * ============================================================ */
-function renderAll() {
-  applyI18n();
-  renderStatus();
-  renderAgents();
-  renderSummary();
-  renderNews();
-  renderEquity();
-  renderSentinels();
-  renderTrades();
-  renderFlow();
-  renderLogs();
-}
-
-/* ============================================================ *
- * DATA — fetch initial + SSE                                    *
- * ============================================================ */
-async function loadAll() {
-  const [status, sentinels, trades, macro, perf] = await Promise.all([
-    fetchJSON("/api/status"),
-    fetchJSON("/api/sentinels"),
-    fetchJSON("/api/trades?limit=100"),
-    fetchJSON("/api/macro"),
-    fetchJSON("/api/performance"),
-  ]);
-  if (status)    STATE.status = status;
-  if (sentinels) STATE.sentinels = sentinels;
-  if (trades)    STATE.trades = trades;
-  if (macro)     STATE.macro = macro;
-  if (perf)      STATE.performance = perf;
-  renderAll();
-  $("#last-update").textContent = new Date().toISOString().slice(11, 19) + " UTC";
-}
-
-function connectSSE() {
-  if (STATE.sse) STATE.sse.close();
-  try {
-    STATE.sse = new EventSource("/api/sse");
-    STATE.sse.addEventListener("update", () => {
-      // Refrescar datos completos en cada update SSE — son cada 15min, no es costoso
-      loadAll();
-    });
-    STATE.sse.addEventListener("error", () => {
-      // El navegador re-conecta automáticamente
-    });
-  } catch (e) {
-    console.error("SSE connect", e);
-  }
-}
-
-/* ============================================================ *
- * UI HANDLERS                                                   *
- * ============================================================ */
-function setupUI() {
-  $("#lang").addEventListener("change", (e) => {
-    STATE.lang = e.target.value;
-    renderAll();
-  });
-
-  $("#toggle-view").addEventListener("click", () => {
-    STATE.view = STATE.view === "completa" ? "simple" : "completa";
-    document.body.dataset.view = STATE.view;
-    $("#toggle-view").textContent = STATE.view === "completa"
-      ? T("simple") : T("completa");
-  });
-
-  $("#toggle-theme").addEventListener("click", () => {
-    STATE.theme = STATE.theme === "cyberpunk" ? "sobrio" : "cyberpunk";
-    document.documentElement.dataset.theme = STATE.theme;
-    $("#toggle-theme").textContent = STATE.theme === "cyberpunk"
-      ? T("sobrio") : T("cyberpunk");
-    renderEquity();   // re-render para que el chart agarre el nuevo tema
-  });
-
-  $("#download-report").addEventListener("click", async () => {
-    const ranges = [
-      { value: "today",      label: T("download_today") },
-      { value: "last_week",  label: T("download_week") },
-      { value: "last_month", label: T("download_month") },
-      { value: "all",        label: T("download_all") },
-    ];
-    const choice = prompt(
-      ranges.map((r, i) => `${i + 1}. ${r.label}`).join("\n") + "\n\n[1-4]:",
-      "1"
-    );
-    const idx = parseInt(choice, 10) - 1;
-    if (isNaN(idx) || idx < 0 || idx > 3) return;
-    const range = ranges[idx].value;
-    const r = await fetch("/api/report?range=" + range);
-    if (!r.ok) { alert("Error: " + r.status); return; }
-    const blob = await r.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `sentinel_report_${range}_${new Date().toISOString().slice(0,10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  });
-}
-
-/* ============================================================ *
- * INIT                                                          *
- * ============================================================ */
-async function init() {
-  setupUI();
-  await loadAll();
-  connectSSE();
-}
-
-document.addEventListener("DOMContentLoaded", init);
-</script>
+<script src="sentinel-i18n.js"></script>
+<script src="sentinel-data.js"></script>
+<script src="sentinel-app.js"></script>
 
 </body>
 </html>

@@ -20,23 +20,79 @@ from config import (
 logger = logging.getLogger("sentinel.historian")
 
 
+# Annualization factor para Sharpe sobre barras de 15 minutos.
+# Equity market: 252 días hábiles × 26 barras/día (6.5h × 4 barras/hora) = 6552
+# bars/year. El factor escala el Sharpe per-period a Sharpe anual estándar,
+# que es la escala asumida por SHARPE_MINIMUM = 0.5 en config.py.
+# Sin esto, el threshold se aplicaba contra Sharpe per-period y rechazaba
+# estrategias razonables como decay (#TECHDEBT promovido).
+_BARS_PER_TRADING_DAY = 26
+_TRADING_DAYS_PER_YEAR = 252
+_SHARPE_ANNUALIZATION_FACTOR = math.sqrt(_TRADING_DAYS_PER_YEAR * _BARS_PER_TRADING_DAY)
+
+
 class Historian:
     def __init__(self, database_url: str):
         self.database_url = database_url
         self.pool: Optional[asyncpg.Pool] = None
 
     async def connect(self):
-        """Inicializa el pool de conexiones asyncpg (min 2, max 10 conexiones)."""
+        """Inicializa el pool de conexiones asyncpg (min 2, max 10 conexiones).
+
+        Timeouts:
+            command_timeout=10  → cada query individual aborta a los 10s.
+            timeout=5           → acquire connection del pool aborta a los 5s.
+        Sin estos, una query colgada drena el pool y el sistema queda sin
+        servicio en silencio (#H-3a).
+        """
         try:
             self.pool = await asyncpg.create_pool(
                 dsn=self.database_url,
                 min_size=2,
                 max_size=10,
+                command_timeout=10,
+                timeout=5,
             )
             logger.info("Pool PostgreSQL inicializado.")
         except Exception as e:
             logger.error(f"Error al conectar con PostgreSQL: {e}")
             raise
+
+        # Asegurar que la tabla system_state existe (idempotente).
+        # Es el canal IPC entre api.py y main.py para el kill switch (#H-7).
+        # La migración 004 también crea esta tabla — este DDL es la red de
+        # seguridad para entornos donde la migración no se aplicó manualmente.
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS system_state (
+                    key         TEXT PRIMARY KEY,
+                    value       TEXT NOT NULL,
+                    updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+            """)
+            for flag in ("halt_requested", "system_halted", "resume_requested"):
+                await conn.execute(
+                    """
+                    INSERT INTO system_state (key, value) VALUES ($1, 'false')
+                    ON CONFLICT (key) DO NOTHING
+                    """,
+                    flag,
+                )
+
+            # Asegurar email + role=ADMIN del owner (#H-1). La columna `email`
+            # ya existe en schema.sql desde la creación de la DB (multi-tenant
+            # base). Este UPDATE solo corre cuando el email persistido no
+            # coincide con el del admin OAuth — idempotente.
+            await conn.execute(
+                """
+                UPDATE users
+                SET email = '***REMOVED-EMAIL***',
+                    role  = 'ADMIN'
+                WHERE username = 'roman'
+                  AND (email IS DISTINCT FROM '***REMOVED-EMAIL***'
+                       OR role IS DISTINCT FROM 'ADMIN')
+                """
+            )
 
     async def close(self):
         """Cierra el pool de conexiones limpiamente."""
@@ -84,11 +140,15 @@ class Historian:
         filled_price: Optional[float],
         slippage: Optional[float],
         status: str,
+        order_id: Optional[str] = None,
     ) -> UUID:
         """
         Inserta un trade en la tabla trades.
 
         signal_id puede ser None para trades manuales sin señal previa.
+        order_id (str) es el identificador retornado por Alpaca al submit;
+        se persiste para que el background task de limit orders pueda
+        reconciliar el trade vía update_trade_status(order_id=...). (#H-6)
 
         Returns:
             trade_id del registro insertado.
@@ -96,8 +156,8 @@ class Historian:
         sql = """
             INSERT INTO trades
                 (signal_id, sentinel_id, owner_id, ticker, side, qty,
-                 filled_price, slippage, status)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 filled_price, slippage, status, order_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING trade_id
         """
         try:
@@ -105,7 +165,7 @@ class Historian:
                 row = await conn.fetchrow(
                     sql,
                     signal_id, sentinel_id, owner_id,
-                    ticker, side, qty, filled_price, slippage, status,
+                    ticker, side, qty, filled_price, slippage, status, order_id,
                 )
             trade_id = row["trade_id"]
             logger.info(f"Trade registrado: {trade_id} | {ticker} {side} qty={qty} status={status}")
@@ -116,7 +176,9 @@ class Historian:
 
     async def update_trade_status(
         self,
-        trade_id: UUID,
+        *,
+        trade_id: Optional[UUID] = None,
+        order_id: Optional[str] = None,
         status: str,
         filled_price: Optional[float] = None,
         slippage: Optional[float] = None,
@@ -124,38 +186,59 @@ class Historian:
         """
         Actualiza el status de un trade PENDING → FILLED o CANCELLED.
 
+        Identificación: pasar trade_id (UUID de la tabla) O order_id (string
+        de Alpaca, persistido en la columna trades.order_id desde la migración
+        003). Exactamente uno de los dos. (#H-6)
+
         Si status es FILLED y no se provee slippage, lo calcula como:
             filled_price - price_at_signal (del signal original asociado).
         Si el trade no tiene signal_id asociado, slippage queda en None.
         """
+        if trade_id is None and order_id is None:
+            raise ValueError("Debe proveerse trade_id u order_id")
+        if trade_id is not None and order_id is not None:
+            raise ValueError("Debe proveerse SOLO uno: trade_id O order_id, no ambos")
+
+        # Identificador a usar en el WHERE (solo uno está poblado por las
+        # validaciones de arriba). El nombre de columna se interpola en el SQL
+        # — es seguro porque el valor está hardcoded acá, no viene de input.
+        if trade_id is not None:
+            where_col: str = "trade_id"
+            where_value: object = trade_id
+            id_label = f"trade_id={trade_id}"
+        else:
+            where_col = "order_id"
+            where_value = order_id
+            id_label = f"order_id={order_id}"
+
         try:
             async with self.pool.acquire() as conn:
                 if status == "FILLED" and filled_price is not None and slippage is None:
                     row = await conn.fetchrow(
-                        """
+                        f"""
                         SELECT s.price_at_signal
                         FROM trades t
                         LEFT JOIN signals s ON t.signal_id = s.signal_id
-                        WHERE t.trade_id = $1
+                        WHERE t.{where_col} = $1
                         """,
-                        trade_id,
+                        where_value,
                     )
                     if row and row["price_at_signal"] is not None:
                         slippage = filled_price - float(row["price_at_signal"])
 
                 await conn.execute(
-                    """
+                    f"""
                     UPDATE trades
                     SET status = $1, filled_price = $2, slippage = $3
-                    WHERE trade_id = $4
+                    WHERE {where_col} = $4
                     """,
-                    status, filled_price, slippage, trade_id,
+                    status, filled_price, slippage, where_value,
                 )
             logger.info(
-                f"Trade {trade_id} → {status} | filled={filled_price} slippage={slippage}"
+                f"Trade {id_label} → {status} | filled={filled_price} slippage={slippage}"
             )
         except asyncpg.PostgresError as e:
-            logger.error(f"Error al actualizar trade {trade_id}: {e}")
+            logger.error(f"Error al actualizar trade {id_label}: {e}")
             raise
 
     async def calculate_performance(self, sentinel_id: UUID, ticker: str) -> dict:
@@ -210,7 +293,9 @@ class Historian:
             mean_r   = sum(returns) / total_trades
             variance = sum((r - mean_r) ** 2 for r in returns) / (total_trades - 1)
             std_r    = math.sqrt(variance) if variance > 0 else 0.0
-            sharpe_ratio = mean_r / std_r if std_r > 0 else 0.0
+            # Annualizar: per-period × sqrt(periods/year). Asume returns iid
+            # — aproximación estándar, suficiente para gating de decay.
+            sharpe_ratio = (mean_r / std_r) * _SHARPE_ANNUALIZATION_FACTOR if std_r > 0 else 0.0
 
         logger.debug(
             f"Performance ({sentinel_id}, {ticker}): "
@@ -434,4 +519,66 @@ class Historian:
             return event_id
         except asyncpg.PostgresError as e:
             logger.error(f"Error al registrar macro event: {e}")
+            raise
+
+    async def get_user_by_email(self, email: str) -> Optional[dict]:
+        """
+        Busca un usuario por email. Usado por el callback OAuth para validar
+        que el email autenticado por Google está registrado como ADMIN o
+        VIEWER en la DB antes de emitir cookie de sesión (#H-1).
+
+        Returns:
+            dict {user_id, username, email, role} o None si no existe.
+        """
+        sql = """
+            SELECT user_id, username, email, role
+            FROM users
+            WHERE email = $1
+            LIMIT 1
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(sql, email)
+            return dict(row) if row else None
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al buscar usuario por email ({email}): {e}")
+            raise
+
+    async def get_system_flag(self, key: str) -> Optional[str]:
+        """
+        Lee un flag de system_state. Retorna el value o None si la key no existe.
+
+        Usado por el kill switch poller en main.py para detectar pedidos de
+        halt remoto vía API (#H-7).
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT value FROM system_state WHERE key = $1",
+                    key,
+                )
+            return row["value"] if row else None
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al leer system_state[{key}]: {e}")
+            raise
+
+    async def set_system_flag(self, key: str, value: str) -> None:
+        """
+        Upsert de un flag en system_state. Actualiza updated_at automáticamente.
+
+        Usado por api.py (endpoints halt/resume) y por el poller de main.py
+        (para resetear el flag tras consumir el evento) (#H-7).
+        """
+        sql = """
+            INSERT INTO system_state (key, value, updated_at)
+            VALUES ($1, $2, NOW())
+            ON CONFLICT (key) DO UPDATE SET
+                value      = EXCLUDED.value,
+                updated_at = NOW()
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute(sql, key, value)
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al escribir system_state[{key}]={value}: {e}")
             raise

@@ -26,18 +26,28 @@ from typing import Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+import os
+
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query
+from authlib.integrations.starlette_client import OAuth, OAuthError
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
+from starlette.middleware.sessions import SessionMiddleware
 
 from config import (
     DATABASE_URL,
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
     LOG_LEVEL,
+    OAUTH_REDIRECT_URI,
     OWNER_USERNAME,
     PARKING_BRAKE_TIME,
+    SESSION_COOKIE_NAME,
+    SESSION_MAX_AGE_SECONDS,
+    SESSION_SECRET,
     TIMEZONE,
 )
 from historian import Historian
@@ -115,13 +125,129 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="SENTINEL v0.5 API", lifespan=lifespan)
 
+
+# =============================================================================
+# OAUTH — Google
+# =============================================================================
+
+oauth = OAuth()
+oauth.register(
+    name                       = "google",
+    client_id                  = GOOGLE_CLIENT_ID,
+    client_secret              = GOOGLE_CLIENT_SECRET,
+    server_metadata_url        = "https://accounts.google.com/.well-known/openid-configuration",
+    client_kwargs              = {"scope": "openid email profile"},
+)
+
+
+def _get_session_user(request: Request) -> Optional[dict]:
+    """Lee el usuario autenticado de la sesión firmada. None si no hay login."""
+    return request.session.get("user")
+
+
+# Rutas públicas: /auth/* (login flow) + assets estáticos del dashboard.
+# El resto requiere sesión. /auth/me responde 401 desde su handler para
+# evitar duplicar la lógica acá.
+_PUBLIC_PATHS = {
+    "/auth/login", "/auth/callback", "/auth/logout",
+    "/sentinel-data.js", "/sentinel-app.js", "/sentinel-i18n.js",
+    "/favicon.ico",
+}
+_PUBLIC_PREFIXES = ("/assets/",)
+
+# Endpoints que requieren role=ADMIN. Cambios futuros: agregar acá.
+_ADMIN_PATHS = {"/api/system/halt", "/api/system/resume"}
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """
+    Gate de autenticación + autorización por rutas (#H-1).
+
+    - /auth/*, assets, favicon: público.
+    - / (dashboard): redirect 302 a /auth/login si no hay sesión.
+    - /api/*: 401 si no hay sesión. /api/system/{halt,resume} además 403 si role != ADMIN.
+    - Cualquier otra ruta: pasa (StaticFiles atrás del mount root maneja errores).
+    """
+    path   = request.url.path
+    method = request.method
+
+    if path in _PUBLIC_PATHS or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
+        return await call_next(request)
+
+    user = _get_session_user(request)
+
+    if path == "/":
+        if user is None:
+            return RedirectResponse(url="/auth/login", status_code=302)
+        return await call_next(request)
+
+    if path.startswith("/api/"):
+        if user is None:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        if method == "POST" and path in _ADMIN_PATHS and user.get("role") != "ADMIN":
+            return JSONResponse(
+                {"error":   "forbidden",
+                 "message": "Solo administradores pueden controlar el sistema"},
+                status_code=403,
+            )
+        return await call_next(request)
+
+    return await call_next(request)
+
+
+# Orden de registro de middlewares — IMPORTANTE.
+# Starlette envuelve outside-in: el último `add_middleware` queda más afuera
+# (procesa primero en inbound). El decorator @app.middleware("http") de
+# auth_middleware se registró antes de estos add_middleware, así que queda
+# más adentro que ambos. Resultado del stack inbound:
+#   SessionMiddleware → CORSMiddleware → auth_middleware → handler
+# Esto garantiza que auth_middleware ya tiene request.session poblada.
+#
+# `https_only` es configurable via SESSION_HTTPS_ONLY (default true). Sobre
+# HTTP localhost la cookie no se setea — por eso el smoke test OAuth real
+# se hace contra el dominio público (ver INSTRUCCIONES OPERATIVAS).
+_HTTPS_ONLY = os.environ.get("SESSION_HTTPS_ONLY", "true").lower() != "false"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins     = ["*"],
+    allow_credentials = False,
+    allow_methods     = ["*"],
+    allow_headers     = ["*"],
 )
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key      = SESSION_SECRET,
+    session_cookie  = SESSION_COOKIE_NAME,
+    max_age         = SESSION_MAX_AGE_SECONDS,
+    same_site       = "lax",
+    https_only      = _HTTPS_ONLY,
+)
+
+
+_LOGIN_DENIED_HTML = """<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Acceso denegado · Sentinel</title>
+<style>
+  body { background:#030610; color:#eaeefb; font-family:system-ui,-apple-system,sans-serif;
+         display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; }
+  .card { border:1px solid rgba(0,245,255,0.2); padding:32px 40px; border-radius:8px;
+          background:rgba(10,18,32,0.8); max-width:420px; }
+  h1 { color:#ff2060; margin:0 0 12px; font-size:18px; letter-spacing:2px; }
+  p { color:#aab2c8; line-height:1.5; margin:0 0 20px; }
+  a { color:#00f5ff; text-decoration:none; border:1px solid #00f5ff; padding:8px 16px;
+      display:inline-block; border-radius:4px; }
+  a:hover { background:rgba(0,245,255,0.1); }
+  code { color:#00ff88; }
+</style></head>
+<body><div class="card">
+  <h1>+ ACCESO DENEGADO</h1>
+  <p>El email <code>{email}</code> no está registrado en este sistema.
+     Contactá al administrador para que te dé acceso.</p>
+  <a href="/auth/login">Volver al login</a>
+</div></body></html>
+"""
 
 
 # =============================================================================
@@ -174,6 +300,62 @@ def _range_to_since(range_str: str) -> Optional[datetime]:
 def _http_500(operation: str, exc: Exception):
     logger.exception(f"Error en {operation}")
     raise HTTPException(status_code=500, detail=f"{operation}: {exc!s}")
+
+
+# =============================================================================
+# AUTH — Google OAuth (#H-1)
+# Flujo: /auth/login redirige a Google → Google retorna a /auth/callback con
+# código → intercambiamos por token → leemos email del userinfo → buscamos
+# en users → guardamos {email, role, user_id} en la sesión firmada. /auth/logout
+# limpia la sesión.
+# =============================================================================
+
+@app.get("/auth/login")
+async def auth_login(request: Request):
+    return await oauth.google.authorize_redirect(request, OAUTH_REDIRECT_URI)
+
+
+@app.get("/auth/callback")
+async def auth_callback(request: Request):
+    try:
+        token = await oauth.google.authorize_access_token(request)
+    except OAuthError as e:
+        logger.warning(f"OAuth error en callback: {e.error} — {e.description}")
+        return RedirectResponse(url="/auth/login", status_code=302)
+
+    userinfo = token.get("userinfo") or {}
+    email = (userinfo.get("email") or "").lower().strip()
+    if not email or not userinfo.get("email_verified"):
+        logger.warning(f"Email ausente o no verificado en token: {userinfo!r}")
+        return HTMLResponse(_LOGIN_DENIED_HTML.format(email=email or "—"), status_code=403)
+
+    user = await historian.get_user_by_email(email)
+    if user is None:
+        logger.warning(f"Login rechazado — email no registrado: {email}")
+        return HTMLResponse(_LOGIN_DENIED_HTML.format(email=email), status_code=403)
+
+    request.session["user"] = {
+        "email":   user["email"],
+        "role":    user["role"],
+        "user_id": str(user["user_id"]),
+    }
+    logger.info(f"Login OK | email={email} role={user['role']}")
+    return RedirectResponse(url="/", status_code=302)
+
+
+@app.get("/auth/logout")
+async def auth_logout(request: Request):
+    request.session.clear()
+    return RedirectResponse(url="/auth/login", status_code=302)
+
+
+@app.get("/auth/me")
+async def auth_me(request: Request):
+    """Endpoint utility para que el frontend sepa quién está logueado."""
+    user = _get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    return user
 
 
 # =============================================================================
@@ -482,6 +664,66 @@ async def api_report(range: str = Query("today", regex="^(today|last_week|last_m
         },
         "trades": [_row(t) for t in trades],
     }
+
+
+# =============================================================================
+# KILL SWITCH — endpoints de control remoto (#H-7)
+# api.py y main.py corren en procesos separados; system_state actúa como
+# canal IPC. main.py pollea cada 5s tres flags:
+#   - halt_requested: la API setea "true" cuando el admin pide halt.
+#                     El poller lo consume, dispara activate_kill_switch
+#                     y resetea a "false".
+#   - system_halted:  el poller lo setea "true" después de halt y "false"
+#                     después de resume. Es la fuente de verdad del estado
+#                     visible para la API y el dashboard (toggle del botón).
+#   - resume_requested: la API setea "true" cuando el admin pide resume.
+#                       El poller lo consume y dispara deactivate_kill_switch.
+# Auth: GET state requiere sesión; POST halt/resume requieren role=ADMIN.
+# =============================================================================
+
+@app.get("/api/system/state")
+async def api_system_state():
+    try:
+        halt_flag   = await historian.get_system_flag("halt_requested")
+        halted_flag = await historian.get_system_flag("system_halted")
+        return {
+            "halt_requested": halt_flag   == "true",
+            "system_halted":  halted_flag == "true",
+        }
+    except Exception as e:
+        _http_500("/api/system/state", e)
+
+
+@app.post("/api/system/halt")
+async def api_system_halt():
+    try:
+        halted = await historian.get_system_flag("system_halted")
+        if halted == "true":
+            return {"status": "already_halted"}
+        await historian.set_system_flag("halt_requested", "true")
+        logger.warning("HALT solicitado vía API")
+        return {
+            "status":  "halt_requested",
+            "message": "Kill switch se activará en máximo 5 segundos",
+        }
+    except Exception as e:
+        _http_500("/api/system/halt", e)
+
+
+@app.post("/api/system/resume")
+async def api_system_resume():
+    try:
+        halted = await historian.get_system_flag("system_halted")
+        if halted != "true":
+            return {"status": "already_running"}
+        await historian.set_system_flag("resume_requested", "true")
+        logger.warning("RESUME solicitado vía API")
+        return {
+            "status":  "resume_requested",
+            "message": "Sistema se reactivará en máximo 5 segundos",
+        }
+    except Exception as e:
+        _http_500("/api/system/resume", e)
 
 
 # =============================================================================

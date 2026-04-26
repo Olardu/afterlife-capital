@@ -31,6 +31,18 @@ _REGIME_MULTIPLIERS = {
     "BEAR":    0.50,
 }
 
+# Strategy types que ejecutan como Limit order (precio de señal). El resto
+# va como Market. Se usa set explícito en lugar de substring matching para
+# evitar el bug de bollinger_bounce/etc. NO ejecutando como limit por no
+# contener la palabra "mean_reversion" en su strategy_type.
+_LIMIT_STRATEGIES = {
+    "bollinger_bounce",
+    "rsi_short",
+    "vwap_reversion",
+    "bollinger_squeeze",
+    "rsi_divergence",
+}
+
 
 class Dispatcher:
     def __init__(
@@ -47,7 +59,9 @@ class Dispatcher:
         self.regime_classifier  = regime_classifier
         self.owner_id           = owner_id
         self.kill_switch_active = False
-        self.open_positions: list[dict] = []   # [{ticker, qty, sentinel_id, side}]
+        # Indexado por ticker para detección O(1) de duplicados intra-cycle (#H-5).
+        # Estructura: {ticker: {ticker, qty, sentinel_id, side}}
+        self.open_positions: dict[str, dict] = {}
 
     # -------------------------------------------------------------------------
     # Sincronización con Alpaca
@@ -59,13 +73,19 @@ class Dispatcher:
         Loggea discrepancias entre el estado local y el de Alpaca.
         """
         try:
-            alpaca_positions = await asyncio.to_thread(self._get_alpaca_positions)
+            alpaca_positions = await asyncio.wait_for(
+                asyncio.to_thread(self._get_alpaca_positions),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            logger.error("Timeout (15s) al sincronizar posiciones con Alpaca")
+            return
         except Exception as e:
             logger.error(f"Error al sincronizar posiciones con Alpaca: {e}")
             return
 
-        alpaca_tickers = {p["ticker"] for p in alpaca_positions}
-        local_tickers  = {p["ticker"] for p in self.open_positions}
+        alpaca_tickers = set(alpaca_positions.keys())
+        local_tickers  = set(self.open_positions.keys())
 
         ghost   = local_tickers - alpaca_tickers   # locales que Alpaca no conoce
         missing = alpaca_tickers - local_tickers   # en Alpaca pero no locales
@@ -78,21 +98,27 @@ class Dispatcher:
         self.open_positions = alpaca_positions
         logger.debug(f"Posiciones sincronizadas: {len(self.open_positions)} abiertas.")
 
-    def _get_alpaca_positions(self) -> list[dict]:
-        """Obtiene posiciones abiertas vía TradingClient. Ejecutado en thread."""
+    def _get_alpaca_positions(self) -> dict[str, dict]:
+        """Obtiene posiciones abiertas vía TradingClient. Ejecutado en thread.
+
+        Returns:
+            {ticker: {ticker, qty, side, sentinel_id}}. Indexado por ticker
+            para que el caller (sync_positions_from_alpaca) reemplace el dict
+            entero sin tener que reconstruirlo.
+        """
         from alpaca.trading.client import TradingClient
 
         client    = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
         positions = client.get_all_positions()
-        return [
-            {
+        return {
+            p.symbol: {
                 "ticker":      p.symbol,
                 "qty":         float(p.qty),
                 "side":        "BUY" if float(p.qty) > 0 else "SELL",
                 "sentinel_id": None,   # Alpaca no conoce el sentinel_id; se cruza por ticker si es necesario
             }
             for p in positions
-        ]
+        }
 
     # -------------------------------------------------------------------------
     # Distribución de capital
@@ -247,7 +273,13 @@ class Dispatcher:
         sentinel_alloc = allocation.get(str(sentinel_id), MIN_CAPITAL_PER_SENTINEL)
         if account_equity is None:
             try:
-                account_equity = await asyncio.to_thread(self._get_account_equity)
+                account_equity = await asyncio.wait_for(
+                    asyncio.to_thread(self._get_account_equity),
+                    timeout=15.0,
+                )
+            except asyncio.TimeoutError:
+                logger.error("Timeout (15s) al obtener equity de cuenta")
+                account_equity = 0.0
             except Exception as e:
                 logger.error(f"Error al obtener equity de cuenta: {e}")
                 account_equity = 0.0
@@ -265,10 +297,11 @@ class Dispatcher:
             scores = []
 
         try:
+            # CorrelationGuard espera list[dict] — convertir desde nuestro dict.
             guard_result = await self.correlation_guard.evaluate_signal(
                 incoming_ticker    = ticker,
                 incoming_qty       = qty,
-                open_positions     = self.open_positions,
+                open_positions     = list(self.open_positions.values()),
                 performance_scores = scores,
             )
         except Exception as e:
@@ -285,9 +318,14 @@ class Dispatcher:
         # v0.5 es long-only. Short selling se habilita explícitamente cuando se
         # implementen estrategias que lo requieran.
         side = "BUY" if signal_type == "BUY" else "SELL"
+        # Descartar BUY si ya hay posición abierta del mismo ticker en este cycle (#H-5).
+        # Sin esto, dos sentinels emitiendo BUY del mismo ticker en el mismo cycle
+        # generan doble-compra — el CorrelationGuard solo reduce qty, no descarta.
+        if side == "BUY" and ticker in self.open_positions:
+            logger.info(f"Señal BUY {ticker} omitida — ya hay posición abierta este cycle.")
+            return {**base_result, "reason": "duplicate_ticker_buy"}
         if side == "SELL":
-            has_position = any(p["ticker"] == ticker for p in self.open_positions)
-            if not has_position:
+            if ticker not in self.open_positions:
                 logger.info(f"Señal SELL para {ticker} rechazada — sin posición abierta.")
                 return {**base_result, "reason": "no_open_position"}
         try:
@@ -325,6 +363,7 @@ class Dispatcher:
                 filled_price = order_result.get("filled_price"),
                 slippage     = slippage,
                 status       = order_result.get("status", "PENDING"),
+                order_id     = order_result.get("order_id"),  # para reconciliación post-fill (#H-6)
             )
         except Exception as e:
             logger.error(f"Error al persistir señal/trade en Historian: {e}")
@@ -333,14 +372,16 @@ class Dispatcher:
 
         # Actualizar posiciones locales si se ejecutó
         if order_result.get("status") == "FILLED":
-            self.open_positions.append({
+            self.open_positions[ticker] = {
                 "ticker":      ticker,
                 "qty":         final_qty,
                 "side":        side,
                 "sentinel_id": sentinel_id,
-            })
+            }
 
-        approved = order_result.get("status") != "CANCELLED"
+        # PENDING (limit orders en background, FIX #H-6) NO se cuenta como aprobada
+        # hasta que el background task confirme FILLED via update_trade_status.
+        approved = order_result.get("status") == "FILLED"
         logger.info(
             f"Pipeline completo | {ticker} {side} qty={final_qty:.2f} "
             f"status={order_result.get('status')} regime={regime} "
@@ -360,8 +401,7 @@ class Dispatcher:
 
     @staticmethod
     def _is_limit_strategy(strategy_type: str) -> bool:
-        st = strategy_type.lower()
-        return "mean_reversion" in st or "pairs" in st
+        return strategy_type.lower() in _LIMIT_STRATEGIES
 
     async def execute_order(
         self,
@@ -393,9 +433,15 @@ class Dispatcher:
             return {"order_id": None, "filled_price": None, "status": "CANCELLED"}
 
         try:
-            submit_result = await asyncio.to_thread(
-                self._submit_order_sync, ticker, side, qty, strategy_type, limit_price
+            submit_result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._submit_order_sync, ticker, side, qty, strategy_type, limit_price
+                ),
+                timeout=15.0,
             )
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout (15s) al enviar orden {ticker} {side} qty={qty}")
+            return {"order_id": None, "filled_price": None, "status": "CANCELLED"}
         except Exception as e:
             logger.error(f"Alpaca rechazó la orden {ticker} {side} qty={qty}: {e}")
             return {"order_id": None, "filled_price": None, "status": "CANCELLED"}
@@ -403,19 +449,41 @@ class Dispatcher:
         if not is_limit:
             return submit_result
 
-        # Timeout de 60s para limit orders
         order_id = submit_result.get("order_id")
         if not order_id:
+            # Submit falló o devolvió None → no hay nada que verificar después
             return submit_result
 
-        logger.info(f"Limit order {order_id} enviada — esperando 60s para confirmar fill.")
-        await asyncio.sleep(60)
+        # Lanzar verificación en background — no bloquear el cycle (#H-6).
+        # Antes esto era `await asyncio.sleep(60)` síncrono, lo cual retrasaba
+        # el procesamiento del resto de las señales del cycle.
+        # TODO: reconciliación post-restart (sesiones futuras) — si el sistema
+        # cae con tasks pendientes, las órdenes en Alpaca quedan activas pero
+        # el sistema no las rastrea al restart. Requiere persistir tasks en DB.
+        async def _check_later(oid: str):
+            await asyncio.sleep(60)
+            try:
+                final = await asyncio.wait_for(
+                    asyncio.to_thread(self._check_and_cancel_limit_sync, oid),
+                    timeout=15.0,
+                )
+                # Reconciliar el trade en DB usando order_id (col agregada en migración 003)
+                try:
+                    await self.historian.update_trade_status(
+                        order_id=oid,
+                        status=final.get("status", "CANCELLED"),
+                        filled_price=final.get("filled_price"),
+                    )
+                except Exception as e:
+                    logger.error(f"Error actualizando trade order_id={oid} en DB: {e}")
+            except asyncio.TimeoutError:
+                logger.error(f"Timeout (15s) verificando limit {oid}")
+            except Exception as e:
+                logger.error(f"Limit check {oid}: {e}")
 
-        try:
-            return await asyncio.to_thread(self._check_and_cancel_limit_sync, order_id)
-        except Exception as e:
-            logger.error(f"Error al verificar limit order {order_id}: {e}")
-            return {"order_id": order_id, "filled_price": None, "status": "CANCELLED"}
+        logger.info(f"Limit order {order_id} enviada — verificación agendada en 60s (background).")
+        asyncio.create_task(_check_later(order_id), name=f"limit_check_{order_id}")
+        return submit_result   # devuelve PENDING inmediatamente — no bloquea el cycle
 
     def _submit_order_sync(
         self,
@@ -516,7 +584,12 @@ class Dispatcher:
 
         logger.critical("KILL SWITCH ACTIVADO — cerrando todas las posiciones.")
         try:
-            await asyncio.to_thread(self._close_all_sync)
+            await asyncio.wait_for(
+                asyncio.to_thread(self._close_all_sync),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            logger.critical("Timeout (15s) durante liquidación del kill switch — verificar Alpaca manualmente")
         except Exception as e:
             logger.critical(f"Error durante liquidación del kill switch: {e}")
 
@@ -595,7 +668,13 @@ class Dispatcher:
                 cycle_allocation = {}
 
             try:
-                cycle_equity = await asyncio.to_thread(self._get_account_equity)
+                cycle_equity = await asyncio.wait_for(
+                    asyncio.to_thread(self._get_account_equity),
+                    timeout=15.0,
+                )
+            except asyncio.TimeoutError:
+                logger.error("Timeout (15s) obteniendo equity en run_cycle")
+                cycle_equity = 0.0
             except Exception as e:
                 logger.error(f"Error obteniendo equity en run_cycle: {e}")
                 cycle_equity = 0.0

@@ -165,10 +165,21 @@ class RegimeClassifier:
         """
         Descarga SPY_HISTORICAL_YEARS años de barras diarias vía Alpaca.
 
+        NOTA: 15s puede ser corto para descargar 25 años de SPY desde Alpaca.
+        Cuando se reactive S-10 (hoy desactivado por accuracy insuficiente),
+        evaluar si elevar el timeout específicamente para este path.
+
         Returns:
             DataFrame con columnas [date, open, high, low, close, volume].
         """
-        return await asyncio.to_thread(self._fetch_bars_sync, SPY_HISTORICAL_YEARS * 365)
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._fetch_bars_sync, SPY_HISTORICAL_YEARS * 365),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError as e:
+            logger.error("Timeout (15s) descargando training data de SPY")
+            raise RuntimeError("Alpaca fetch_training_data timeout") from e
 
     def _fetch_bars_sync(self, lookback_days: int):
         """Descarga barras diarias de BASE_TICKER. Ejecutado en thread separado."""
@@ -257,7 +268,10 @@ class RegimeClassifier:
             return self.current_regime
 
         try:
-            bars_df  = await asyncio.to_thread(self._fetch_bars_sync, _RECENT_BARS_LOOKBACK_DAYS)
+            bars_df  = await asyncio.wait_for(
+                asyncio.to_thread(self._fetch_bars_sync, _RECENT_BARS_LOOKBACK_DAYS),
+                timeout=15.0,
+            )
             features = self.build_features(bars_df)
 
             if not features:
@@ -272,6 +286,12 @@ class RegimeClassifier:
             logger.info(f"Régimen del día {today}: {regime}")
             return regime
 
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Timeout (15s) al clasificar régimen. "
+                f"Retornando último conocido: {self.current_regime}."
+            )
+            return self.current_regime
         except Exception as e:
             logger.error(
                 f"Error al clasificar régimen: {e}. "

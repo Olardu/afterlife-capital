@@ -302,6 +302,75 @@ async def main_loop(system: dict):
 # ENTRY POINT
 # =============================================================================
 
+def _ear_task_done(task: asyncio.Task):
+    """
+    Callback para detectar fallas silenciosas del task de The Ear polling.
+    Sin esto, una excepción no capturada en start_polling muere en silencio
+    y el sistema sigue corriendo sin macro context. (#TECHDEBT promovido)
+    """
+    try:
+        exc = task.exception()
+    except asyncio.CancelledError:
+        logger.info("ear_task cancelado limpiamente.")
+        return
+    if exc is not None:
+        logger.critical(f"ear_task murió inesperadamente: {exc!r}", exc_info=exc)
+    else:
+        logger.warning("ear_task terminó sin excepción pero sin estar cancelado.")
+
+
+_KILL_SWITCH_POLL_INTERVAL = 5  # segundos
+
+
+async def _kill_switch_poller(historian: Historian, dispatcher: Dispatcher):
+    """
+    Pollea system_state cada 5s y maneja dos transiciones (#H-7):
+
+    1. halt_requested=true  → activate_kill_switch + system_halted=true.
+    2. system_halted=true & resume_requested=true → deactivate_kill_switch.
+
+    El flag system_halted es la fuente de verdad del estado actual del
+    sistema (vista por la API y el dashboard); halt_requested y
+    resume_requested son los disparadores transitorios escritos por la API.
+
+    Resiliencia: errores transitorios de DB se loggean y se reintenta en
+    el próximo tick. El task solo muere por cancelación explícita.
+    """
+    logger.info("Kill switch poller iniciado (intervalo 5s).")
+    while True:
+        try:
+            halt_flag = await historian.get_system_flag("halt_requested")
+            if halt_flag == "true":
+                logger.critical("Kill switch activado por solicitud remota vía API")
+                await dispatcher.activate_kill_switch("CONFIRMAR")
+                await historian.set_system_flag("halt_requested", "false")
+                await historian.set_system_flag("system_halted",  "true")
+
+            halted      = await historian.get_system_flag("system_halted")
+            resume_flag = await historian.get_system_flag("resume_requested")
+            if halted == "true" and resume_flag == "true":
+                logger.critical("Sistema reactivado por solicitud remota vía API")
+                await dispatcher.deactivate_kill_switch("CONFIRMAR")
+                await historian.set_system_flag("resume_requested", "false")
+                await historian.set_system_flag("system_halted",    "false")
+        except Exception as e:
+            logger.warning(f"Error en kill_switch_poller: {e}")
+        await asyncio.sleep(_KILL_SWITCH_POLL_INTERVAL)
+
+
+def _ks_task_done(task: asyncio.Task):
+    """Callback para detectar fallas silenciosas del kill switch poller."""
+    try:
+        exc = task.exception()
+    except asyncio.CancelledError:
+        logger.info("kill_switch_poller cancelado limpiamente.")
+        return
+    if exc is not None:
+        logger.critical(f"kill_switch_poller murió: {exc!r}", exc_info=exc)
+    else:
+        logger.warning("kill_switch_poller terminó sin excepción pero sin estar cancelado.")
+
+
 async def main():
     """Inicializa el sistema, arranca The Ear en background y entra al main loop."""
     system = await initialize()
@@ -311,7 +380,15 @@ async def main():
         system["the_ear"].start_polling(),
         name="the_ear_polling",
     )
+    ear_task.add_done_callback(_ear_task_done)
     logger.info("The Ear polling iniciado en background.")
+
+    # Kill switch poller — IPC con api.py vía system_state (#H-7)
+    kill_switch_task = asyncio.create_task(
+        _kill_switch_poller(system["historian"], system["dispatcher"]),
+        name="kill_switch_poller",
+    )
+    kill_switch_task.add_done_callback(_ks_task_done)
 
     try:
         await main_loop(system)
@@ -319,6 +396,12 @@ async def main():
         ear_task.cancel()
         try:
             await ear_task
+        except asyncio.CancelledError:
+            pass
+
+        kill_switch_task.cancel()
+        try:
+            await kill_switch_task
         except asyncio.CancelledError:
             pass
 

@@ -31,7 +31,9 @@ class CorrelationGuard:
         Obtiene los últimos `window` precios de cierre para cada ticker vía Alpaca.
 
         Usa StockHistoricalDataClient (síncrono) envuelto en asyncio.to_thread
-        para no bloquear el grafo LangGraph.
+        para no bloquear el grafo LangGraph. Timeout 15s — si Alpaca no responde,
+        propaga RuntimeError que el caller (evaluate_signal) captura como
+        warning y aprueba la señal sin chequeo de correlación.
 
         Tickers sin suficientes barras se excluyen del resultado con un WARNING.
         El rango de búsqueda es 5 días calendario — suficiente para garantizar
@@ -40,7 +42,14 @@ class CorrelationGuard:
         Returns:
             {ticker: [close_prices]} solo para tickers con datos suficientes.
         """
-        return await asyncio.to_thread(self._fetch_bars_sync, tickers, window)
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._fetch_bars_sync, tickers, window),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError as e:
+            logger.warning("Timeout (15s) en CorrelationGuard.fetch_bars")
+            raise RuntimeError("Alpaca fetch_bars timeout") from e
 
     def _fetch_bars_sync(self, tickers: list[str], window: int) -> dict[str, list[float]]:
         """Versión síncrona de fetch_bars, ejecutada en thread separado."""
