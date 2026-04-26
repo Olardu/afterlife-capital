@@ -455,18 +455,50 @@ function setupPersistence() {
     }
   });
 
-  // Manejar el botón DETENER (app.js lo deja en alert demo).
-  // No lo sobrescribimos — sólo lo convertimos en confirm.
-  document.addEventListener('click', (e) => {
-    if (e.target.closest('#detenerBtn')) {
-      // El handler original de app.js corre antes y muestra alert.
-      // Nada más que hacer acá: no hay endpoint POST /api/system/halt.
+}
+
+/* ============ KILL SWITCH — botón DETENER ============
+ * sentinel-app.js (handoff) registra `$('#detenerBtn').addEventListener('click', alert(demo))`
+ * en el target. En el target, los listeners corren en orden de REGISTRO,
+ * así que un addEventListener(..., useCapture=true) sobre el botón mismo
+ * NO antecede al del handoff. La forma correcta de interceptar antes es
+ * registrar en `document` con capture=true (event delegation): la fase
+ * capture del documento corre ANTES de la fase target, y
+ * stopImmediatePropagation() evita que el evento alcance el listener del
+ * handoff. (#H-7)
+ * ============================================================ */
+function setupKillSwitch() {
+  document.addEventListener('click', async (e) => {
+    if (!e.target.closest('#detenerBtn')) return;
+    e.stopImmediatePropagation();
+    e.preventDefault();
+
+    const ok = confirm(
+      '⚠️ KILL SWITCH\n\n' +
+      '¿Estás seguro de que quieres detener el sistema?\n\n' +
+      'Esto cancelará todas las órdenes pendientes y cerrará todas las posiciones abiertas.'
+    );
+    if (!ok) return;
+
+    try {
+      const res  = await fetch('/api/system/halt', { method: 'POST' });
+      const data = await res.json();
+      if (data.status === 'halt_requested') {
+        alert('Kill switch activado. El sistema cerrará posiciones en máximo 5 segundos.');
+      } else if (data.status === 'already_halted') {
+        alert('El sistema ya está detenido.');
+      } else {
+        alert('Respuesta inesperada: ' + JSON.stringify(data));
+      }
+    } catch (err) {
+      alert('Error al contactar la API: ' + err.message);
     }
-  });
+  }, true);   // useCapture=true — corre en fase capture, antes del listener target del handoff
 }
 
 /* ============ BOOT ============ */
 setupPersistence();
+setupKillSwitch();
 
 // Disparar la primera carga + abrir SSE. No esperamos a DOMContentLoaded —
 // sentinel-app.js corre sincrónico justo después de este archivo y popula
