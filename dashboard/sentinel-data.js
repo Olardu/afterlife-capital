@@ -171,9 +171,25 @@ const STATE = {
 
 /* ============ FETCHERS ============ */
 
+// Estado interno para evitar redirects en cascada cuando varios fetch
+// reciben 401 simultáneamente al expirar la sesión.
+let _redirectingToLogin = false;
+
 async function _fetchJson(url) {
   try {
     const r = await fetch(url);
+    if (r.status === 401) {
+      if (!_redirectingToLogin) {
+        _redirectingToLogin = true;
+        window.location.href = '/auth/login';
+      }
+      return null;
+    }
+    if (r.status === 403) {
+      console.warn(`[sentinel-data] forbidden ${url}`);
+      alert('No tenés permisos para esta acción.');
+      return null;
+    }
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
     return await r.json();
   } catch (e) {
