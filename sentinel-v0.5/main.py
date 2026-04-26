@@ -324,11 +324,14 @@ _KILL_SWITCH_POLL_INTERVAL = 5  # segundos
 
 async def _kill_switch_poller(historian: Historian, dispatcher: Dispatcher):
     """
-    Pollea system_state.halt_requested cada 5s. Si está en "true", dispara
-    dispatcher.activate_kill_switch y resetea el flag. (#H-7)
+    Pollea system_state cada 5s y maneja dos transiciones (#H-7):
 
-    api.py escribe el flag desde POST /api/system/halt; este task es el
-    consumidor en el proceso de trading. Latencia máxima halt → kill: 5s.
+    1. halt_requested=true  → activate_kill_switch + system_halted=true.
+    2. system_halted=true & resume_requested=true → deactivate_kill_switch.
+
+    El flag system_halted es la fuente de verdad del estado actual del
+    sistema (vista por la API y el dashboard); halt_requested y
+    resume_requested son los disparadores transitorios escritos por la API.
 
     Resiliencia: errores transitorios de DB se loggean y se reintenta en
     el próximo tick. El task solo muere por cancelación explícita.
@@ -336,11 +339,20 @@ async def _kill_switch_poller(historian: Historian, dispatcher: Dispatcher):
     logger.info("Kill switch poller iniciado (intervalo 5s).")
     while True:
         try:
-            flag = await historian.get_system_flag("halt_requested")
-            if flag == "true":
+            halt_flag = await historian.get_system_flag("halt_requested")
+            if halt_flag == "true":
                 logger.critical("Kill switch activado por solicitud remota vía API")
                 await dispatcher.activate_kill_switch("CONFIRMAR")
                 await historian.set_system_flag("halt_requested", "false")
+                await historian.set_system_flag("system_halted",  "true")
+
+            halted      = await historian.get_system_flag("system_halted")
+            resume_flag = await historian.get_system_flag("resume_requested")
+            if halted == "true" and resume_flag == "true":
+                logger.critical("Sistema reactivado por solicitud remota vía API")
+                await dispatcher.deactivate_kill_switch("CONFIRMAR")
+                await historian.set_system_flag("resume_requested", "false")
+                await historian.set_system_flag("system_halted",    "false")
         except Exception as e:
             logger.warning(f"Error en kill_switch_poller: {e}")
         await asyncio.sleep(_KILL_SWITCH_POLL_INTERVAL)
