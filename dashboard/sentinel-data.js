@@ -626,7 +626,12 @@ async function setupAdminLink() {
     if (r.status === 401) return;   // sin sesión — el resto del flujo redirige
     if (!r.ok) return;
     const me = await r.json();
-    if (!me || me.role !== 'ADMIN') return;
+    if (!me || me.role !== 'ADMIN') {
+      // VIEWER no puede operar el kill switch — ocultar botón DETENER.
+      const btn = document.getElementById('detenerBtn');
+      if (btn) btn.style.display = 'none';
+      return;
+    }
 
     if (!document.getElementById('sentinel-adminlink-style')) {
       const style = document.createElement('style');
