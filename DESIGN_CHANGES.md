@@ -54,6 +54,15 @@ Archivo custom que adapta el handoff: `dashboard/sentinel-data.js`. Todo cambio 
 - **Impacto visual**: el dashboard desaparece y aparece la pantalla de login de Google.
 - **Nota para Design**: considerar agregar una pantalla de "sesión expirada" en el handoff para futura entrega.
 
+### 6. Link ADMIN en header
+- **Archivo**: `dashboard/sentinel-data.js` + CSS inyectado desde JS
+- **Fecha**: 2026-04-26
+- **Razón**: los administradores necesitan acceso rápido al panel de gestión de usuarios (`/admin`). El handoff no contempla un control para esto.
+- **Implementación**: al boot, `setupAdminLink()` hace fetch a `/auth/me`. Si la respuesta tiene `role=ADMIN`, se inyecta un `<a id="adminLink" href="/admin">ADMIN</a>` justo antes del `#detenerBtn`. Estilo magenta (`#ff00ff`) con borde y `letter-spacing` consistente con la tipografía del header. CSS inyectado vía `<style id="sentinel-adminlink-style">`.
+- **Impacto visual**: badge magenta discreto a la izquierda del botón DETENER. Solo aparece para `role=ADMIN`. Para `VIEWER` no se inyecta, ni se carga.
+- **Nota para Design**: considerar un slot nativo para iconos de admin en el header del handoff cuando se regenere.
+
 ## Histórico de revisiones de este documento
 
 - 2026-04-26 — versión inicial. Captura cambios 1–5 acumulados desde el handoff original.
+- 2026-04-26 — agregado cambio 6 (link ADMIN en header).
