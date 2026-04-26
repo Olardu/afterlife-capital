@@ -615,6 +615,15 @@ function setupKillSwitch() {
   }, true);
 }
 
+function hideDetenerForViewer() {
+  const btn = document.getElementById('detenerBtn');
+  if (btn) {
+    btn.style.display = 'none';
+  } else {
+    setTimeout(hideDetenerForViewer, 200);
+  }
+}
+
 /* ============ ADMIN LINK ============
  * Si el usuario logueado tiene role=ADMIN, inyectamos un badge "ADMIN" en
  * el header del dashboard que linkea a /admin. Para VIEWER NO se muestra
@@ -628,8 +637,10 @@ async function setupAdminLink() {
     const me = await r.json();
     if (!me || me.role !== 'ADMIN') {
       // VIEWER no puede operar el kill switch — ocultar botón DETENER.
-      const btn = document.getElementById('detenerBtn');
-      if (btn) btn.style.display = 'none';
+      // setupAdminLink() puede correr antes de que el DOM tenga #detenerBtn
+      // (script en head + parseo HTML en curso). Reintentamos cada 200ms
+      // hasta encontrarlo.
+      hideDetenerForViewer();
       return;
     }
 
