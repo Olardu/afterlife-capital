@@ -1,376 +1,411 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Admin · Sentinel Control</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <style>
-    :root {
-      --bg:        #030610;
-      --bg2:      #0a1220;
-      --fg:       #eaeefb;
-      --muted:    #aab2c8;
-      --cyan:    #00f5ff;
-      --magenta: #ff00ff;
-      --green:   #00ff88;
-      --red:     #ff4466;
-      --line:    rgba(0,245,255,0.15);
-    }
-    * { box-sizing: border-box; }
-    html, body {
-      margin: 0;
-      padding: 0;
-      background: var(--bg);
-      color: var(--fg);
-      font-family: 'Share Tech Mono', ui-monospace, monospace;
-      min-height: 100vh;
-    }
-    .grid-bg {
-      position: fixed; inset: 0;
-      background-image:
-        linear-gradient(rgba(0,245,255,0.04) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0,245,255,0.04) 1px, transparent 1px);
-      background-size: 40px 40px;
-      pointer-events: none; z-index: 0;
-    }
-    .container {
-      position: relative; z-index: 1;
-      max-width: 980px;
-      margin: 0 auto;
-      padding: 32px 24px 80px;
-    }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AFTERLIFE CAPITAL — Admin Panel</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><defs><clipPath id='l'><rect x='0' y='0' width='32' height='64'/></clipPath><clipPath id='r'><rect x='32' y='0' width='32' height='64'/></clipPath></defs><g clip-path='url(%23l)'><polygon points='32,8 56,52 8,52' fill='none' stroke='%2300f5ff' stroke-width='3.5' stroke-linejoin='round'/></g><g clip-path='url(%23r)'><polygon points='32,8 56,52 8,52' fill='none' stroke='%23ff00ff' stroke-width='3.5' stroke-linejoin='round'/></g></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #030610;
+  --bg-2: #060a18;
+  --panel: #07091a;
+  --panel-2: #0a0e1f;
+  --border: rgba(0,245,255,0.18);
+  --border-soft: rgba(0,245,255,0.08);
+  --text: #d8e6f5;
+  --dim: #6a7a96;
+  --faint: #3a4660;
+  --cyan: #00f5ff;
+  --magenta: #ff00d4;
+  --yellow: #ffe000;
+  --green: #00ff88;
+  --red: #ff2060;
+  --amber: #ff9e2c;
+  --display: 'Orbitron', monospace;
+  --mono: 'Share Tech Mono', monospace;
+  --code: 'JetBrains Mono', 'Share Tech Mono', monospace;
+  --shadow-cyan: 0 0 14px rgba(0,245,255,0.4);
+  --shadow-magenta: 0 0 14px rgba(255,0,212,0.4);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  background: var(--bg); color: var(--text);
+  font-family: var(--mono); min-height: 100vh;
+  -webkit-font-smoothing: antialiased; font-size: 14px;
+  overflow-x: hidden; max-width: 100%;
+}
+*, *::before, *::after { min-width: 0; }
 
-    /* Header */
-    header {
-      display: flex; align-items: center; justify-content: space-between;
-      gap: 16px; flex-wrap: wrap;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--line);
-      margin-bottom: 28px;
-    }
-    .brand {
-      font-family: 'Orbitron', sans-serif;
-      letter-spacing: 6px;
-      color: var(--cyan);
-      font-size: 14px; font-weight: 700;
-    }
-    .title {
-      font-family: 'Orbitron', sans-serif;
-      letter-spacing: 4px;
-      color: var(--magenta);
-      font-size: 24px; margin: 4px 0 0 0;
-    }
-    .back-link {
-      color: var(--cyan);
-      text-decoration: none;
-      border: 1px solid var(--cyan);
-      padding: 8px 14px;
-      font-family: 'Orbitron', sans-serif;
-      font-size: 11px; letter-spacing: 2px;
-      transition: background 0.15s;
-    }
-    .back-link:hover { background: rgba(0,245,255,0.08); }
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(0,245,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,245,255,0.025) 1px, transparent 1px);
+  background-size: 50px 50px;
+}
 
-    /* Sections */
-    section {
-      background: rgba(10,18,32,0.6);
-      border: 1px solid var(--line);
-      padding: 24px;
-      margin-bottom: 24px;
-    }
-    section h2 {
-      font-family: 'Orbitron', sans-serif;
-      letter-spacing: 3px;
-      color: var(--cyan);
-      font-size: 13px; font-weight: 700;
-      margin: 0 0 16px 0;
-      text-transform: uppercase;
-    }
-    section h2::before { content: "// "; color: var(--magenta); }
+/* ============ HEADER ============ */
+.header-fixed {
+  position: sticky; top: 0; z-index: 100;
+  background: var(--bg); border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+}
+.header-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 24px; gap: 20px; flex-wrap: wrap;
+}
+.brand {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--display); font-weight: 900; font-size: 16px;
+  letter-spacing: 0.15em; color: var(--text);
+  text-shadow: var(--shadow-cyan);
+}
+.brand .ico { width: 22px; height: 22px; flex-shrink: 0; filter: drop-shadow(0 0 6px rgba(0,245,255,0.6)); }
+.brand .v { color: var(--cyan); }
 
-    /* Tabla */
-    table {
-      width: 100%; border-collapse: collapse;
-      font-family: 'Share Tech Mono', monospace;
-      font-size: 13px;
-    }
-    th, td {
-      padding: 12px 10px;
-      text-align: left;
-      border-bottom: 1px solid rgba(0,245,255,0.08);
-    }
-    th {
-      color: var(--muted);
-      font-weight: 400;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-      font-size: 10px;
-      border-bottom: 1px solid var(--line);
-    }
-    tr:hover td { background: rgba(0,245,255,0.03); }
-    .badge {
-      display: inline-block;
-      padding: 2px 10px;
-      border: 1px solid;
-      font-size: 10px;
-      letter-spacing: 2px;
-      font-family: 'Orbitron', sans-serif;
-      font-weight: 700;
-    }
-    .badge.admin  { color: var(--cyan);  border-color: var(--cyan); }
-    .badge.viewer { color: var(--green); border-color: var(--green); }
-    .owner-tag {
-      color: var(--magenta);
-      font-size: 10px;
-      letter-spacing: 1px;
-      margin-left: 8px;
-    }
+.back-link {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--dim); letter-spacing: 0.16em;
+  text-decoration: none;
+  border: 1px solid var(--border); padding: 6px 14px;
+  transition: all 0.15s;
+}
+.back-link:hover { color: var(--cyan); border-color: var(--cyan); background: rgba(0,245,255,0.04); }
 
-    /* Botones */
-    button, .btn {
-      font-family: 'Orbitron', sans-serif;
-      letter-spacing: 2px;
-      font-size: 11px;
-      padding: 8px 14px;
-      background: transparent;
-      color: var(--cyan);
-      border: 1px solid var(--cyan);
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    button:hover { background: rgba(0,245,255,0.08); }
-    button.danger {
-      color: var(--red);
-      border-color: var(--red);
-    }
-    button.danger:hover { background: rgba(255,68,102,0.08); }
-    button.primary {
-      background: var(--cyan);
-      color: var(--bg);
-      font-weight: 700;
-    }
-    button.primary:hover { background: #4dffff; }
-    button:disabled { opacity: 0.4; cursor: not-allowed; }
+/* ============ TITLE ============ */
+.title-block { padding: 24px 24px 16px; position: relative; z-index: 1; max-width: 1200px; margin: 0 auto; }
+.title-tag { font-size: 10px; color: var(--magenta); letter-spacing: 0.22em; margin-bottom: 6px; }
+.title-block h1 {
+  font-family: var(--display); font-weight: 900; font-size: clamp(26px, 4.5vw, 44px);
+  letter-spacing: 0.04em; line-height: 1;
+  word-break: break-word; overflow-wrap: anywhere;
+}
+.title-block h1 .a { color: var(--cyan); text-shadow: 0 0 22px rgba(0,245,255,0.45); }
+.title-block h1 .b { color: var(--magenta); text-shadow: 0 0 22px rgba(255,0,212,0.45); margin-left: 8px; }
+.title-block .sub { margin-top: 8px; font-size: 11px; color: var(--dim); letter-spacing: 0.14em; }
+.title-block .sub b { color: var(--cyan); font-weight: normal; }
 
-    /* Form */
-    .form-row {
-      display: flex; gap: 12px; align-items: stretch; flex-wrap: wrap;
-    }
-    input, select {
-      background: var(--bg);
-      color: var(--fg);
-      border: 1px solid var(--line);
-      padding: 10px 12px;
-      font-family: 'Share Tech Mono', monospace;
-      font-size: 13px;
-      outline: none;
-      transition: border-color 0.15s;
-    }
-    input:focus, select:focus { border-color: var(--cyan); }
-    input { flex: 1; min-width: 240px; }
+main { padding: 0 24px 32px; position: relative; z-index: 1; max-width: 1200px; margin: 0 auto; }
 
-    /* Footer */
-    footer {
-      margin-top: 40px;
-      padding-top: 20px;
-      border-top: 1px solid var(--line);
-      display: flex; justify-content: space-between; align-items: center;
-      color: var(--muted);
-      font-size: 11px; letter-spacing: 1px;
-    }
-    footer a {
-      color: var(--red); text-decoration: none;
-      border: 1px solid var(--red); padding: 6px 12px;
-      font-family: 'Orbitron', sans-serif; font-size: 10px; letter-spacing: 2px;
-    }
-    footer a:hover { background: rgba(255,68,102,0.08); }
+/* ============ SECTIONS ============ */
+.section { margin-bottom: 28px; }
+.section-h {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: 12px; gap: 14px; flex-wrap: wrap;
+}
+.section-h .label {
+  font-family: var(--display); font-weight: 700; font-size: 13px;
+  color: var(--cyan); letter-spacing: 0.18em;
+}
+.section-h .meta { font-size: 11px; color: var(--dim); letter-spacing: 0.1em; }
 
-    .empty {
-      color: var(--muted); padding: 24px; text-align: center;
-      font-style: italic;
-    }
-    .toast {
-      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-      background: var(--bg2); border: 1px solid var(--cyan);
-      padding: 12px 24px; color: var(--cyan);
-      font-family: 'Share Tech Mono', monospace; font-size: 13px;
-      z-index: 100; opacity: 0; transition: opacity 0.2s;
-    }
-    .toast.show  { opacity: 1; }
-    .toast.error { color: var(--red);   border-color: var(--red); }
-    .toast.ok    { color: var(--green); border-color: var(--green); }
-  </style>
+.panel {
+  background: var(--panel); border: 1px solid var(--border-soft);
+  position: relative;
+}
+.panel-h {
+  display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 11px; color: var(--cyan); letter-spacing: 0.16em;
+}
+.panel-h .right { margin-left: auto; color: var(--dim); font-size: 10px; }
+.panel-body { padding: 18px; }
+
+/* ============ TABLE ============ */
+.tbl-wrap {
+  width: 100%; max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.tbl-wrap::-webkit-scrollbar { height: 6px; }
+.tbl-wrap::-webkit-scrollbar-thumb { background: var(--border); }
+.tbl { width: 100%; min-width: 640px; border-collapse: collapse; font-family: var(--code); font-size: 12px; }
+.tbl th {
+  text-align: left; padding: 12px 16px;
+  font-size: 9px; color: var(--faint); letter-spacing: 0.18em;
+  font-weight: 400; border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-2);
+}
+.tbl td {
+  padding: 12px 16px; border-bottom: 1px solid var(--border-soft);
+  color: var(--text); vertical-align: middle;
+}
+.tbl tr:hover td { background: var(--panel-2); }
+.tbl tr:last-child td { border-bottom: none; }
+.tbl .empty { text-align: center; color: var(--faint); padding: 40px; letter-spacing: 0.14em; font-size: 11px; }
+.tbl .email-cell { font-family: var(--code); color: var(--text); }
+.tbl .owner-tag {
+  display: inline-block; margin-left: 8px;
+  font-family: var(--mono); font-size: 8px;
+  color: var(--yellow); letter-spacing: 0.16em;
+  border: 1px solid var(--yellow); padding: 1px 6px;
+}
+.tbl .date-cell { color: var(--dim); font-size: 11px; }
+
+/* role badges */
+.role-badge {
+  display: inline-block; padding: 4px 12px;
+  font-family: var(--display); font-weight: 700; font-size: 9px;
+  letter-spacing: 0.18em; border: 1px solid currentColor;
+}
+.role-badge.admin {
+  color: var(--magenta);
+  background: rgba(255,0,212,0.06);
+  text-shadow: 0 0 8px rgba(255,0,212,0.4);
+}
+.role-badge.viewer {
+  color: var(--cyan);
+  background: rgba(0,245,255,0.04);
+  text-shadow: 0 0 8px rgba(0,245,255,0.3);
+}
+
+/* delete button */
+.btn-del {
+  background: transparent; border: 1px solid var(--red); color: var(--red);
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em;
+  padding: 6px 14px; cursor: pointer;
+  text-shadow: 0 0 6px rgba(255,32,96,0.4);
+  transition: all 0.15s;
+}
+.btn-del:hover { background: var(--red); color: #fff; text-shadow: none; }
+.btn-del:disabled { opacity: 0.5; cursor: not-allowed; }
+.no-action {
+  font-family: var(--mono); font-size: 10px; color: var(--faint);
+  letter-spacing: 0.14em;
+}
+
+/* ============ ADD USER FORM ============ */
+.form-grid {
+  display: grid; grid-template-columns: 2fr 1fr auto; gap: 14px;
+  align-items: end;
+}
+@media (max-width: 720px) { .form-grid { grid-template-columns: 1fr; } }
+
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label {
+  font-size: 9px; color: var(--faint); letter-spacing: 0.18em;
+  font-family: var(--mono);
+}
+.field input, .field select {
+  background: var(--bg-2); border: 1px solid var(--border); color: var(--text);
+  font-family: var(--code); font-size: 13px; padding: 10px 12px;
+  letter-spacing: 0.04em; outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.field input:focus, .field select:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 1px var(--cyan), 0 0 12px rgba(0,245,255,0.2);
+}
+.field input::placeholder { color: var(--faint); }
+.field select { cursor: pointer; }
+
+.btn-add {
+  background: var(--cyan); color: #000; border: none;
+  font-family: var(--mono); font-weight: 700; font-size: 11px;
+  letter-spacing: 0.18em; padding: 11px 22px; cursor: pointer;
+  box-shadow: 0 0 14px rgba(0,245,255,0.5);
+  transition: all 0.15s;
+  height: fit-content;
+}
+.btn-add:hover { background: #fff; box-shadow: 0 0 22px rgba(0,245,255,0.8); }
+.btn-add:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+
+/* feedback messages */
+.feedback {
+  margin-top: 14px; padding: 10px 14px;
+  font-family: var(--code); font-size: 12px;
+  letter-spacing: 0.04em;
+  display: none; align-items: center; gap: 10px;
+}
+.feedback.show { display: flex; }
+.feedback.ok {
+  color: var(--green); border: 1px solid var(--green);
+  background: rgba(0,255,136,0.05);
+}
+.feedback.err {
+  color: var(--red); border: 1px solid var(--red);
+  background: rgba(255,32,96,0.05);
+}
+.feedback::before {
+  content: '>'; font-family: var(--display); font-weight: 900;
+}
+
+/* loading state */
+.loading {
+  text-align: center; padding: 40px; color: var(--dim);
+  font-size: 11px; letter-spacing: 0.14em;
+}
+.loading::after {
+  content: '...';
+  display: inline-block;
+  animation: dots 1.5s infinite;
+}
+@keyframes dots {
+  0%, 20% { content: ''; }
+  40% { content: '.'; }
+  60% { content: '..'; }
+  80%, 100% { content: '...'; }
+}
+
+/* permission denied banner */
+.perm-banner {
+  margin: 24px auto; max-width: 700px;
+  padding: 24px;
+  border: 1px solid var(--red);
+  background: rgba(255,32,96,0.04);
+  text-align: center;
+}
+.perm-banner h2 {
+  font-family: var(--display); font-weight: 900;
+  color: var(--red); letter-spacing: 0.16em;
+  font-size: 18px; margin-bottom: 8px;
+  text-shadow: 0 0 12px rgba(255,32,96,0.5);
+}
+.perm-banner p {
+  color: var(--dim); font-size: 12px; letter-spacing: 0.06em;
+}
+
+/* ============ FOOTER ============ */
+footer {
+  margin-top: 40px; padding: 18px 24px;
+  border-top: 1px solid var(--border-soft);
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 16px; flex-wrap: wrap;
+  font-size: 10px; color: var(--dim); letter-spacing: 0.14em;
+  max-width: 1200px; margin-left: auto; margin-right: auto;
+}
+footer .brand-mini {
+  font-family: var(--display); font-weight: 900; font-size: 14px;
+  color: var(--text); letter-spacing: 0.18em;
+}
+footer .right { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+footer a.logout {
+  color: var(--red); text-decoration: none;
+  letter-spacing: 0.18em; font-size: 11px;
+  border: 1px solid transparent; padding: 4px 10px;
+  transition: all 0.15s;
+}
+footer a.logout:hover { border-color: var(--red); background: rgba(255,32,96,0.06); }
+footer .version b { color: var(--cyan); font-weight: normal; margin-left: 4px; }
+
+@media (max-width: 720px) {
+  .header-row { padding: 10px 14px; gap: 10px; }
+  .title-block { padding: 18px 14px 14px; }
+  main { padding: 0 14px 24px; }
+  .panel-body { padding: 14px; }
+  .tbl th, .tbl td { padding: 9px 10px; }
+  footer { padding: 14px; }
+}
+</style>
 </head>
 <body>
-  <div class="grid-bg"></div>
-  <div class="container">
 
-    <header>
-      <div>
-        <div class="brand">AFTERLIFE CAPITAL</div>
-        <h1 class="title">+ ADMIN PANEL</h1>
+<!-- ============ HEADER ============ -->
+<header class="header-fixed">
+  <div class="header-row">
+    <div class="brand">
+      <svg class="ico" viewBox="0 0 64 64" aria-hidden="true">
+        <defs>
+          <clipPath id="hL"><rect x="0" y="0" width="32" height="64"/></clipPath>
+          <clipPath id="hR"><rect x="32" y="0" width="32" height="64"/></clipPath>
+        </defs>
+        <g clip-path="url(#hL)"><polygon points="32,8 56,52 8,52" fill="none" stroke="#00f5ff" stroke-width="4" stroke-linejoin="round"/></g>
+        <g clip-path="url(#hR)"><polygon points="32,8 56,52 8,52" fill="none" stroke="#ff00d4" stroke-width="4" stroke-linejoin="round"/></g>
+      </svg>
+      <span>AFTERLIFE CAPITAL — <span class="v">ADMIN PANEL</span></span>
+    </div>
+    <a class="back-link" href="/">← VOLVER AL DASHBOARD</a>
+  </div>
+</header>
+
+<!-- ============ TITLE ============ -->
+<div class="title-block">
+  <div class="title-tag">// PANEL DE ADMINISTRACIÓN</div>
+  <h1><span class="a">USER</span> <span class="b">CONTROL</span></h1>
+  <div class="sub">Gestión de cuentas · acceso restringido a <b>ADMIN</b></div>
+</div>
+
+<main id="mainContent">
+
+  <!-- ============ SECCIÓN 1: USUARIOS REGISTRADOS ============ -->
+  <div class="section">
+    <div class="section-h">
+      <span class="label">// USUARIOS REGISTRADOS</span>
+      <span class="meta"><b id="userCount">—</b> usuarios</span>
+    </div>
+    <div class="panel">
+      <div class="panel-h">
+        <span>// LISTADO</span>
+        <span class="right" id="usersUpdated">cargando...</span>
       </div>
-      <a class="back-link" href="/">&larr; VOLVER AL DASHBOARD</a>
-    </header>
-
-    <section>
-      <h2>Usuarios registrados</h2>
-      <table id="usersTable">
-        <thead>
-          <tr>
-            <th>Email</th>
-            <th>Rol</th>
-            <th>Username</th>
-            <th>Registrado</th>
-            <th style="text-align:right;">Acciones</th>
-          </tr>
-        </thead>
-        <tbody id="usersBody">
-          <tr><td colspan="5" class="empty">Cargando...</td></tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section>
-      <h2>Agregar usuario</h2>
-      <form id="addForm" class="form-row" autocomplete="off">
-        <input type="email" id="newEmail" placeholder="correo@ejemplo.com" required>
-        <select id="newRole">
-          <option value="VIEWER">VIEWER</option>
-          <option value="ADMIN">ADMIN</option>
-        </select>
-        <button type="submit" class="primary" id="addBtn">+ AGREGAR</button>
-      </form>
-    </section>
-
-    <footer>
-      <span>Sentinel v0.5 &middot; Admin Panel</span>
-      <a href="/auth/logout">CERRAR SESIÓN</a>
-    </footer>
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th>EMAIL</th>
+              <th>ROL</th>
+              <th>FECHA DE REGISTRO</th>
+              <th style="text-align:right;">ACCIONES</th>
+            </tr>
+          </thead>
+          <tbody id="usersBody">
+            <tr><td colspan="4"><div class="loading">CARGANDO USUARIOS</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
-  <div class="toast" id="toast"></div>
+  <!-- ============ SECCIÓN 2: AGREGAR USUARIO ============ -->
+  <div class="section">
+    <div class="section-h">
+      <span class="label">// AGREGAR USUARIO</span>
+      <span class="meta">se enviará email de bienvenida</span>
+    </div>
+    <div class="panel">
+      <div class="panel-body">
+        <form id="addUserForm" autocomplete="off">
+          <div class="form-grid">
+            <div class="field">
+              <label for="emailInput">EMAIL</label>
+              <input type="email" id="emailInput" placeholder="usuario@dominio.com" required>
+            </div>
+            <div class="field">
+              <label for="roleSelect">ROL</label>
+              <select id="roleSelect">
+                <option value="VIEWER" selected>VIEWER</option>
+                <option value="ADMIN">ADMIN</option>
+              </select>
+            </div>
+            <button type="submit" class="btn-add" id="addBtn">+ AGREGAR</button>
+          </div>
+          <div class="feedback" id="feedback"></div>
+        </form>
+      </div>
+    </div>
+  </div>
 
-  <script>
-    const OWNER_EMAIL = "***REMOVED-EMAIL***";
+</main>
 
-    function showToast(msg, kind) {
-      const t = document.getElementById("toast");
-      t.textContent = msg;
-      t.className = "toast show " + (kind || "");
-      setTimeout(() => { t.classList.remove("show"); }, 3500);
-    }
+<!-- permission denied template (hidden by default) -->
+<template id="permTpl">
+  <div class="perm-banner">
+    <h2>// ACCESO DENEGADO</h2>
+    <p>No tienes permisos para acceder a este panel. Esta página requiere rol ADMIN.</p>
+  </div>
+</template>
 
-    function fmtDate(iso) {
-      if (!iso) return "—";
-      const d = new Date(iso);
-      if (isNaN(d.getTime())) return iso;
-      const pad = n => String(n).padStart(2, "0");
-      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    }
+<footer>
+  <div class="brand-mini">AFTERLIFE</div>
+  <div class="right">
+    <a href="/auth/logout" class="logout">CERRAR SESIÓN</a>
+    <span class="version">Sentinel<b>v0.5</b></span>
+  </div>
+</footer>
 
-    async function fetchJSON(url, opts) {
-      const r = await fetch(url, opts);
-      if (r.status === 401) { window.location.href = "/auth/login"; return null; }
-      if (r.status === 403) {
-        const data = await r.json().catch(() => ({}));
-        showToast(data.message || "No tenés permisos para esta acción.", "error");
-        return null;
-      }
-      const data = await r.json().catch(() => null);
-      if (!r.ok) {
-        const msg = (data && (data.error || data.detail)) || `${r.status} ${r.statusText}`;
-        return { _error: msg, _status: r.status, ...data };
-      }
-      return data;
-    }
+<script src="admin-app.js"></script>
 
-    async function loadUsers() {
-      const data = await fetchJSON("/api/admin/users");
-      const tbody = document.getElementById("usersBody");
-      if (data === null) return;
-      if (data._error) {
-        tbody.innerHTML = `<tr><td colspan="5" class="empty">Error: ${data._error}</td></tr>`;
-        return;
-      }
-      if (!Array.isArray(data) || data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty">No hay usuarios.</td></tr>';
-        return;
-      }
-      tbody.innerHTML = data.map(u => {
-        const isOwner = (u.email || "").toLowerCase() === OWNER_EMAIL;
-        const badge = u.role === "ADMIN" ? "admin" : "viewer";
-        const ownerTag = isOwner ? '<span class="owner-tag">[OWNER]</span>' : "";
-        const action = isOwner
-          ? '<span style="color:var(--muted);font-size:11px;">— protegido —</span>'
-          : `<button class="danger" data-uid="${u.user_id}" data-email="${u.email}">ELIMINAR</button>`;
-        return `<tr>
-          <td>${escapeHtml(u.email)}${ownerTag}</td>
-          <td><span class="badge ${badge}">${u.role}</span></td>
-          <td style="color:var(--muted);">${escapeHtml(u.username || "")}</td>
-          <td style="color:var(--muted);">${fmtDate(u.created_at)}</td>
-          <td style="text-align:right;">${action}</td>
-        </tr>`;
-      }).join("");
-
-      tbody.querySelectorAll("button.danger").forEach(btn => {
-        btn.addEventListener("click", () => removeUser(btn.dataset.uid, btn.dataset.email));
-      });
-    }
-
-    function escapeHtml(s) {
-      return String(s || "").replace(/[&<>"']/g, c => ({
-        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-      }[c]));
-    }
-
-    async function removeUser(uid, email) {
-      if (!confirm(`¿Eliminar al usuario "${email}"?\n\nEsta acción es inmediata y se enviará un email de notificación.`)) return;
-      const r = await fetchJSON(`/api/admin/users/${encodeURIComponent(uid)}`, { method: "DELETE" });
-      if (r === null) return;
-      if (r._error) {
-        showToast(`Error: ${r._error}`, "error");
-        return;
-      }
-      showToast("Usuario eliminado. Email de notificación enviado.", "ok");
-      loadUsers();
-    }
-
-    document.getElementById("addForm").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const email = document.getElementById("newEmail").value.trim().toLowerCase();
-      const role  = document.getElementById("newRole").value;
-      if (!email) return;
-      const btn = document.getElementById("addBtn");
-      btn.disabled = true;
-      try {
-        const r = await fetchJSON("/api/admin/users", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, role }),
-        });
-        if (r === null) return;
-        if (r._error) {
-          if (r._status === 409 || r.error === "email_exists") {
-            showToast("Ese email ya está registrado.", "error");
-          } else {
-            showToast(`Error: ${r._error}`, "error");
-          }
-          return;
-        }
-        showToast("Usuario agregado. Email de bienvenida enviado.", "ok");
-        document.getElementById("newEmail").value = "";
-        document.getElementById("newRole").value = "VIEWER";
-        loadUsers();
-      } finally {
-        btn.disabled = false;
-      }
-    });
-
-    loadUsers();
-  </script>
 </body>
 </html>
