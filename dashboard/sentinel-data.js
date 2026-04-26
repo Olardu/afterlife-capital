@@ -380,10 +380,11 @@ async function loadMacro() {
 
 async function reloadFromAPI() {
   // status primero (afecta AGENTS active), después sentinels (sirven mapping de
-  // sentName en trades), luego trades + macro en paralelo
+  // sentName en trades), luego trades + macro en paralelo. Kill switch state
+  // se refresca también — el toggle del botón depende del flag system_halted.
   await loadStatus();
   await loadSentinels();
-  await Promise.all([loadTrades(), loadMacro()]);
+  await Promise.all([loadTrades(), loadMacro(), refreshKillSwitchState()]);
 
   if (typeof renderAll === 'function') {
     try { renderAll(); } catch (e) { console.error('[sentinel-data] renderAll:', e); }
@@ -457,7 +458,7 @@ function setupPersistence() {
 
 }
 
-/* ============ KILL SWITCH — botón DETENER ============
+/* ============ KILL SWITCH — botón DETENER / INICIAR ============
  * sentinel-app.js (handoff) registra `$('#detenerBtn').addEventListener('click', alert(demo))`
  * en el target. En el target, los listeners corren en orden de REGISTRO,
  * así que un addEventListener(..., useCapture=true) sobre el botón mismo
@@ -465,35 +466,137 @@ function setupPersistence() {
  * registrar en `document` con capture=true (event delegation): la fase
  * capture del documento corre ANTES de la fase target, y
  * stopImmediatePropagation() evita que el evento alcance el listener del
- * handoff. (#H-7)
+ * handoff.
+ *
+ * Toggle visual: cuando system_halted=true, el botón cambia a verde con
+ * texto INICIAR. Para que applyI18n() del handoff no pise el texto al
+ * cambiar idioma, mutamos el `data-i18n` del botón entre `btn_detener` y
+ * la key dinámica `btn_iniciar` (inyectada al I18N en boot).
+ * (#H-7)
  * ============================================================ */
+
+const BTN_HALTED_LABELS = {
+  es: '+ INICIAR', en: '+ START', ja: '+ 開始', th: '+ เริ่ม',
+};
+
+let _systemHalted = false;
+
+function _injectKillSwitchAssets() {
+  // Keys i18n para el modo INICIAR (verde). Se evalúa cada vez por seguridad
+  // ante un re-load de I18N, pero typeof I18N nunca cambia tras boot.
+  if (typeof I18N === 'object') {
+    for (const lang of Object.keys(BTN_HALTED_LABELS)) {
+      if (I18N[lang]) I18N[lang]['btn_iniciar'] = BTN_HALTED_LABELS[lang];
+    }
+  }
+  // CSS para el estado verde — !important para anteceder al CSS del handoff.
+  if (!document.getElementById('sentinel-killswitch-style')) {
+    const style = document.createElement('style');
+    style.id = 'sentinel-killswitch-style';
+    style.textContent = `
+      #detenerBtn.system-halted {
+        background: #00ff88 !important;
+        border-color: #00ff88 !important;
+        color: #030610 !important;
+        text-shadow: none !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+}
+
+function _setKillSwitchUI(halted) {
+  _systemHalted = !!halted;
+  const btn = document.getElementById('detenerBtn');
+  if (!btn) return;
+  if (halted) {
+    btn.classList.add('system-halted');
+    btn.dataset.i18n = 'btn_iniciar';
+  } else {
+    btn.classList.remove('system-halted');
+    btn.dataset.i18n = 'btn_detener';
+  }
+  // Refrescar texto vía applyI18n del handoff si está disponible.
+  if (typeof applyI18n === 'function') {
+    try { applyI18n(); } catch (_) { /* ignore */ }
+  } else if (typeof t === 'function') {
+    btn.textContent = t(btn.dataset.i18n);
+  }
+}
+
+async function refreshKillSwitchState() {
+  try {
+    const res = await fetch('/api/system/state');
+    if (res.status === 401) { window.location.href = '/auth/login'; return; }
+    if (!res.ok) return;
+    const data = await res.json();
+    _setKillSwitchUI(!!data.system_halted);
+  } catch (e) {
+    console.warn('[sentinel-data] refreshKillSwitchState:', e);
+  }
+}
+
 function setupKillSwitch() {
+  _injectKillSwitchAssets();
+
   document.addEventListener('click', async (e) => {
     if (!e.target.closest('#detenerBtn')) return;
     e.stopImmediatePropagation();
     e.preventDefault();
 
+    if (_systemHalted) {
+      // Modo INICIAR — pedir resume
+      const ok = confirm(
+        '▶ INICIAR SISTEMA\n\n' +
+        '¿Reactivar el trading? El Dispatcher volverá a procesar señales.'
+      );
+      if (!ok) return;
+      try {
+        const res  = await fetch('/api/system/resume', { method: 'POST' });
+        if (res.status === 401) { window.location.href = '/auth/login'; return; }
+        if (res.status === 403) { alert('No tenés permisos para esta acción.'); return; }
+        const data = await res.json();
+        if (data.status === 'resume_requested') {
+          alert('Sistema reactivándose. En máximo 5 segundos vuelve a operar.');
+          // Optimistic: el SSE/refresh confirmará pero adelantamos UI
+          setTimeout(refreshKillSwitchState, 6000);
+        } else if (data.status === 'already_running') {
+          alert('El sistema ya está activo.');
+          _setKillSwitchUI(false);
+        } else {
+          alert('Respuesta inesperada: ' + JSON.stringify(data));
+        }
+      } catch (err) {
+        alert('Error al contactar la API: ' + err.message);
+      }
+      return;
+    }
+
+    // Modo DETENER — pedir halt
     const ok = confirm(
-      '⚠️ KILL SWITCH\n\n' +
-      '¿Estás seguro de que quieres detener el sistema?\n\n' +
-      'Esto cancelará todas las órdenes pendientes y cerrará todas las posiciones abiertas.'
+      '⚠ KILL SWITCH\n\n' +
+      '¿Detener el sistema?\n\n' +
+      'Esto cancela las órdenes pendientes y cierra las posiciones abiertas.'
     );
     if (!ok) return;
-
     try {
       const res  = await fetch('/api/system/halt', { method: 'POST' });
+      if (res.status === 401) { window.location.href = '/auth/login'; return; }
+      if (res.status === 403) { alert('No tenés permisos para esta acción.'); return; }
       const data = await res.json();
       if (data.status === 'halt_requested') {
-        alert('Kill switch activado. El sistema cerrará posiciones en máximo 5 segundos.');
+        alert('Kill switch activado. Posiciones cerrándose en máximo 5 segundos.');
+        setTimeout(refreshKillSwitchState, 6000);
       } else if (data.status === 'already_halted') {
         alert('El sistema ya está detenido.');
+        _setKillSwitchUI(true);
       } else {
         alert('Respuesta inesperada: ' + JSON.stringify(data));
       }
     } catch (err) {
       alert('Error al contactar la API: ' + err.message);
     }
-  }, true);   // useCapture=true — corre en fase capture, antes del listener target del handoff
+  }, true);
 }
 
 /* ============ BOOT ============ */
