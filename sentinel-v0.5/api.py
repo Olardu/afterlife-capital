@@ -189,11 +189,9 @@ async def auth_middleware(request: Request, call_next):
         if user is None:
             return RedirectResponse(url="/auth/login", status_code=302)
         if user.get("role") != "ADMIN":
-            return JSONResponse(
-                {"error":   "forbidden",
-                 "message": "El panel admin requiere rol ADMIN"},
-                status_code=403,
-            )
+            # VIEWER no debería siquiera saber que /admin existe — silent
+            # redirect al dashboard en lugar de 403 explícito.
+            return RedirectResponse(url="/", status_code=302)
         return await call_next(request)
 
     if path == "/":
