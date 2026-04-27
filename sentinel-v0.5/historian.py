@@ -1014,3 +1014,565 @@ class Historian:
         if deleted:
             logger.info(f"API key eliminada: key_id={key_id}")
         return deleted
+
+    # =========================================================================
+    # UNIVERSE SELECTION (#UNIVERSE-SELECTION) — métodos para el módulo
+    # universe_selector.py: detección de warning, persistencia de decisiones,
+    # gestión de candidatos, ejecución y rollback de rotaciones.
+    # =========================================================================
+
+    async def get_sentinels_with_warning(self, owner_id: UUID) -> list[dict]:
+        """
+        Retorna las filas de performance_scores que cruzaron el WARNING
+        threshold sin haber cruzado aún el DECAY. Cada item es una unidad
+        (sentinel_id, ticker) — un Sentinel con varios tickers puede aparecer
+        varias veces.
+
+        Returns:
+            list de dicts con sentinel_id, name, strategy_type, ticker,
+            win_rate, sharpe_ratio, total_trades, performance_decay,
+            warning_status, warning_detected_at.
+        """
+        sql = """
+            SELECT s.sentinel_id, s.name, s.strategy_type,
+                   ps.ticker, ps.win_rate, ps.sharpe_ratio, ps.total_trades,
+                   ps.performance_decay, ps.warning_status, ps.warning_detected_at
+            FROM performance_scores ps
+            JOIN sentinels s ON s.sentinel_id = ps.sentinel_id
+            WHERE s.owner_id = $1
+              AND s.is_active = TRUE
+              AND ps.warning_status = TRUE
+            ORDER BY ps.warning_detected_at DESC NULLS LAST
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(sql, owner_id)
+            return [dict(r) for r in rows]
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al listar sentinels con warning: {e}")
+            raise
+
+    async def update_warning_status(
+        self,
+        sentinel_id: UUID,
+        ticker: str,
+        win_rate: float,
+        sharpe_ratio: float,
+        warning_threshold_winrate: float,
+        warning_threshold_sharpe: float,
+    ) -> bool:
+        """
+        Marca/desmarca warning_status en performance_scores según los
+        umbrales pasados. warning_detected_at se setea cuando entra en
+        warning (NULL cuando sale).
+
+        Returns:
+            True si la fila ahora está en warning, False si no.
+        """
+        in_warning = (
+            (win_rate is not None and win_rate < warning_threshold_winrate)
+            or (sharpe_ratio is not None and sharpe_ratio < warning_threshold_sharpe)
+        )
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE performance_scores
+                    SET warning_status      = $3,
+                        warning_detected_at = CASE
+                            WHEN $3 = TRUE AND warning_status = FALSE THEN NOW()
+                            WHEN $3 = FALSE THEN NULL
+                            ELSE warning_detected_at
+                        END
+                    WHERE sentinel_id = $1 AND ticker = $2
+                    """,
+                    sentinel_id, ticker, in_warning,
+                )
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al actualizar warning_status ({sentinel_id}, {ticker}): {e}")
+            raise
+        return in_warning
+
+    async def get_pending_candidate(self, sentinel_id: UUID) -> Optional[dict]:
+        """
+        Retorna el candidato pendiente activo (status='watching') del
+        Sentinel, o None si no hay. Solo puede haber uno por el índice
+        UNIQUE parcial.
+        """
+        sql = """
+            SELECT pc.candidate_id, pc.sentinel_id, pc.proposed_ticker,
+                   pc.proposed_at, pc.expires_at, pc.decision_id, pc.status
+            FROM pending_candidates pc
+            WHERE pc.sentinel_id = $1 AND pc.status = 'watching'
+            LIMIT 1
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(sql, sentinel_id)
+            return dict(row) if row else None
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al leer pending_candidate ({sentinel_id}): {e}")
+            raise
+
+    async def save_pending_candidate(
+        self,
+        sentinel_id: UUID,
+        proposed_ticker: str,
+        decision_id: UUID,
+        ttl_days: int = 7,
+    ) -> UUID:
+        """
+        Guarda un candidato en watchlist. Falla si ya hay otro en watching
+        para el mismo sentinel (índice UNIQUE parcial) — el caller debe
+        descartar el anterior primero.
+        """
+        sql = """
+            INSERT INTO pending_candidates
+                (sentinel_id, proposed_ticker, expires_at, decision_id, status)
+            VALUES ($1, $2, NOW() + ($3 || ' days')::interval, $4, 'watching')
+            RETURNING candidate_id
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    sql, sentinel_id, proposed_ticker, str(ttl_days), decision_id,
+                )
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al guardar pending_candidate ({sentinel_id}, {proposed_ticker}): {e}")
+            raise
+        cid = row["candidate_id"]
+        logger.info(
+            f"Pending candidate creado: sentinel={sentinel_id} "
+            f"ticker={proposed_ticker} expires_in={ttl_days}d candidate_id={cid}"
+        )
+        return cid
+
+    async def discard_pending_candidate(self, candidate_id: UUID, reason: str = "") -> bool:
+        """Marca el candidato como 'discarded'. Returns True si actualizó algo."""
+        try:
+            async with self.pool.acquire() as conn:
+                result = await conn.execute(
+                    "UPDATE pending_candidates SET status = 'discarded' "
+                    "WHERE candidate_id = $1 AND status = 'watching'",
+                    candidate_id,
+                )
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al descartar pending_candidate {candidate_id}: {e}")
+            raise
+        ok = result.startswith("UPDATE ") and result.split()[-1] != "0"
+        if ok:
+            logger.info(f"Pending candidate descartado: {candidate_id} | reason={reason!r}")
+        return ok
+
+    async def expire_old_pending_candidates(self) -> int:
+        """
+        Marca como 'expired' todos los pending_candidates con expires_at <= NOW()
+        y status='watching'. Llamar periódicamente desde universe_selector.
+        Retorna el conteo actualizado.
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                result = await conn.execute(
+                    "UPDATE pending_candidates SET status = 'expired' "
+                    "WHERE status = 'watching' AND expires_at <= NOW()"
+                )
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al expirar pending_candidates: {e}")
+            raise
+        count = int(result.split()[-1]) if result.startswith("UPDATE ") else 0
+        if count:
+            logger.info(f"Pending candidates expirados: {count}")
+        return count
+
+    async def save_rotation_decision(
+        self,
+        *,
+        sentinel_id: UUID,
+        owner_id: UUID,
+        trigger_reason: str,
+        old_ticker: str,
+        old_win_rate: Optional[float],
+        old_sharpe_ratio: Optional[float],
+        old_total_trades: Optional[int],
+        new_ticker: Optional[str],
+        candidates_proposed: list,
+        claude_reasoning: Optional[str],
+        claude_confidence: Optional[float],
+        claude_model: Optional[str],
+        claude_input_tokens: int,
+        claude_output_tokens: int,
+        claude_cost_usd: float,
+        status: str = "pending",
+        notes: Optional[str] = None,
+    ) -> UUID:
+        """Persiste una rotation_decision. Retorna decision_id."""
+        sql = """
+            INSERT INTO rotation_decisions
+                (sentinel_id, owner_id, trigger_reason,
+                 old_ticker, old_win_rate, old_sharpe_ratio, old_total_trades,
+                 new_ticker, candidates_proposed, claude_reasoning,
+                 claude_confidence, claude_model,
+                 claude_input_tokens, claude_output_tokens, claude_cost_usd,
+                 status, notes)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12,
+                    $13, $14, $15, $16, $17)
+            RETURNING decision_id
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    sql,
+                    sentinel_id, owner_id, trigger_reason,
+                    old_ticker, old_win_rate, old_sharpe_ratio, old_total_trades,
+                    new_ticker, json.dumps(candidates_proposed or []),
+                    claude_reasoning, claude_confidence, claude_model,
+                    claude_input_tokens, claude_output_tokens, claude_cost_usd,
+                    status, notes,
+                )
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al persistir rotation_decision ({sentinel_id}): {e}")
+            raise
+        did = row["decision_id"]
+        logger.info(
+            f"Rotation decision creada: {did} | sentinel={sentinel_id} "
+            f"old={old_ticker} new={new_ticker} cost=${claude_cost_usd:.4f} "
+            f"status={status}"
+        )
+        return did
+
+    async def execute_rotation_in_db(
+        self,
+        decision_id: UUID,
+    ) -> bool:
+        """
+        Ejecuta atomicamente la rotación: marca el ticker viejo inactive,
+        inserta/activa el nuevo en sentinel_tickers, y marca la decisión
+        como 'executed'. Todo en una sola transacción.
+
+        Returns:
+            True si la rotación se aplicó, False si la decisión no estaba
+            en estado 'pending' o el sentinel/ticker no se encontraron.
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.transaction():
+                    decision = await conn.fetchrow(
+                        "SELECT sentinel_id, old_ticker, new_ticker, status "
+                        "FROM rotation_decisions WHERE decision_id = $1 FOR UPDATE",
+                        decision_id,
+                    )
+                    if decision is None:
+                        logger.warning(f"execute_rotation: decision {decision_id} no existe")
+                        return False
+                    if decision["status"] != "pending":
+                        logger.warning(
+                            f"execute_rotation: decision {decision_id} ya está en "
+                            f"status={decision['status']!r}, skip"
+                        )
+                        return False
+                    if not decision["new_ticker"]:
+                        logger.warning(f"execute_rotation: decision {decision_id} sin new_ticker")
+                        await conn.execute(
+                            "UPDATE rotation_decisions "
+                            "SET status = 'failed', notes = 'no new_ticker provided' "
+                            "WHERE decision_id = $1",
+                            decision_id,
+                        )
+                        return False
+
+                    sid    = decision["sentinel_id"]
+                    old    = decision["old_ticker"]
+                    new    = decision["new_ticker"]
+
+                    await conn.execute(
+                        "UPDATE sentinel_tickers SET is_active = FALSE "
+                        "WHERE sentinel_id = $1 AND ticker = $2",
+                        sid, old,
+                    )
+                    # ON CONFLICT DO UPDATE — si el nuevo ticker ya existió antes
+                    # (rotación de ida y vuelta), simplemente lo reactivamos.
+                    await conn.execute(
+                        """
+                        INSERT INTO sentinel_tickers (sentinel_id, ticker, is_active)
+                        VALUES ($1, $2, TRUE)
+                        ON CONFLICT (sentinel_id, ticker) DO UPDATE
+                            SET is_active = TRUE,
+                                assigned_at = NOW()
+                        """,
+                        sid, new,
+                    )
+                    await conn.execute(
+                        "UPDATE rotation_decisions "
+                        "SET status = 'executed', executed_at = NOW() "
+                        "WHERE decision_id = $1",
+                        decision_id,
+                    )
+                    # Activar el pending_candidate asociado si existe.
+                    await conn.execute(
+                        "UPDATE pending_candidates "
+                        "SET status = 'activated' "
+                        "WHERE decision_id = $1 AND status = 'watching'",
+                        decision_id,
+                    )
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al ejecutar rotation_in_db {decision_id}: {e}")
+            raise
+        logger.info(f"Rotation ejecutada: decision_id={decision_id} | {old} → {new} | sentinel={sid}")
+        return True
+
+    async def rollback_rotation_in_db(
+        self,
+        decision_id: UUID,
+        admin_email: str,
+    ) -> bool:
+        """
+        Deshace una rotación previamente ejecutada. Solo aplicable si
+        status='executed'. Restaura el ticker viejo y desactiva el nuevo.
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.transaction():
+                    decision = await conn.fetchrow(
+                        "SELECT sentinel_id, old_ticker, new_ticker, status "
+                        "FROM rotation_decisions WHERE decision_id = $1 FOR UPDATE",
+                        decision_id,
+                    )
+                    if decision is None:
+                        logger.warning(f"rollback: decision {decision_id} no existe")
+                        return False
+                    if decision["status"] != "executed":
+                        logger.warning(
+                            f"rollback: decision {decision_id} no está en "
+                            f"status='executed' (actual={decision['status']!r})"
+                        )
+                        return False
+
+                    sid = decision["sentinel_id"]
+                    old = decision["old_ticker"]
+                    new = decision["new_ticker"]
+
+                    await conn.execute(
+                        "UPDATE sentinel_tickers SET is_active = FALSE "
+                        "WHERE sentinel_id = $1 AND ticker = $2",
+                        sid, new,
+                    )
+                    await conn.execute(
+                        """
+                        INSERT INTO sentinel_tickers (sentinel_id, ticker, is_active)
+                        VALUES ($1, $2, TRUE)
+                        ON CONFLICT (sentinel_id, ticker) DO UPDATE
+                            SET is_active = TRUE,
+                                assigned_at = NOW()
+                        """,
+                        sid, old,
+                    )
+                    await conn.execute(
+                        "UPDATE rotation_decisions "
+                        "SET status = 'rolled_back', "
+                        "    rolled_back_at = NOW(), "
+                        "    rolled_back_by = $2 "
+                        "WHERE decision_id = $1",
+                        decision_id, admin_email,
+                    )
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al rollback {decision_id}: {e}")
+            raise
+        logger.warning(
+            f"ROLLBACK ejecutado por {admin_email}: decision_id={decision_id} "
+            f"| restaurado {new} → {old} | sentinel={sid}"
+        )
+        return True
+
+    async def discard_rotation_decision(self, decision_id: UUID, reason: str = "") -> bool:
+        """Marca como 'discarded' una decisión que estaba pending."""
+        try:
+            async with self.pool.acquire() as conn:
+                result = await conn.execute(
+                    "UPDATE rotation_decisions "
+                    "SET status = 'discarded', notes = COALESCE(notes, '') || $2 "
+                    "WHERE decision_id = $1 AND status = 'pending'",
+                    decision_id, f" | discarded: {reason}" if reason else " | discarded",
+                )
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al discard rotation_decision {decision_id}: {e}")
+            raise
+        ok = result.startswith("UPDATE ") and result.split()[-1] != "0"
+        return ok
+
+    async def get_recent_rotations(
+        self,
+        owner_id: UUID,
+        limit: int = 20,
+        status: Optional[str] = None,
+    ) -> list[dict]:
+        """
+        Lista paginada de rotaciones recientes para el owner. Si status se
+        provee, filtra (e.g. 'executed' para mostrar en dashboard).
+        """
+        params: list = [owner_id]
+        where = "WHERE rd.owner_id = $1"
+        if status:
+            params.append(status)
+            where += f" AND rd.status = ${len(params)}"
+        params.append(limit)
+        sql = f"""
+            SELECT rd.decision_id, rd.sentinel_id, s.name AS sentinel_name,
+                   rd.triggered_at, rd.trigger_reason,
+                   rd.old_ticker, rd.new_ticker,
+                   rd.old_win_rate, rd.old_sharpe_ratio, rd.old_total_trades,
+                   rd.claude_confidence, rd.claude_model, rd.claude_cost_usd,
+                   rd.status, rd.executed_at, rd.rolled_back_at, rd.rolled_back_by,
+                   rd.candidates_proposed, rd.claude_reasoning, rd.notes
+            FROM rotation_decisions rd
+            JOIN sentinels s ON s.sentinel_id = rd.sentinel_id
+            {where}
+            ORDER BY rd.triggered_at DESC
+            LIMIT ${len(params)}
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(sql, *params)
+            return [dict(r) for r in rows]
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al listar rotaciones: {e}")
+            raise
+
+    async def get_rotation_decision(self, decision_id: UUID) -> Optional[dict]:
+        """Detalle completo de una decisión por ID."""
+        sql = """
+            SELECT rd.*, s.name AS sentinel_name
+            FROM rotation_decisions rd
+            JOIN sentinels s ON s.sentinel_id = rd.sentinel_id
+            WHERE rd.decision_id = $1
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(sql, decision_id)
+            return dict(row) if row else None
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al leer rotation_decision {decision_id}: {e}")
+            raise
+
+    async def get_active_pending_candidates(self, owner_id: UUID) -> list[dict]:
+        """Lista candidatos en watching (no expirados) para el owner."""
+        sql = """
+            SELECT pc.candidate_id, pc.sentinel_id, s.name AS sentinel_name,
+                   pc.proposed_ticker, pc.proposed_at, pc.expires_at,
+                   pc.decision_id, pc.status
+            FROM pending_candidates pc
+            JOIN sentinels s ON s.sentinel_id = pc.sentinel_id
+            WHERE s.owner_id = $1 AND pc.status = 'watching'
+            ORDER BY pc.proposed_at DESC
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(sql, owner_id)
+            return [dict(r) for r in rows]
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al listar pending_candidates: {e}")
+            raise
+
+    async def get_failed_tickers_for_sentinel(self, sentinel_id: UUID) -> list[str]:
+        """
+        Tickers que ya tuvo este Sentinel y rotaron por decay (status='executed'
+        o 'rolled_back'). Útil como contexto para el prompt — Claude evita
+        proponer tickers que ya fallaron.
+        """
+        sql = """
+            SELECT DISTINCT old_ticker
+            FROM rotation_decisions
+            WHERE sentinel_id = $1
+              AND status IN ('executed', 'rolled_back')
+              AND old_ticker IS NOT NULL
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(sql, sentinel_id)
+            return [r["old_ticker"] for r in rows]
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al listar failed_tickers de {sentinel_id}: {e}")
+            raise
+
+    async def get_recent_macro_context(self, hours: int = 6) -> dict:
+        """
+        Snapshot del contexto macro reciente para enviar a Claude:
+        último risk_score, circuit_breaker actual, vix/spy delta promedio,
+        y top 5 titulares relevantes.
+        """
+        sql = """
+            SELECT risk_score, vix_level, spy_change_15min,
+                   circuit_breaker_triggered, news_titles, created_at
+            FROM macro_events
+            WHERE created_at >= NOW() - ($1 || ' hours')::interval
+            ORDER BY created_at DESC
+            LIMIT 30
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                # news_titles puede no existir si la migración 006 aún no se aplicó.
+                col_exists = await conn.fetchval(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'macro_events' AND column_name = 'news_titles')"
+                )
+                if col_exists:
+                    rows = await conn.fetch(sql, str(hours))
+                else:
+                    rows = await conn.fetch(
+                        """
+                        SELECT risk_score, vix_level, spy_change_15min,
+                               circuit_breaker_triggered, created_at
+                        FROM macro_events
+                        WHERE created_at >= NOW() - ($1 || ' hours')::interval
+                        ORDER BY created_at DESC LIMIT 30
+                        """,
+                        str(hours),
+                    )
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al leer macro_context: {e}")
+            raise
+
+        if not rows:
+            return {
+                "risk_score": 0.0, "circuit_breaker": False,
+                "vix_delta": None, "spy_delta": None, "recent_titles": [],
+            }
+
+        latest = rows[0]
+        # Promedio de cambios de los últimos eventos
+        vix_vals = [float(r["vix_level"]) for r in rows if r["vix_level"] is not None]
+        spy_vals = [float(r["spy_change_15min"]) for r in rows if r["spy_change_15min"] is not None]
+
+        # Top titulares — agrupar de los últimos eventos hasta 5 únicos
+        seen = set()
+        titles: list[dict] = []
+        for r in rows:
+            raw = r.get("news_titles") if isinstance(r, dict) else None
+            if raw is None and "news_titles" in r.keys():
+                raw = r["news_titles"]
+            if not raw:
+                continue
+            if isinstance(raw, str):
+                try:
+                    raw = json.loads(raw)
+                except Exception:
+                    continue
+            if not isinstance(raw, list):
+                continue
+            for entry in raw:
+                title = (entry.get("title") or "").strip()
+                if not title or title in seen:
+                    continue
+                seen.add(title)
+                titles.append(entry)
+                if len(titles) >= 5:
+                    break
+            if len(titles) >= 5:
+                break
+
+        return {
+            "risk_score":      float(latest["risk_score"]) if latest["risk_score"] is not None else 0.0,
+            "circuit_breaker": bool(latest["circuit_breaker_triggered"]),
+            "vix_delta":       (sum(vix_vals) / len(vix_vals)) if vix_vals else None,
+            "spy_delta":       (sum(spy_vals) / len(spy_vals)) if spy_vals else None,
+            "recent_titles":   titles,
+        }
