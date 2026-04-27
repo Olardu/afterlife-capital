@@ -59,7 +59,7 @@ class TheEar:
         Si la API falla retorna lista vacía — el caller usa last_risk_score.
 
         Returns:
-            Lista de artículos [{title, description, publishedAt}].
+            Lista de artículos [{title, description, publishedAt, source}].
         """
         if not NEWS_API_KEY:
             logger.warning("NEWS_API_KEY no configurada. Saltando fetch de noticias.")
@@ -86,9 +86,10 @@ class TheEar:
                     logger.debug(f"NewsAPI: {len(articles)} artículos recibidos.")
                     return [
                         {
-                            "title":       a.get("title", ""),
-                            "description": a.get("description", ""),
-                            "publishedAt": a.get("publishedAt", ""),
+                            "title":       a.get("title", "") or "",
+                            "description": a.get("description", "") or "",
+                            "publishedAt": a.get("publishedAt", "") or "",
+                            "source":      ((a.get("source") or {}).get("name") or ""),
                         }
                         for a in articles
                     ]
@@ -98,6 +99,35 @@ class TheEar:
         except aiohttp.ClientError as e:
             logger.warning(f"Error de red al consultar NewsAPI: {e}. Usando último risk_score conocido.")
             return []
+
+    def extract_top_negative_titles(self, articles: list[dict], top_n: int = 5) -> list[dict]:
+        """
+        Selecciona los top_n artículos que más contribuyeron al risk_score
+        negativo, rankeados por cantidad de matches con _NEGATIVE_KEYWORDS
+        en título o descripción. Sirve para auditar qué noticias movieron
+        las decisiones del sistema (#FIX-007).
+
+        Returns:
+            Lista de dicts {title, source, published_at, matched_keywords}
+            ordenada por relevancia DESC. Vacía si no hay artículos con hits.
+        """
+        scored: list[tuple[int, dict]] = []
+        for article in articles:
+            text = f"{article.get('title', '')} {article.get('description', '')}".lower()
+            matched = sorted(kw for kw in _NEGATIVE_KEYWORDS if kw in text)
+            if not matched:
+                continue
+            scored.append((
+                len(matched),
+                {
+                    "title":            article.get("title", ""),
+                    "source":           article.get("source", ""),
+                    "published_at":     article.get("publishedAt", ""),
+                    "matched_keywords": matched,
+                },
+            ))
+        scored.sort(key=lambda t: t[0], reverse=True)
+        return [entry for _, entry in scored[:top_n]]
 
     def calculate_risk_score(self, articles: list[dict]) -> float:
         """
@@ -257,6 +287,7 @@ class TheEar:
 
             articles   = await self.fetch_news()
             risk_score = self.calculate_risk_score(articles)
+            top_titles = self.extract_top_negative_titles(articles, top_n=5) if articles else []
             if articles:
                 self.last_risk_score = risk_score
             else:
@@ -270,6 +301,7 @@ class TheEar:
                     vix_level=self._last_vix_change,
                     spy_change_15min=self._last_spy_change,
                     circuit_breaker_triggered=circuit_breaker,
+                    news_titles=top_titles,
                 )
             except Exception as e:
                 logger.error(f"Error al persistir macro event: {e}")

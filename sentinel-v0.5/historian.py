@@ -4,6 +4,7 @@
 # y eventos macro. Expone el feedback loop de decay al Dispatcher.
 # Usa asyncpg para operaciones no bloqueantes dentro del grafo LangGraph.
 
+import json
 import logging
 import math
 from typing import Optional
@@ -103,6 +104,14 @@ class Historian:
             """)
             await conn.execute(
                 "ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_status_check"
+            )
+
+            # Asegurar que macro_events tiene la columna news_titles (#FIX-007).
+            # The Ear ahora persiste los TOP 5 titulares que más contribuyeron
+            # al risk_score para auditoría posterior. Idempotente.
+            await conn.execute(
+                "ALTER TABLE macro_events "
+                "ADD COLUMN IF NOT EXISTS news_titles JSONB NOT NULL DEFAULT '[]'::jsonb"
             )
 
             # Asegurar email + role=ADMIN del owner (#H-1). La columna `email`
@@ -517,30 +526,43 @@ class Historian:
         vix_level: Optional[float],
         spy_change_15min: Optional[float],
         circuit_breaker_triggered: bool,
+        news_titles: Optional[list[dict]] = None,
     ) -> UUID:
         """
         Inserta un registro de estado macro en macro_events.
         Llamado por The Ear cada 15 minutos y al activar el Circuit Breaker.
 
+        news_titles: lista de dicts con los titulares que más contribuyeron
+        al risk_score actual (#FIX-007). Cada dict tiene la forma
+        {title, source, published_at, matched_keywords}. Si None, se persiste
+        []. Sirve para auditar por qué se redujo el trading en un momento dado.
+
         Returns:
             event_id del registro insertado.
         """
+        # Serialización JSON para JSONB. asyncpg acepta string JSON o dict;
+        # forzamos string para ser explícitos sobre el contenido persistido.
+        titles_json = json.dumps(news_titles or [], ensure_ascii=False)
+
         sql = """
             INSERT INTO macro_events
-                (risk_score, vix_level, spy_change_15min, circuit_breaker_triggered)
-            VALUES ($1, $2, $3, $4)
+                (risk_score, vix_level, spy_change_15min,
+                 circuit_breaker_triggered, news_titles)
+            VALUES ($1, $2, $3, $4, $5::jsonb)
             RETURNING event_id
         """
         try:
             async with self.pool.acquire() as conn:
                 row = await conn.fetchrow(
-                    sql, risk_score, vix_level, spy_change_15min, circuit_breaker_triggered
+                    sql, risk_score, vix_level, spy_change_15min,
+                    circuit_breaker_triggered, titles_json,
                 )
             event_id = row["event_id"]
             logger.info(
                 f"Macro event: {event_id} | "
                 f"risk={risk_score} vix={vix_level} "
-                f"spy_15m={spy_change_15min} circuit_breaker={circuit_breaker_triggered}"
+                f"spy_15m={spy_change_15min} circuit_breaker={circuit_breaker_triggered} "
+                f"titles={len(news_titles or [])}"
             )
             return event_id
         except asyncpg.PostgresError as e:
