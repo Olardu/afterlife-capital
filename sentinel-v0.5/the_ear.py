@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -38,6 +39,39 @@ _NEGATIVE_KEYWORDS = {
 _POSITIVE_KEYWORDS = {
     "rally", "surge", "growth", "recovery", "bullish", "record high",
 }
+
+# Word-boundary patterns precompilados (#FIX-009). El bug original era
+# `keyword in text.lower()`, que producía falsos positivos: "war" matchea
+# "warnings", "tariff" matchea "tariffs"... uno se acepta (plurales),
+# el otro no. \b respeta límites de palabra: matchea "war" como token
+# pero no como substring. re.IGNORECASE evita tener que .lower() el texto.
+def _compile_keyword_patterns(keywords: set[str]) -> list[tuple[str, "re.Pattern[str]"]]:
+    """Retorna [(keyword, compiled_pattern)] preservando la keyword original."""
+    return [
+        (kw, re.compile(rf"\b{re.escape(kw)}\b", re.IGNORECASE))
+        for kw in sorted(keywords)
+    ]
+
+_NEGATIVE_PATTERNS = _compile_keyword_patterns(_NEGATIVE_KEYWORDS)
+_POSITIVE_PATTERNS = _compile_keyword_patterns(_POSITIVE_KEYWORDS)
+
+
+def _matched_keywords(text: str, patterns: list[tuple[str, "re.Pattern[str]"]]) -> list[str]:
+    """
+    Devuelve las keywords cuya pattern matchea al menos una vez en el texto.
+    Lista ordenada alfabéticamente para output determinístico (auditable en
+    macro_events.news_titles).
+    """
+    if not text:
+        return []
+    return sorted(kw for kw, pat in patterns if pat.search(text))
+
+
+def _count_matches(text: str, patterns: list[tuple[str, "re.Pattern[str]"]]) -> int:
+    """Cantidad de keywords que matchearon (cada keyword cuenta a lo sumo 1×)."""
+    if not text:
+        return 0
+    return sum(1 for _, pat in patterns if pat.search(text))
 
 
 class TheEar:
@@ -113,8 +147,8 @@ class TheEar:
         """
         scored: list[tuple[int, dict]] = []
         for article in articles:
-            text = f"{article.get('title', '')} {article.get('description', '')}".lower()
-            matched = sorted(kw for kw in _NEGATIVE_KEYWORDS if kw in text)
+            text = f"{article.get('title', '')} {article.get('description', '')}"
+            matched = _matched_keywords(text, _NEGATIVE_PATTERNS)
             if not matched:
                 continue
             scored.append((
@@ -149,9 +183,9 @@ class TheEar:
         pos_hits = 0.0
 
         for article in articles:
-            text = f"{article.get('title', '')} {article.get('description', '')}".lower()
-            neg_hits += sum(1 for kw in _NEGATIVE_KEYWORDS if kw in text)
-            pos_hits += sum(1 for kw in _POSITIVE_KEYWORDS if kw in text)
+            text = f"{article.get('title', '')} {article.get('description', '')}"
+            neg_hits += _count_matches(text, _NEGATIVE_PATTERNS)
+            pos_hits += _count_matches(text, _POSITIVE_PATTERNS)
 
         raw = (neg_hits - pos_hits * 0.5) / len(articles)
         score = max(0.0, min(1.0, raw))
@@ -336,3 +370,76 @@ class TheEar:
             except Exception as e:
                 logger.error(f"Error inesperado en ciclo de The Ear: {e}")
             await asyncio.sleep(NEWS_FETCH_INTERVAL_SECONDS)
+
+
+# =============================================================================
+# Tests inline (#FIX-009) — `python the_ear.py` ejecuta esta sección y
+# valida que el word-boundary fix elimina los falsos positivos del bug
+# `keyword in text` original. No requiere DB, NewsAPI ni Alpaca.
+# =============================================================================
+
+if __name__ == "__main__":
+    import sys
+
+    # Trade-off del fix: word-boundary es estricto y no matchea plurales /
+    # conjugaciones (tariffs != tariff, surges != surge, defaulted != default).
+    # El bug original creaba MUCHO más falso positivo (war en warnings,
+    # crisis en criticism, etc.) que verdaderos negativos por plurales.
+    # Si más adelante hace falta capturar plurales, agregar la forma al set
+    # de keywords (e.g. añadir "tariffs" explícito) o cambiar el pattern a
+    # `\b{kw}s?\b`. Por ahora aceptamos la precisión sobre el recall.
+    cases = [
+        # (texto, neg_esperado, pos_esperado, descripción)
+        ("Markets show warnings about potential rally crash",
+         1, 1, "war NO matchea warnings (FIX), crash si, rally si"),
+        ("Tariffs on Chinese imports announced",
+         0, 0, "tariff NO matchea 'tariffs' por strict word-boundary (trade-off)"),
+        ("The tariff war continues",
+         2, 0, "war Y tariff matchean (palabras separadas por espacio)"),
+        ("Stock surges after recovery in growth sector",
+         0, 2, "recovery + growth matchean; surges NO matchea surge (plural)"),
+        ("Bullish on tech, default risk in bonds",
+         1, 1, "default sí, bullish sí"),
+        ("Defaulted on payments, recession looms",
+         1, 0, "'defaulted' NO matchea 'default' por word-boundary; recession sí"),
+        ("Sell-off continues in markets",
+         1, 0, "sell-off matchea con guión interno"),
+        ("Record high reached today",
+         0, 1, "'record high' (multipalabra) matchea exacto"),
+        ("Crisis deepens as panic spreads",
+         2, 0, "crisis y panic matchean"),
+        ("WAR breaks out, CRASH imminent",
+         2, 0, "case-insensitive: WAR/CRASH matchean"),
+    ]
+
+    print(f"=== Test #FIX-009: substring -> word-boundary ===")
+    print(f"Patterns negativos: {len(_NEGATIVE_PATTERNS)}, positivos: {len(_POSITIVE_PATTERNS)}\n")
+
+    failures = 0
+    for text, exp_neg, exp_pos, desc in cases:
+        got_neg = _count_matches(text, _NEGATIVE_PATTERNS)
+        got_pos = _count_matches(text, _POSITIVE_PATTERNS)
+        ok = (got_neg == exp_neg) and (got_pos == exp_pos)
+        marker = "OK" if ok else "FAIL"
+        if not ok:
+            failures += 1
+        matched_neg = _matched_keywords(text, _NEGATIVE_PATTERNS)
+        matched_pos = _matched_keywords(text, _POSITIVE_PATTERNS)
+        print(f"[{marker}] neg={got_neg}/{exp_neg} pos={got_pos}/{exp_pos}")
+        print(f"       text:      {text!r}")
+        print(f"       matched:   neg={matched_neg} pos={matched_pos}")
+        print(f"       expected:  {desc}\n")
+
+    # Comparativa antes/después con el caso del prompt:
+    bug_text = "Markets show warnings about potential crash"
+    old_buggy = sum(1 for kw in _NEGATIVE_KEYWORDS if kw in bug_text.lower())
+    new_fixed = _count_matches(bug_text, _NEGATIVE_PATTERNS)
+    print(f"Comparativa bug vs fix:")
+    print(f"  Texto: {bug_text!r}")
+    print(f"  Lógica vieja (substring): {old_buggy} matches  -> INFLA risk_score")
+    print(f"  Lógica nueva (word-bound): {new_fixed} matches -> preciso\n")
+
+    if failures:
+        print(f"!!! {failures} caso(s) fallaron")
+        sys.exit(1)
+    print(f"Todos los casos pasaron ({len(cases)} tests)")
