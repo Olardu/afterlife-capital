@@ -122,9 +122,88 @@ Estos no son desviaciones del handoff dashboard original, sino *handoffs nuevos*
   - Badge visual para keys con > 90 días sin rotar (alerta de seguridad).
   - Estado "key próxima a expirar" si se persisten fechas de expiración por servicio.
 
+### 8. Banner de rotaciones recientes en dashboard (sentinel-data.js)
+- **Archivo**: `dashboard/sentinel-data.js`.
+- **Fecha**: 2026-04-27
+- **Razón**: el módulo Universe Selection (#UNIVERSE-SELECTION) rota tickers
+  de Sentinels automáticamente cuando detectan decay. El admin (y los viewers)
+  necesitan visibilidad inmediata cuando esto ocurre, sin tener que abrir el
+  panel admin. Una franja discreta debajo del header señala la rotación más
+  reciente de las últimas 24h.
+- **Componentes afectados**:
+  - Banner full-width insertado debajo de `header.header-fixed` por JS.
+  - Tag `⟲ ROTATION` magenta + nombre del Sentinel + ticker viejo (rojo) →
+    ticker nuevo (verde) + tiempo relativo ("hace 2h").
+  - CTA "VER DETALLE" → `/admin#rotations` (solo si `window._userRole === 'ADMIN'`).
+  - Botón × para ocultar el banner por la sesión.
+- **Estilo aplicado**: gradiente sutil magenta/cyan consistente con la paleta
+  del handoff. Usa `Share Tech Mono` (`--mono` ya inyectada por
+  sentinel-app.js). No usa `!important` — orden de inserción garantiza
+  precedencia sin pisar otros estilos.
+- **Endpoints consumidos**:
+  - `GET /api/rotations/recent?limit=5` (VIEWER + ADMIN; expone solo
+    ticker/timestamp/sentinel — sin razonamiento ni costo).
+- **Nota para Design**: para una próxima iteración, considerar:
+  - Animación de entrada cuando aparece una rotación nueva (slide-down 200ms).
+  - Variante con icono SVG personalizado en lugar del glyph `⟲`.
+  - Colapsado por defecto con un botón "ver últimas rotaciones" si hay más
+    de una en el período.
+  - Toast/notification temporal en lugar de banner persistente.
+
+### 9. Sección "Rotaciones de Universo" + "Candidatos pendientes" en panel admin (admin.html + admin-app.js)
+- **Archivos**: `dashboard/admin.html`, `dashboard/admin-app.js`.
+- **Fecha**: 2026-04-27
+- **Razón**: las rotaciones automáticas del Universe Selection necesitan un
+  surface de auditoría completo: ver historial de decisiones, leer el
+  razonamiento de Claude, revisar candidatos alternativos propuestos,
+  analizar el costo en tokens, y poder hacer rollback si algo se ve mal.
+  La Watchlist Anticipada (pending_candidates) también necesita
+  visualización aunque sea read-only.
+- **Componentes afectados**:
+  - Sección **ROTACIONES DE UNIVERSO** (tabla con Fecha, Sentinel,
+    Rotación old→new, Estado, Costo USD, Acciones).
+  - Filtro de status arriba de la tabla (todos / executed / pending /
+    rolled_back / failed / discarded).
+  - Botón **DETALLE** por fila → modal centrado con razonamiento completo,
+    candidatos alternativos con confidence + razón corta, performance del
+    ticker viejo, modelo usado, tokens consumidos, costo USD.
+  - Botón **ROLLBACK** por fila — solo visible si `status='executed'` AND
+    `executed_at < 7 días`. `confirm()` antes de ejecutar; el email del
+    admin queda registrado en `rotation_decisions.rolled_back_by`.
+  - Sección **CANDIDATOS PENDIENTES** (tabla read-only con Sentinel,
+    Candidato, Propuesto, Expira).
+  - Status badges con color semántico: verde executed, amarillo pending,
+    magenta rolled_back, rojo failed, gris discarded.
+  - Modal con backdrop blur + close por × / click backdrop / Escape.
+- **Estilo aplicado**: 100% consistente con el handoff existente del panel
+  admin. Reutiliza `.tbl`, `.btn-del`, `.field`, `.feedback`, `.section`,
+  `.panel`, `.role-badge` (extendido como `.status-badge` con la misma
+  estructura y palette). Solo agrega clases nuevas: `.btn-rollback`,
+  `.btn-detail`, `.tk-old`, `.tk-new`, `.tk-arrow`, `.modal-backdrop`,
+  `.modal-card`, `.modal-row`, `.filters-bar`, `.candidate-list`.
+- **Endpoints consumidos**:
+  - `GET    /api/admin/rotations?status=...&limit=N` — lista filtrable.
+  - `GET    /api/admin/rotations/{id}` — detalle completo (modal).
+  - `POST   /api/admin/rotations/{id}/rollback` — revierte rotación.
+  - `GET    /api/admin/candidates` — Watchlist activa.
+  Todos ADMIN-only (gating por `_ADMIN_PREFIXES = ('/api/admin/',)`).
+- **Nota para Design**: para una próxima iteración, considerar:
+  - Mini-chart inline en cada fila mostrando win_rate trend del ticker
+    viejo (sparkline 30 trades) — visual rápido del decay detectado.
+  - Tab/segmented control en lugar de `<select>` para el filtro de status.
+  - Diff visual del prompt enviado a Claude (system + user) en el modal —
+    útil para auditar prompts evolutivos.
+  - Indicador visual de "candidato pre-aprobado" en candidatos pendientes
+    (countdown hasta expiración + barra de progreso).
+  - Drag-and-drop para reordenar candidatos alternativos del modal y
+    "preferir" uno distinto al recommended (requeriría endpoint nuevo).
+  - Comparador lado-a-lado de dos rotaciones del mismo Sentinel
+    (eficiencia A vs B).
+
 ## Histórico de revisiones de este documento
 
 - 2026-04-26 — versión inicial. Captura cambios 1–5 acumulados desde el handoff original.
 - 2026-04-26 — agregado cambio 6 (link ADMIN en header).
 - 2026-04-26 — agregada sección "Handoffs adicionales" con A (emails) y B (panel admin) integrados.
 - 2026-04-27 — agregado cambio 7 (sección API Keys en panel admin, #FIX-008).
+- 2026-04-27 — agregados cambios 8 y 9 (banner de rotaciones en dashboard, secciones de Rotaciones y Candidatos en panel admin, #UNIVERSE-SELECTION).
