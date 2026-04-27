@@ -862,11 +862,155 @@ async function setupRotationsBanner() {
   setInterval(fetchAndRender, ROTATIONS_REFRESH_MS);
 }
 
+/* ============ MARKET STATUS INDICATOR (#FIX-011) ============ *
+ * Inserta una columna nueva en .hdr-stats con label "MERCADO" + valor
+ * "ABIERTO"/"CERRADO" + sub-línea "cierra en Xh Ym" / "abre en Xh Ym".
+ *
+ * Fetch a /api/market-status (público) al boot + refresh cada 60s.
+ * El countdown se actualiza cliente-side cada 60s sin re-fetch hasta
+ * que llega un fetch nuevo.
+ * ============================================================ */
+
+const MARKET_STATUS_REFRESH_MS = 60_000;
+const MARKET_STATUS_STYLE_ID   = 'sentinel-market-status-style';
+const MARKET_HS_ID             = 'hMercado';
+
+let _marketState = {
+  is_open: null,
+  status: null,
+  next_open_ms: null,
+  next_close_ms: null,
+};
+
+function _injectMarketStatusStyles() {
+  if (document.getElementById(MARKET_STATUS_STYLE_ID)) return;
+  const css = `
+    #${MARKET_HS_ID} .v { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.1; }
+    #${MARKET_HS_ID} .v .label { letter-spacing: 0.04em; font-weight: 700; }
+    #${MARKET_HS_ID} .v .countdown { font-size: 9px; color: var(--dim); letter-spacing: 0.04em; margin-top: 2px; }
+    #${MARKET_HS_ID} .v.open    .label { color: var(--green); }
+    #${MARKET_HS_ID} .v.closed  .label { color: var(--red); opacity: 0.85; }
+    #${MARKET_HS_ID} .v.pre     .label { color: var(--yellow); }
+    #${MARKET_HS_ID} .v.after   .label { color: var(--magenta); }
+  `;
+  const style = document.createElement('style');
+  style.id = MARKET_STATUS_STYLE_ID;
+  style.textContent = css;
+  document.head.appendChild(style);
+}
+
+function _formatCountdown(ms) {
+  if (ms == null || isFinite(ms) === false || ms < 0) return '';
+  const totalMin = Math.floor(ms / 60000);
+  if (totalMin < 60) return `${totalMin}m`;
+  const totalHrs = Math.floor(totalMin / 60);
+  const mins     = totalMin % 60;
+  if (totalHrs < 24) return `${totalHrs}h ${mins}m`;
+  const days = Math.floor(totalHrs / 24);
+  const hrs  = totalHrs % 24;
+  return `${days}d ${hrs}h`;
+}
+
+function _renderMarketIndicator() {
+  const el = document.getElementById(MARKET_HS_ID);
+  if (!el) return;
+  const v = el.querySelector('.v');
+  if (!v) return;
+
+  // Sin datos todavía
+  if (_marketState.status == null) {
+    v.className = 'v';
+    v.innerHTML = '<span class="label">…</span>';
+    return;
+  }
+
+  const now = Date.now();
+  let label, klass, countdown;
+  if (_marketState.status === 'OPEN') {
+    label = 'ABIERTO';
+    klass = 'open';
+    const ms = _marketState.next_close_ms != null ? _marketState.next_close_ms - now : null;
+    countdown = ms != null ? `cierra en ${_formatCountdown(ms)}` : '';
+  } else if (_marketState.status === 'PRE_MARKET') {
+    label = 'PRE-MERCADO';
+    klass = 'pre';
+    const ms = _marketState.next_open_ms != null ? _marketState.next_open_ms - now : null;
+    countdown = ms != null ? `abre en ${_formatCountdown(ms)}` : '';
+  } else if (_marketState.status === 'AFTER_HOURS') {
+    label = 'POST-MERCADO';
+    klass = 'after';
+    const ms = _marketState.next_open_ms != null ? _marketState.next_open_ms - now : null;
+    countdown = ms != null ? `abre en ${_formatCountdown(ms)}` : '';
+  } else {
+    label = 'CERRADO';
+    klass = 'closed';
+    const ms = _marketState.next_open_ms != null ? _marketState.next_open_ms - now : null;
+    countdown = ms != null ? `abre en ${_formatCountdown(ms)}` : '';
+  }
+
+  v.className = `v ${klass}`;
+  const safeLabel = String(label).replace(/[<>&]/g, '');
+  const safeCd    = String(countdown).replace(/[<>&]/g, '');
+  v.innerHTML = `<span class="label">${safeLabel}</span>${safeCd ? `<span class="countdown">${safeCd}</span>` : ''}`;
+}
+
+async function setupMarketStatusIndicator() {
+  _injectMarketStatusStyles();
+
+  // Insertar el div.hs en .hdr-stats. Si la página aún no lo tiene
+  // (sentinel-app.js corre después), reintentamos cada 100ms hasta 3s.
+  let attempts = 0;
+  const ensureNode = () => {
+    if (document.getElementById(MARKET_HS_ID)) return true;
+    const stats = document.querySelector('.hdr-stats');
+    if (!stats) {
+      if (attempts++ < 30) setTimeout(ensureNode, 100);
+      return false;
+    }
+    const hs = document.createElement('div');
+    hs.className = 'hs';
+    hs.id = MARKET_HS_ID;
+    hs.innerHTML = '<span class="k">MERCADO</span><span class="v"><span class="label">…</span></span>';
+    stats.appendChild(hs);
+    _renderMarketIndicator();
+    return true;
+  };
+  ensureNode();
+
+  const fetchAndUpdate = async () => {
+    try {
+      const r = await fetch('/api/market-status', {
+        headers: { 'Accept': 'application/json' },
+        credentials: 'same-origin',
+      });
+      if (!r.ok) return;
+      const data = await r.json();
+      _marketState = {
+        is_open:        !!data.is_open,
+        status:         data.status,
+        next_open_ms:   data.next_open  ? new Date(data.next_open).getTime()  : null,
+        next_close_ms: data.next_close ? new Date(data.next_close).getTime() : null,
+      };
+      _renderMarketIndicator();
+    } catch (e) {
+      console.debug('[sentinel-data] market-status:', e);
+    }
+  };
+
+  // Primera carga
+  await fetchAndUpdate();
+  // Refresh periódico (server-side puede haber cambiado al cruzar boundary)
+  setInterval(fetchAndUpdate, MARKET_STATUS_REFRESH_MS);
+  // Tick local cada 60s para que el countdown decaiga sin esperar al fetch
+  setInterval(_renderMarketIndicator, 60_000);
+}
+
 /* ============ BOOT ============ */
 setupPersistence();
 setupKillSwitch();
 setupAdminLink();
 setupRotationsBanner();
+setupMarketStatusIndicator();
 
 // Disparar la primera carga + abrir SSE. No esperamos a DOMContentLoaded —
 // sentinel-app.js corre sincrónico justo después de este archivo y popula

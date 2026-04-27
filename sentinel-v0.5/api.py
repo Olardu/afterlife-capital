@@ -157,6 +157,9 @@ _PUBLIC_PATHS = {
     "/auth/login", "/auth/callback", "/auth/logout",
     "/sentinel-data.js", "/sentinel-app.js", "/sentinel-i18n.js",
     "/favicon.ico",
+    # Info de mercado pública (#FIX-011) — el indicador del header lo
+    # consume antes de que el usuario inicie sesión también.
+    "/api/market-status",
 }
 _PUBLIC_PREFIXES = ("/assets/",)
 
@@ -569,6 +572,21 @@ async def api_macro():
         "parking_brake":      _is_parking_brake_active(),
         "recent_events":      events,
     }
+
+
+@app.get("/api/market-status")
+async def api_market_status():
+    """
+    Estado del mercado NYSE + tiempo hasta próximo cambio (#FIX-011).
+    Pública (no requiere auth — info de mercado, no propietaria).
+    Retorna: is_open, status (OPEN|CLOSED|PRE_MARKET|AFTER_HOURS),
+    next_open, next_close, current_time_et.
+    """
+    try:
+        from market_clock import get_market_status
+        return get_market_status()
+    except Exception as e:
+        _http_500("/api/market-status", e)
 
 
 @app.get("/api/macro_events")
