@@ -1131,6 +1131,113 @@ async def admin_delete_api_key(key_id: str, request: Request):
 
 
 # =============================================================================
+# UNIVERSE SELECTION — rotaciones y candidatos pendientes
+# (#UNIVERSE-SELECTION). /api/admin/* es ADMIN-only por gating del middleware.
+# /api/rotations/recent es VIEWER-friendly para mostrar el banner del dashboard.
+# =============================================================================
+
+def _serialize_rotation(row: dict) -> dict:
+    """rotation_decisions row → JSON-friendly dict."""
+    out = _to_json(dict(row))
+    # candidates_proposed puede venir como str (JSONB serializado) o list
+    raw = out.get("candidates_proposed")
+    if isinstance(raw, str):
+        try:
+            out["candidates_proposed"] = json.loads(raw)
+        except Exception:
+            out["candidates_proposed"] = []
+    return out
+
+
+@app.get("/api/admin/rotations")
+async def admin_list_rotations(
+    limit:  int           = Query(50, ge=1, le=500),
+    status: Optional[str] = Query(None, description="pending|executed|rolled_back|failed|discarded"),
+):
+    if status and status not in {"pending", "executed", "rolled_back", "failed", "discarded"}:
+        raise HTTPException(status_code=400, detail="invalid_status")
+    try:
+        rows = await historian.get_recent_rotations(_owner_id, limit=limit, status=status)
+        return [_serialize_rotation(r) for r in rows]
+    except Exception as e:
+        _http_500("/api/admin/rotations GET", e)
+
+
+@app.get("/api/admin/rotations/{decision_id}")
+async def admin_get_rotation(decision_id: str):
+    try:
+        did = UUID(decision_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid_decision_id")
+    try:
+        row = await historian.get_rotation_decision(did)
+    except Exception as e:
+        _http_500("/api/admin/rotations detail", e)
+    if row is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    return _serialize_rotation(row)
+
+
+@app.post("/api/admin/rotations/{decision_id}/rollback")
+async def admin_rollback_rotation(decision_id: str, request: Request):
+    try:
+        did = UUID(decision_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid_decision_id")
+
+    user = _get_session_user(request) or {}
+    admin_email = user.get("email") or "unknown@admin"
+
+    try:
+        ok = await historian.rollback_rotation_in_db(did, admin_email)
+    except Exception as e:
+        _http_500("/api/admin/rotations rollback", e)
+
+    if not ok:
+        raise HTTPException(
+            status_code=409,
+            detail="rotation_not_rollbackable",
+        )
+    logger.warning(f"ROLLBACK admin: decision_id={did} | admin={admin_email}")
+    return {"status": "rolled_back", "decision_id": str(did), "by": admin_email}
+
+
+@app.get("/api/admin/candidates")
+async def admin_list_candidates():
+    try:
+        rows = await historian.get_active_pending_candidates(_owner_id)
+        return [_to_json(r) for r in rows]
+    except Exception as e:
+        _http_500("/api/admin/candidates GET", e)
+
+
+@app.get("/api/rotations/recent")
+async def api_rotations_recent(limit: int = Query(5, ge=1, le=20)):
+    """
+    Endpoint público (VIEWER + ADMIN) — últimas rotaciones executed para
+    mostrar el banner del dashboard. Solo expone old/new/sentinel/timestamp,
+    sin razonamiento ni costos.
+    """
+    try:
+        rows = await historian.get_recent_rotations(
+            _owner_id, limit=limit, status="executed",
+        )
+    except Exception as e:
+        _http_500("/api/rotations/recent", e)
+    return [
+        {
+            "decision_id":    str(r["decision_id"]),
+            "sentinel_name":  r.get("sentinel_name"),
+            "old_ticker":     r.get("old_ticker"),
+            "new_ticker":     r.get("new_ticker"),
+            "executed_at":    r["executed_at"].isoformat() if r.get("executed_at") else None,
+            "trigger_reason": r.get("trigger_reason"),
+        }
+        for r in rows
+    ]
+
+
+# =============================================================================
 # SSE — push periódico de actualización al dashboard
 # =============================================================================
 
