@@ -114,6 +114,26 @@ class Historian:
                 "ADD COLUMN IF NOT EXISTS news_titles JSONB NOT NULL DEFAULT '[]'::jsonb"
             )
 
+            # Asegurar que la tabla api_keys existe (#FIX-008). El panel admin
+            # gestiona credenciales encriptadas con Fernet — el bot sigue
+            # leyendo desde .env hasta que la sincronización automática esté
+            # validada. Idempotente.
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS api_keys (
+                    key_id          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+                    service_name    TEXT         NOT NULL UNIQUE,
+                    encrypted_value TEXT         NOT NULL,
+                    description     TEXT,
+                    last_rotated_at TIMESTAMP    NOT NULL DEFAULT NOW(),
+                    created_at      TIMESTAMP    NOT NULL DEFAULT NOW(),
+                    updated_at      TIMESTAMP    NOT NULL DEFAULT NOW()
+                )
+            """)
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_api_keys_service_name "
+                "ON api_keys(service_name)"
+            )
+
             # Asegurar email + role=ADMIN del owner (#H-1). La columna `email`
             # ya existe en schema.sql desde la creación de la DB (multi-tenant
             # base). Este UPDATE solo corre cuando el email persistido no
@@ -729,3 +749,179 @@ class Historian:
         except asyncpg.PostgresError as e:
             logger.error(f"Error al escribir system_state[{key}]={value}: {e}")
             raise
+
+    # =========================================================================
+    # API KEYS (#FIX-008) — gestión de credenciales encriptadas para panel admin
+    # Las keys se persisten encriptadas con Fernet (crypto_utils.encrypt). El
+    # listado público devuelve valores enmascarados; reveal requiere ADMIN
+    # explícito. El bot sigue leyendo desde .env — la sincronización
+    # automática es trabajo de una sesión futura.
+    # =========================================================================
+
+    async def list_api_keys(self) -> list[dict]:
+        """
+        Lista las API keys gestionadas con su valor enmascarado
+        (primeros 4 + **** + últimos 4 chars del valor desencriptado).
+        NO devuelve el valor en claro.
+
+        Returns:
+            list de {key_id, service_name, masked_value, description,
+                     last_rotated_at, created_at, updated_at}.
+        """
+        # Imports locales: crypto_utils requiere MASTER_ENCRYPTION_KEY al evaluar
+        # _get_fernet(); importarlo arriba haría que cualquier módulo que
+        # importe historian.py revente al startup si .env no tiene la key.
+        from crypto_utils import decrypt, mask
+
+        sql = """
+            SELECT key_id, service_name, encrypted_value, description,
+                   last_rotated_at, created_at, updated_at
+            FROM api_keys
+            ORDER BY service_name ASC
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(sql)
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al listar api_keys: {e}")
+            raise
+
+        result: list[dict] = []
+        for r in rows:
+            try:
+                plaintext = decrypt(r["encrypted_value"])
+                masked    = mask(plaintext)
+            except Exception as e:
+                # Si una key no se puede desencriptar (master key cambió,
+                # ciphertext corrupto), no rompemos el listado entero —
+                # marcamos esa fila como UNAVAILABLE para que el admin
+                # pueda al menos verla y rotarla.
+                logger.warning(
+                    f"No pudo desencriptarse api_keys.service_name={r['service_name']}: {e}"
+                )
+                masked = "<UNAVAILABLE>"
+            result.append({
+                "key_id":          str(r["key_id"]),
+                "service_name":    r["service_name"],
+                "masked_value":    masked,
+                "description":     r["description"] or "",
+                "last_rotated_at": r["last_rotated_at"],
+                "created_at":      r["created_at"],
+                "updated_at":      r["updated_at"],
+            })
+        return result
+
+    async def get_api_key_value(self, service_name: str) -> Optional[str]:
+        """
+        Devuelve el valor desencriptado de una API key. SOLO debe usarse desde
+        endpoints ADMIN-only con logging explícito (#FIX-008).
+
+        Returns:
+            string en claro, o None si no existe.
+
+        Raises:
+            cryptography.fernet.InvalidToken si el ciphertext está corrupto.
+        """
+        from crypto_utils import decrypt
+
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT encrypted_value FROM api_keys WHERE service_name = $1",
+                    service_name,
+                )
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al leer api_keys[{service_name}]: {e}")
+            raise
+        if row is None:
+            return None
+        return decrypt(row["encrypted_value"])
+
+    async def get_api_key_by_id(self, key_id: UUID) -> Optional[str]:
+        """Variante de get_api_key_value() que busca por key_id (UUID)."""
+        from crypto_utils import decrypt
+
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT service_name, encrypted_value FROM api_keys WHERE key_id = $1",
+                    key_id,
+                )
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al leer api_keys por id ({key_id}): {e}")
+            raise
+        if row is None:
+            return None
+        return decrypt(row["encrypted_value"])
+
+    async def upsert_api_key(
+        self,
+        service_name: str,
+        value: str,
+        description: str = "",
+    ) -> dict:
+        """
+        Inserta o actualiza una API key. El valor se encripta antes de
+        persistir. Si el service_name ya existe, actualiza encrypted_value,
+        description y last_rotated_at = NOW().
+
+        Returns:
+            dict {key_id, service_name, masked_value, description,
+                  last_rotated_at, created_at, updated_at}.
+        """
+        from crypto_utils import encrypt, mask
+
+        if not service_name or not service_name.strip():
+            raise ValueError("service_name vacío")
+        if not value or not value.strip():
+            raise ValueError("value vacío")
+
+        service_name = service_name.strip()
+        encrypted    = encrypt(value)
+
+        sql = """
+            INSERT INTO api_keys (service_name, encrypted_value, description, updated_at)
+            VALUES ($1, $2, $3, NOW())
+            ON CONFLICT (service_name) DO UPDATE SET
+                encrypted_value = EXCLUDED.encrypted_value,
+                description     = EXCLUDED.description,
+                last_rotated_at = NOW(),
+                updated_at      = NOW()
+            RETURNING key_id, service_name, encrypted_value, description,
+                      last_rotated_at, created_at, updated_at
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(sql, service_name, encrypted, description or "")
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al upsertar api_key ({service_name}): {e}")
+            raise
+
+        logger.info(f"API key upsert: {service_name} (len={len(value)})")
+        return {
+            "key_id":          str(row["key_id"]),
+            "service_name":    row["service_name"],
+            "masked_value":    mask(value),
+            "description":     row["description"] or "",
+            "last_rotated_at": row["last_rotated_at"],
+            "created_at":      row["created_at"],
+            "updated_at":      row["updated_at"],
+        }
+
+    async def delete_api_key(self, key_id: UUID) -> bool:
+        """
+        Elimina una API key por UUID. Retorna True si se borró, False si
+        no existía.
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                result = await conn.execute(
+                    "DELETE FROM api_keys WHERE key_id = $1", key_id,
+                )
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al eliminar api_key {key_id}: {e}")
+            raise
+        deleted = result.startswith("DELETE ") and result.split()[-1] != "0"
+        if deleted:
+            logger.info(f"API key eliminada: key_id={key_id}")
+        return deleted

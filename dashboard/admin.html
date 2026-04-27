@@ -249,6 +249,45 @@ main { padding: 0 24px 32px; position: relative; z-index: 1; max-width: 1200px; 
   80%, 100% { content: '...'; }
 }
 
+/* ============ API KEYS SECTION (#FIX-008) ============ */
+.warn-banner {
+  margin-bottom: 14px; padding: 12px 16px;
+  border: 1px solid var(--amber);
+  background: rgba(255,158,44,0.05);
+  font-family: var(--code); font-size: 11px; line-height: 1.5;
+  color: var(--amber); letter-spacing: 0.04em;
+}
+.warn-banner::before {
+  content: '! '; font-family: var(--display); font-weight: 900;
+}
+
+.tbl .key-cell {
+  font-family: var(--code); color: var(--cyan);
+  letter-spacing: 0.06em; word-break: break-all;
+}
+.tbl .key-cell.revealed { color: var(--green); }
+.tbl .key-cell .countdown {
+  display: inline-block; margin-left: 10px;
+  color: var(--amber); font-size: 10px; letter-spacing: 0.12em;
+}
+
+.btn-toggle {
+  background: transparent; border: 1px solid var(--cyan); color: var(--cyan);
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em;
+  padding: 6px 12px; cursor: pointer;
+  text-shadow: 0 0 6px rgba(0,245,255,0.4);
+  transition: all 0.15s;
+  margin-right: 6px;
+}
+.btn-toggle:hover { background: var(--cyan); color: #000; text-shadow: none; }
+.btn-toggle.revealed { border-color: var(--magenta); color: var(--magenta); text-shadow: 0 0 6px rgba(255,0,212,0.4); }
+.btn-toggle.revealed:hover { background: var(--magenta); color: #000; text-shadow: none; }
+
+.api-key-form .form-grid {
+  grid-template-columns: 1fr 1fr 1fr auto;
+}
+@media (max-width: 720px) { .api-key-form .form-grid { grid-template-columns: 1fr; } }
+
 /* permission denied banner */
 .perm-banner {
   margin: 24px auto; max-width: 700px;
@@ -382,6 +421,73 @@ footer .version b { color: var(--cyan); font-weight: normal; margin-left: 4px; }
             <button type="submit" class="btn-add" id="addBtn">+ AGREGAR</button>
           </div>
           <div class="feedback" id="feedback"></div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ SECCIÓN 3: API KEYS (#FIX-008) ============ -->
+  <div class="section">
+    <div class="section-h">
+      <span class="label">// API KEYS</span>
+      <span class="meta"><b id="keyCount">—</b> claves gestionadas</span>
+    </div>
+
+    <div class="warn-banner">
+      Las API keys gestionadas aquí se almacenan ENCRIPTADAS (Fernet) pero el bot
+      aún las lee desde <code>.env</code>. La sincronización automática se
+      implementará en una sesión futura.
+    </div>
+
+    <div class="panel">
+      <div class="panel-h">
+        <span>// LISTADO</span>
+        <span class="right" id="keysUpdated">cargando...</span>
+      </div>
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th>SERVICIO</th>
+              <th>VALOR</th>
+              <th>DESCRIPCIÓN</th>
+              <th>ÚLTIMA ROTACIÓN</th>
+              <th style="text-align:right;">ACCIONES</th>
+            </tr>
+          </thead>
+          <tbody id="keysBody">
+            <tr><td colspan="5"><div class="loading">CARGANDO API KEYS</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ SECCIÓN 4: AGREGAR / ACTUALIZAR API KEY ============ -->
+  <div class="section">
+    <div class="section-h">
+      <span class="label">// AGREGAR / ACTUALIZAR API KEY</span>
+      <span class="meta">upsert por nombre de servicio</span>
+    </div>
+    <div class="panel">
+      <div class="panel-body">
+        <form id="addKeyForm" class="api-key-form" autocomplete="off">
+          <div class="form-grid">
+            <div class="field">
+              <label for="serviceInput">SERVICIO</label>
+              <input type="text" id="serviceInput" placeholder="ALPACA_API_KEY" required>
+            </div>
+            <div class="field">
+              <label for="keyValueInput">VALOR</label>
+              <input type="password" id="keyValueInput" placeholder="••••••••••••" required autocomplete="new-password">
+            </div>
+            <div class="field">
+              <label for="keyDescInput">DESCRIPCIÓN</label>
+              <input type="text" id="keyDescInput" placeholder="opcional">
+            </div>
+            <button type="submit" class="btn-add" id="addKeyBtn">+ GUARDAR</button>
+          </div>
+          <div class="feedback" id="keyFeedback"></div>
         </form>
       </div>
     </div>

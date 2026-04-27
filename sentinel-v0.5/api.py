@@ -1009,6 +1009,128 @@ async def admin_remove_user(user_id: str, background_tasks: BackgroundTasks):
 
 
 # =============================================================================
+# ADMIN — gestión de API keys (#FIX-008)
+# Las keys se persisten encriptadas con Fernet (crypto_utils). El bot SIGUE
+# leyendo desde .env en producción — esta tabla es gestión visual + futura
+# migración. /reveal devuelve el plaintext y se loggea con WARN explícito.
+# =============================================================================
+
+def _serialize_api_key(entry: dict) -> dict:
+    """asyncpg datetime → ISO. UUID ya viene como str desde Historian."""
+    out = dict(entry)
+    for k in ("last_rotated_at", "created_at", "updated_at"):
+        if k in out and out[k] is not None and not isinstance(out[k], str):
+            out[k] = out[k].isoformat()
+    return out
+
+
+@app.get("/api/admin/api-keys")
+async def admin_list_api_keys():
+    try:
+        keys = await historian.list_api_keys()
+        return [_serialize_api_key(k) for k in keys]
+    except RuntimeError as e:
+        # MASTER_ENCRYPTION_KEY no configurada — error de operación, no del cliente
+        logger.error(f"crypto error en /api/admin/api-keys GET: {e}")
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        _http_500("/api/admin/api-keys GET", e)
+
+
+@app.post("/api/admin/api-keys")
+async def admin_upsert_api_key(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid_json")
+
+    service_name = (payload.get("service_name") or "").strip()
+    value        = payload.get("value") or ""
+    description  = (payload.get("description") or "").strip()
+
+    if not service_name:
+        raise HTTPException(status_code=400, detail="service_name_required")
+    if not value:
+        raise HTTPException(status_code=400, detail="value_required")
+
+    try:
+        entry = await historian.upsert_api_key(service_name, value, description)
+    except RuntimeError as e:
+        logger.error(f"crypto error en /api/admin/api-keys POST: {e}")
+        raise HTTPException(status_code=503, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        _http_500("/api/admin/api-keys POST", e)
+
+    user = _get_session_user(request) or {}
+    logger.info(f"API key upsert por {user.get('email', '?')} | service={service_name}")
+    return {"status": "saved", "key": _serialize_api_key(entry)}
+
+
+@app.post("/api/admin/api-keys/{key_id}/reveal")
+async def admin_reveal_api_key(key_id: str, request: Request):
+    try:
+        kid = UUID(key_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid_key_id")
+
+    try:
+        # Recuperamos service_name + plaintext en una sola lectura. Usamos
+        # get_api_key_by_id para no exponer service_name como input al cliente.
+        async with historian.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT service_name FROM api_keys WHERE key_id = $1", kid,
+            )
+        if row is None:
+            raise HTTPException(status_code=404, detail="not_found")
+
+        plaintext = await historian.get_api_key_by_id(kid)
+    except HTTPException:
+        raise
+    except RuntimeError as e:
+        logger.error(f"crypto error en reveal: {e}")
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        _http_500("/api/admin/api-keys reveal", e)
+
+    user = _get_session_user(request) or {}
+    logger.warning(
+        f"API key REVELADA: service={row['service_name']} | admin={user.get('email', '?')}"
+    )
+    return {"value": plaintext}
+
+
+@app.delete("/api/admin/api-keys/{key_id}")
+async def admin_delete_api_key(key_id: str, request: Request):
+    try:
+        kid = UUID(key_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid_key_id")
+
+    try:
+        async with historian.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT service_name FROM api_keys WHERE key_id = $1", kid,
+            )
+        if row is None:
+            raise HTTPException(status_code=404, detail="not_found")
+
+        deleted = await historian.delete_api_key(kid)
+    except HTTPException:
+        raise
+    except Exception as e:
+        _http_500("/api/admin/api-keys DELETE", e)
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="not_found")
+
+    user = _get_session_user(request) or {}
+    logger.info(f"API key eliminada: service={row['service_name']} | admin={user.get('email', '?')}")
+    return {"status": "removed"}
+
+
+# =============================================================================
 # SSE — push periódico de actualización al dashboard
 # =============================================================================
 

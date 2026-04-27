@@ -272,11 +272,232 @@
     }
   }
 
+  // =============================================================
+  // API KEYS — gestión de credenciales encriptadas (#FIX-008)
+  // =============================================================
+  const KEYS_API = '/api/admin/api-keys';
+  const REVEAL_TIMEOUT_MS = 30000;
+
+  const keysBody     = $('keysBody');
+  const keyCount     = $('keyCount');
+  const keysUpdated  = $('keysUpdated');
+  const addKeyForm   = $('addKeyForm');
+  const serviceInput = $('serviceInput');
+  const keyValueInput = $('keyValueInput');
+  const keyDescInput = $('keyDescInput');
+  const addKeyBtn    = $('addKeyBtn');
+  const keyFeedback  = $('keyFeedback');
+
+  // Tracking de timeouts de auto-hide por key_id (revealed → masked tras 30s)
+  const revealTimers = new Map();
+
+  function showKeyFeedback(kind, msg) {
+    keyFeedback.className = 'feedback show ' + (kind === 'ok' ? 'ok' : 'err');
+    keyFeedback.textContent = msg;
+    if (kind === 'ok') setTimeout(() => keyFeedback.classList.remove('show'), 5000);
+  }
+  function clearKeyFeedback() {
+    keyFeedback.className = 'feedback';
+    keyFeedback.textContent = '';
+  }
+
+  async function apiListKeys() {
+    const res = await fetch(KEYS_API, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      credentials: 'same-origin'
+    });
+    handleAuthResponse(res);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }
+
+  async function apiRevealKey(keyId) {
+    const res = await fetch(`${KEYS_API}/${encodeURIComponent(keyId)}/reveal`, {
+      method: 'POST',
+      headers: { 'Accept': 'application/json' },
+      credentials: 'same-origin'
+    });
+    handleAuthResponse(res);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    return data.value;
+  }
+
+  async function apiUpsertKey(service_name, value, description) {
+    const res = await fetch(KEYS_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ service_name, value, description })
+    });
+    handleAuthResponse(res);
+    if (!res.ok) {
+      let msg = 'HTTP ' + res.status;
+      try { const j = await res.json(); if (j && j.detail) msg = j.detail; } catch (_) {}
+      throw new Error(msg);
+    }
+    return res.json();
+  }
+
+  async function apiDeleteKey(keyId) {
+    const res = await fetch(`${KEYS_API}/${encodeURIComponent(keyId)}`, {
+      method: 'DELETE',
+      headers: { 'Accept': 'application/json' },
+      credentials: 'same-origin'
+    });
+    handleAuthResponse(res);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return true;
+  }
+
+  function renderKeys(keys) {
+    if (!keys || keys.length === 0) {
+      keysBody.innerHTML = '<tr><td colspan="5" class="empty">// SIN API KEYS REGISTRADAS</td></tr>';
+      keyCount.textContent = '0';
+      keysUpdated.textContent = 'actualizado ' + nowHHMMSS();
+      return;
+    }
+
+    const rows = keys.map(k => {
+      const id = escapeHTML(k.key_id);
+      return `
+        <tr data-key-id="${id}">
+          <td><strong>${escapeHTML(k.service_name)}</strong></td>
+          <td class="key-cell" data-role="value" data-masked="${escapeHTML(k.masked_value)}">${escapeHTML(k.masked_value)}</td>
+          <td>${escapeHTML(k.description || '—')}</td>
+          <td class="date-cell">${escapeHTML(fmtDate(k.last_rotated_at))}</td>
+          <td style="text-align:right;">
+            <button class="btn-toggle" data-action="toggle" data-id="${id}">MOSTRAR</button>
+            <button class="btn-del" data-action="delete" data-id="${id}" data-service="${escapeHTML(k.service_name)}">ELIMINAR</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    keysBody.innerHTML = rows;
+    keyCount.textContent = keys.length;
+    keysUpdated.textContent = 'actualizado ' + nowHHMMSS();
+
+    keysBody.querySelectorAll('button[data-action="toggle"]').forEach(btn => {
+      btn.addEventListener('click', onToggleClick);
+    });
+    keysBody.querySelectorAll('button[data-action="delete"]').forEach(btn => {
+      btn.addEventListener('click', onDeleteKeyClick);
+    });
+  }
+
+  function maskRow(row, btn) {
+    const cell = row.querySelector('[data-role="value"]');
+    if (!cell) return;
+    cell.textContent = cell.dataset.masked;
+    cell.classList.remove('revealed');
+    btn.textContent = 'MOSTRAR';
+    btn.classList.remove('revealed');
+    const id = btn.dataset.id;
+    if (revealTimers.has(id)) {
+      clearTimeout(revealTimers.get(id));
+      revealTimers.delete(id);
+    }
+  }
+
+  async function onToggleClick(ev) {
+    const btn = ev.currentTarget;
+    const id  = btn.dataset.id;
+    const row = btn.closest('tr');
+    if (!row) return;
+    const cell = row.querySelector('[data-role="value"]');
+    if (btn.classList.contains('revealed')) {
+      maskRow(row, btn);
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'CARGANDO...';
+    try {
+      const value = await apiRevealKey(id);
+      cell.textContent = value;
+      cell.classList.add('revealed');
+      btn.textContent = 'OCULTAR';
+      btn.classList.add('revealed');
+      // Auto-hide a los 30s
+      const t = setTimeout(() => maskRow(row, btn), REVEAL_TIMEOUT_MS);
+      revealTimers.set(id, t);
+    } catch (err) {
+      btn.textContent = 'MOSTRAR';
+      showKeyFeedback('err', 'Error al revelar key: ' + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function onDeleteKeyClick(ev) {
+    const btn = ev.currentTarget;
+    const id = btn.dataset.id;
+    const service = btn.dataset.service;
+    if (!id) return;
+    const ok = window.confirm(`¿Eliminar la API key "${service}"?\n\nEsta acción no se puede deshacer.`);
+    if (!ok) return;
+    btn.disabled = true;
+    btn.textContent = 'ELIMINANDO...';
+    try {
+      await apiDeleteKey(id);
+      await loadKeys();
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = 'ELIMINAR';
+      showKeyFeedback('err', 'Error al eliminar key: ' + err.message);
+    }
+  }
+
+  async function loadKeys() {
+    try {
+      const keys = await apiListKeys();
+      renderKeys(keys);
+    } catch (err) {
+      if (err.message === 'REDIRECT_LOGIN' || err.message === 'NO_PERMISSION') return;
+      keysBody.innerHTML = `<tr><td colspan="5" class="empty">// ERROR AL CARGAR API KEYS</td></tr>`;
+      console.error('[admin] loadKeys error:', err);
+    }
+  }
+
+  async function onAddKeySubmit(ev) {
+    ev.preventDefault();
+    clearKeyFeedback();
+    const service_name = (serviceInput.value || '').trim();
+    const value        = keyValueInput.value || '';
+    const description  = (keyDescInput.value || '').trim();
+    if (!service_name) { showKeyFeedback('err', 'El nombre del servicio es obligatorio.'); return; }
+    if (!value)        { showKeyFeedback('err', 'El valor es obligatorio.'); return; }
+    addKeyBtn.disabled = true;
+    addKeyBtn.textContent = 'GUARDANDO...';
+    try {
+      await apiUpsertKey(service_name, value, description);
+      showKeyFeedback('ok', `API key "${service_name}" guardada.`);
+      serviceInput.value = '';
+      keyValueInput.value = '';
+      keyDescInput.value = '';
+      await loadKeys();
+    } catch (err) {
+      if (err.message === 'REDIRECT_LOGIN' || err.message === 'NO_PERMISSION') return;
+      showKeyFeedback('err', 'Error al guardar: ' + err.message);
+    } finally {
+      addKeyBtn.disabled = false;
+      addKeyBtn.textContent = '+ GUARDAR';
+    }
+  }
+
   // ============ INIT ============
   function init() {
     addForm.addEventListener('submit', onAddSubmit);
     emailInput.addEventListener('input', clearFeedback);
+    if (addKeyForm) {
+      addKeyForm.addEventListener('submit', onAddKeySubmit);
+      [serviceInput, keyValueInput, keyDescInput].forEach(el => {
+        if (el) el.addEventListener('input', clearKeyFeedback);
+      });
+    }
     loadUsers();
+    if (keysBody) loadKeys();
   }
 
   if (document.readyState === 'loading') {
