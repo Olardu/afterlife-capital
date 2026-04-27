@@ -337,59 +337,84 @@ function synthEquityHist(trades) {
 }
 
 async function loadMacro() {
-  const data = await _fetchJson('/api/macro');
-  if (!data) return null;
+  // /api/macro_events trae los eventos con news_titles JSONB ya parseados —
+  // shape diferente a /api/macro. Si falla (sesión expirada, endpoint no
+  // existe en bot pre-FIX-010), caemos al endpoint legacy.
+  let events = await _fetchJson('/api/macro_events?limit=10');
+  if (!Array.isArray(events)) {
+    const legacy = await _fetchJson('/api/macro');
+    if (!legacy) return null;
+    events = (legacy.recent_events || []).map(ev => ({
+      created_at:      ev.created_at,
+      risk_score:      ev.risk_score,
+      vix_change:      ev.vix_level,
+      spy_change:      ev.spy_change_15min,
+      circuit_breaker: ev.circuit_breaker_triggered,
+      news_titles:     [],
+    }));
+  }
 
-  const events = (data.recent_events || []).slice(0, 6);
-  // Inyectar títulos sintéticos al I18N como keys dinámicas
-  // (sentinel-app.js usa t(n.titleKey) — necesitamos que la lookup resuelva).
-  events.forEach((ev, i) => {
+  const view = events.slice(0, 6);
+
+  // Inyectar títulos al I18N como keys dinámicas (sentinel-app.js usa
+  // t(n.titleKey) — necesitamos que la lookup resuelva). Si el evento
+  // tiene news_titles[], usamos el primer titular real (#FIX-010); si no,
+  // fallback al formato sintético bilingüe original.
+  view.forEach((ev, i) => {
     const k = `_news_dyn_${i}`;
     const risk = Number(ev.risk_score) || 0;
-    const vix  = ev.vix_level == null ? null : Number(ev.vix_level);
-    const spy  = ev.spy_change_15min == null ? null : Number(ev.spy_change_15min);
-    const txt = {
-      es: `Macro update — risk ${risk.toFixed(2)}` +
-          (vix != null ? ` · VIX Δ${vix.toFixed(1)}%` : '') +
-          (spy != null ? ` · SPY Δ${spy.toFixed(1)}%` : ''),
-      en: `Macro update — risk ${risk.toFixed(2)}` +
-          (vix != null ? ` · VIX Δ${vix.toFixed(1)}%` : '') +
-          (spy != null ? ` · SPY Δ${spy.toFixed(1)}%` : ''),
-      ja: `マクロ更新 — リスク ${risk.toFixed(2)}` +
-          (vix != null ? ` · VIX Δ${vix.toFixed(1)}%` : '') +
-          (spy != null ? ` · SPY Δ${spy.toFixed(1)}%` : ''),
-      th: `อัปเดตมาโคร — ความเสี่ยง ${risk.toFixed(2)}` +
-          (vix != null ? ` · VIX Δ${vix.toFixed(1)}%` : '') +
-          (spy != null ? ` · SPY Δ${spy.toFixed(1)}%` : ''),
+    const vix  = ev.vix_change == null ? null : Number(ev.vix_change);
+    const spy  = ev.spy_change == null ? null : Number(ev.spy_change);
+
+    const titles = Array.isArray(ev.news_titles) ? ev.news_titles : [];
+    const realTitle = titles.length > 0 ? String(titles[0].title || '').trim() : '';
+
+    const fallback = (lang) => {
+      const labels = {
+        es: 'Macro update — risk', en: 'Macro update — risk',
+        ja: 'マクロ更新 — リスク',  th: 'อัปเดตมาโคร — ความเสี่ยง',
+      };
+      return `${labels[lang]} ${risk.toFixed(2)}`
+        + (vix != null ? ` · VIX Δ${vix.toFixed(1)}%` : '')
+        + (spy != null ? ` · SPY Δ${spy.toFixed(1)}%` : '');
     };
+
+    // Si hay titular real, mostrar el titular tal cual (los titulares
+    // de NewsAPI vienen en inglés — Design puede iterar sobre traducción
+    // automática en una próxima versión). Misma string en los 4 idiomas
+    // para consistencia.
+    const finalTxt = (lang) => realTitle ? realTitle : fallback(lang);
+
     if (typeof I18N === 'object') {
       for (const lang of ['es', 'en', 'ja', 'th']) {
-        if (I18N[lang]) I18N[lang][k] = txt[lang];
+        if (I18N[lang]) I18N[lang][k] = finalTxt(lang);
       }
     }
   });
 
   NEWS.length = 0;
-  events.forEach((ev, i) => {
+  view.forEach((ev, i) => {
     const ts = (ev.created_at || '').slice(11, 16);   // HH:MM
     const risk = Number(ev.risk_score) || 0;
-    const impact = ev.circuit_breaker_triggered ? 'cb' : (risk > 0.5 ? 'risk' : 'neutral');
+    const impact = ev.circuit_breaker ? 'cb' : (risk > 0.5 ? 'risk' : 'neutral');
     NEWS.push({ ts, titleKey: `_news_dyn_${i}`, impact });
   });
 
-  // Logs sintéticos a partir de macro events
-  STATE.logs = (data.recent_events || []).slice(0, 30).map(ev => {
+  // Logs sintéticos a partir de los mismos macro events
+  STATE.logs = events.slice(0, 30).map(ev => {
     const ts = (ev.created_at || '').replace('T', ' ').slice(0, 19);
     const risk = Number(ev.risk_score) || 0;
-    const lvl = ev.circuit_breaker_triggered ? 'ERROR' : (risk > 0.5 ? 'WARN' : 'INFO');
-    const vixStr = ev.vix_level == null ? '—' : Number(ev.vix_level).toFixed(2);
-    const spyStr = ev.spy_change_15min == null ? '—' : Number(ev.spy_change_15min).toFixed(2);
-    const cbStr  = ev.circuit_breaker_triggered ? 'true' : 'false';
-    const msg = `EAR :: risk_score=${risk.toFixed(4)} vix=${vixStr} spy=${spyStr} circuit_breaker=${cbStr}`;
+    const lvl = ev.circuit_breaker ? 'ERROR' : (risk > 0.5 ? 'WARN' : 'INFO');
+    const vixStr = ev.vix_change == null ? '—' : Number(ev.vix_change).toFixed(2);
+    const spyStr = ev.spy_change == null ? '—' : Number(ev.spy_change).toFixed(2);
+    const cbStr  = ev.circuit_breaker ? 'true' : 'false';
+    const titles = Array.isArray(ev.news_titles) ? ev.news_titles : [];
+    const tail   = titles.length > 0 ? ` titles=${titles.length}` : '';
+    const msg = `EAR :: risk_score=${risk.toFixed(4)} vix=${vixStr} spy=${spyStr} circuit_breaker=${cbStr}${tail}`;
     return { ts, lvl, msg };
   });
 
-  return data;
+  return events;
 }
 
 /* ============ ORQUESTACIÓN ============ */

@@ -1493,6 +1493,67 @@ class Historian:
             logger.error(f"Error al listar failed_tickers de {sentinel_id}: {e}")
             raise
 
+    async def get_recent_macro_events(self, limit: int = 10) -> list[dict]:
+        """
+        Lista los últimos N macro_events ordenados DESC por created_at,
+        incluyendo titulares matched (#FIX-010). Defensivo si la columna
+        news_titles aún no existe en DB (FIX-007 pendiente de aplicar):
+        retorna lista vacía para news_titles en ese caso.
+
+        Returns:
+            list de dicts con event_id, created_at, risk_score, vix_level,
+            spy_change_15min, circuit_breaker_triggered, news_titles (list).
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                col_exists = await conn.fetchval(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name='macro_events' AND column_name='news_titles')"
+                )
+                if col_exists:
+                    rows = await conn.fetch(
+                        """
+                        SELECT event_id, risk_score, vix_level, spy_change_15min,
+                               circuit_breaker_triggered, news_titles, created_at
+                        FROM macro_events
+                        ORDER BY created_at DESC
+                        LIMIT $1
+                        """,
+                        limit,
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """
+                        SELECT event_id, risk_score, vix_level, spy_change_15min,
+                               circuit_breaker_triggered, created_at
+                        FROM macro_events
+                        ORDER BY created_at DESC
+                        LIMIT $1
+                        """,
+                        limit,
+                    )
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al listar macro_events: {e}")
+            raise
+
+        result: list[dict] = []
+        for r in rows:
+            d = dict(r)
+            raw = d.get("news_titles")
+            # asyncpg devuelve JSONB como str (sin codec custom) o como list
+            # según versión. Normalizamos a list[dict].
+            if isinstance(raw, str):
+                try:
+                    d["news_titles"] = json.loads(raw)
+                except (ValueError, TypeError):
+                    d["news_titles"] = []
+            elif isinstance(raw, list):
+                d["news_titles"] = raw
+            else:
+                d["news_titles"] = []
+            result.append(d)
+        return result
+
     async def get_recent_macro_context(self, hours: int = 6) -> dict:
         """
         Snapshot del contexto macro reciente para enviar a Claude:

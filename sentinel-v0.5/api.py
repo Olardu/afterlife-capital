@@ -571,6 +571,40 @@ async def api_macro():
     }
 
 
+@app.get("/api/macro_events")
+async def api_macro_events(limit: int = Query(10, ge=1, le=100)):
+    """
+    Últimos N macro_events con titulares matched (#FIX-010). Sirve al
+    dashboard para reemplazar el placeholder genérico
+    "Macro update — risk X · VIX Y · SPY Z" por los titulares específicos
+    que movieron las decisiones (FIX-007 los persiste, este endpoint los
+    expone). Requiere sesión válida (auth_middleware) — sin restricción
+    de role (VIEWER + ADMIN).
+
+    Response: list de eventos con news_titles ya parseados (list[dict]).
+    """
+    try:
+        events = await historian.get_recent_macro_events(limit=limit)
+    except Exception as e:
+        _http_500("/api/macro_events", e)
+
+    parking = _is_parking_brake_active()
+    return [
+        {
+            "event_id":        str(e["event_id"]) if e.get("event_id") else None,
+            "created_at":      e["created_at"].isoformat() if e.get("created_at") else None,
+            "risk_score":      float(e["risk_score"]) if e.get("risk_score") is not None else 0.0,
+            "vix_change":      float(e["vix_level"]) if e.get("vix_level") is not None else None,
+            "spy_change":      float(e["spy_change_15min"]) if e.get("spy_change_15min") is not None else None,
+            "regime":          "NEUTRAL",   # S-10 desactivado — régimen fijo
+            "circuit_breaker": bool(e.get("circuit_breaker_triggered") or False),
+            "parking_brake":   parking,     # estado actual; aplicado a todos los rows del set (no se persiste por evento)
+            "news_titles":     e.get("news_titles") or [],
+        }
+        for e in events
+    ]
+
+
 @app.get("/api/performance")
 async def api_performance():
     sql = """
