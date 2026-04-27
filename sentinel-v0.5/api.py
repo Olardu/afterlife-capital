@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import math
+import time
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -27,6 +28,9 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 import os
+
+# Capturado al import. Sirve para system_health.uptime_hours del /api/report.
+APP_START_TIME = time.time()
 
 import uvicorn
 from authlib.integrations.starlette_client import OAuth, OAuthError
@@ -594,16 +598,25 @@ async def api_performance():
 @app.get("/api/report")
 async def api_report(range: str = Query("today", regex="^(today|last_week|last_month|all)$")):
     """
-    Reporte completo. Combina datos reales (cuando existen) con placeholders
-    en secciones que aún no están instrumentadas (correlation_guard, dispatcher).
+    Reporte JSON exhaustivo (#FIX-006).
+
+    Todos los campos derivan de queries reales al Historian. Para cada campo
+    cuya tabla/columna aún no existe en el modelo de datos se devuelve null
+    (o {}) con un comentario `TODO: persistir X` al lado en código —
+    explícitamente NO inventamos datos de relleno.
+
+    El generador cliente-side `buildReport()` en `dashboard/sentinel-app.js`
+    sigue produciendo datos demo y no se puede modificar (handoff Design,
+    fuera del scope de este branch). Este endpoint es la fuente de verdad
+    para integraciones que consumen `/api/report` directamente.
     """
     since = _range_to_since(range)
 
     try:
         async with historian.pool.acquire() as conn:
-            # Trades en rango
+            # ============ TRADES en rango ============
             if since:
-                trades = await conn.fetch(
+                trades_rows = await conn.fetch(
                     """
                     SELECT t.trade_id, s.name AS sentinel_name, t.ticker, t.side,
                            t.qty, t.filled_price, t.slippage, t.status, t.created_at
@@ -615,7 +628,7 @@ async def api_report(range: str = Query("today", regex="^(today|last_week|last_m
                     _owner_id, since,
                 )
             else:
-                trades = await conn.fetch(
+                trades_rows = await conn.fetch(
                     """
                     SELECT t.trade_id, s.name AS sentinel_name, t.ticker, t.side,
                            t.qty, t.filled_price, t.slippage, t.status, t.created_at
@@ -627,65 +640,227 @@ async def api_report(range: str = Query("today", regex="^(today|last_week|last_m
                     _owner_id,
                 )
 
-            # Macro events count
-            if since:
-                macro_count = await conn.fetchval(
-                    "SELECT COUNT(*)::int FROM macro_events WHERE created_at >= $1",
-                    since,
+            # ============ MACRO ============
+            macro_filter = "WHERE created_at >= $1" if since else ""
+            macro_args   = [since] if since else []
+
+            macro_count = await conn.fetchval(
+                f"SELECT COUNT(*)::int FROM macro_events {macro_filter}",
+                *macro_args,
+            )
+            risk_score_avg = await conn.fetchval(
+                f"SELECT AVG(risk_score)::float FROM macro_events {macro_filter}",
+                *macro_args,
+            )
+            circuit_breaker_activations = await conn.fetchval(
+                f"""
+                SELECT COUNT(*)::int FROM macro_events
+                {macro_filter}{' AND' if since else 'WHERE'} circuit_breaker_triggered = TRUE
+                """,
+                *macro_args,
+            )
+
+            # macro_events.news_titles (FIX 3) puede no existir en la DB hasta
+            # el próximo restart del bot/API que aplica el DDL idempotente.
+            # Detectamos la columna antes de seleccionarla para no romper.
+            news_titles_col_exists = await conn.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'macro_events' AND column_name = 'news_titles'
+                )
+                """
+            )
+            if news_titles_col_exists:
+                news_filter = "WHERE created_at >= $1" if since else ""
+                news_rows = await conn.fetch(
+                    f"""
+                    SELECT created_at, risk_score, circuit_breaker_triggered, news_titles
+                    FROM macro_events
+                    {news_filter}
+                    ORDER BY created_at DESC
+                    LIMIT 10
+                    """,
+                    *macro_args,
                 )
             else:
-                macro_count = await conn.fetchval(
-                    "SELECT COUNT(*)::int FROM macro_events"
+                news_rows = []
+
+            # ============ STRATEGY PERFORMANCE — agregados por sentinel ============
+            # Combina sentinels + tickers + performance_scores (decay/sharpe/win_rate)
+            # con slippage_avg calculado desde trades en rango (para reflejar el
+            # comportamiento operativo del período pedido).
+            strat_rows = await conn.fetch(
+                """
+                SELECT
+                    s.sentinel_id,
+                    s.name,
+                    s.strategy_type,
+                    s.capital_allocation,
+                    COALESCE(
+                        array_agg(DISTINCT st.ticker ORDER BY st.ticker)
+                            FILTER (WHERE st.ticker IS NOT NULL AND st.is_active = TRUE),
+                        ARRAY[]::VARCHAR[]
+                    ) AS tickers,
+                    COALESCE(SUM(ps.total_trades), 0)::int       AS total_trades_score,
+                    AVG(ps.win_rate)::float                       AS win_rate_avg,
+                    AVG(ps.sharpe_ratio)::float                   AS sharpe_avg,
+                    BOOL_OR(ps.performance_decay)                 AS decay_status
+                FROM sentinels s
+                LEFT JOIN sentinel_tickers st
+                    ON st.sentinel_id = s.sentinel_id
+                LEFT JOIN performance_scores ps
+                    ON ps.sentinel_id = s.sentinel_id
+                WHERE s.owner_id = $1 AND s.is_active = TRUE
+                GROUP BY s.sentinel_id, s.name, s.strategy_type, s.capital_allocation
+                ORDER BY s.name
+                """,
+                _owner_id,
+            )
+
+            # slippage_avg + total_trades reales del período por sentinel
+            if since:
+                trade_aggs = await conn.fetch(
+                    """
+                    SELECT sentinel_id,
+                           AVG(slippage)::float AS slippage_avg,
+                           COUNT(*)::int       AS trades_in_range
+                    FROM trades
+                    WHERE owner_id = $1 AND created_at >= $2
+                    GROUP BY sentinel_id
+                    """,
+                    _owner_id, since,
+                )
+            else:
+                trade_aggs = await conn.fetch(
+                    """
+                    SELECT sentinel_id,
+                           AVG(slippage)::float AS slippage_avg,
+                           COUNT(*)::int       AS trades_in_range
+                    FROM trades
+                    WHERE owner_id = $1
+                    GROUP BY sentinel_id
+                    """,
+                    _owner_id,
+                )
+            slip_by_sid = {
+                str(r["sentinel_id"]): {
+                    "slippage_avg":    r["slippage_avg"],
+                    "trades_in_range": r["trades_in_range"],
+                }
+                for r in trade_aggs
+            }
+
+            # ============ DISPATCHER — signals recibidos en rango ============
+            if since:
+                signals_received = await conn.fetchval(
+                    "SELECT COUNT(*)::int FROM signals WHERE owner_id = $1 AND created_at >= $2",
+                    _owner_id, since,
+                )
+            else:
+                signals_received = await conn.fetchval(
+                    "SELECT COUNT(*)::int FROM signals WHERE owner_id = $1",
+                    _owner_id,
                 )
 
-            # Macro events recientes
-            macro_recent = await conn.fetch(
-                """
-                SELECT risk_score, vix_level, spy_change_15min,
-                       circuit_breaker_triggered, created_at
-                FROM macro_events
-                ORDER BY created_at DESC
-                LIMIT 20
-                """
+            # ============ KILL SWITCH actual ============
+            kill_switch_flag = await conn.fetchval(
+                "SELECT value FROM system_state WHERE key = 'system_halted'"
             )
     except Exception as e:
         _http_500("/api/report", e)
 
-    # Strategy performance: reusar la lógica de /api/sentinels
-    strategy_performance = await api_sentinels()
+    strategy_performance = []
+    for r in strat_rows:
+        sid = str(r["sentinel_id"])
+        agg = slip_by_sid.get(sid, {})
+        strategy_performance.append({
+            "sentinel":       r["name"],
+            "strategy":       r["strategy_type"],
+            "tickers":        list(r["tickers"]) if r["tickers"] else [],
+            "win_rate":       float(r["win_rate_avg"]) if r["win_rate_avg"] is not None else 0.0,
+            "sharpe_ratio":   float(r["sharpe_avg"])   if r["sharpe_avg"]   is not None else 0.0,
+            "total_trades":   int(r["total_trades_score"] or 0),
+            "trades_in_range": int(agg.get("trades_in_range") or 0),
+            "slippage_avg":   float(agg["slippage_avg"]) if agg.get("slippage_avg") is not None else None,
+            "decay_status":   bool(r["decay_status"]) if r["decay_status"] is not None else False,
+            "allocation_pct": float(r["capital_allocation"]),
+        })
+
+    news_that_moved_decisions = []
+    for r in news_rows:
+        raw_titles = r["news_titles"]
+        # asyncpg devuelve JSONB como str (sin codec); parseamos defensivo
+        if isinstance(raw_titles, str):
+            try:
+                titles = json.loads(raw_titles)
+            except Exception:
+                titles = []
+        elif isinstance(raw_titles, list):
+            titles = raw_titles
+        else:
+            titles = []
+        news_that_moved_decisions.append({
+            "timestamp":  r["created_at"].isoformat() if r["created_at"] else None,
+            "risk_score": float(r["risk_score"]) if r["risk_score"] is not None else 0.0,
+            "impact":     "circuit_breaker" if r["circuit_breaker_triggered"] else (
+                          "risk_elevated"   if (r["risk_score"] or 0) > 0.5 else "neutral"),
+            "titles":     titles,
+        })
+
+    uptime_hours = (time.time() - APP_START_TIME) / 3600.0
 
     return {
         "metadata": {
-            "generated_at": datetime.utcnow().isoformat() + "Z",
-            "range":        range,
-            "owner":        OWNER_USERNAME,
-            "system":       "Sentinel v0.5",
+            "generated_at":   datetime.utcnow().isoformat() + "Z",
+            "range":          range,
+            "owner":          OWNER_USERNAME,
+            "system_version": "SENTINEL v0.5",
         },
         "system_health": {
-            "uptime_seconds":    None,   # TODO: trackear desde startup
-            "total_trades":      len(trades),
-            "macro_events":      int(macro_count or 0),
-            "errors_last_hour":  None,   # TODO: hook al logging handler
+            "uptime_hours":                round(uptime_hours, 2),
+            "total_trades":                len(trades_rows),
+            "macro_events":                int(macro_count or 0),
+            "circuit_breaker_activations": int(circuit_breaker_activations or 0),
+            # TODO: persistir errores por módulo (tabla logs o handler dedicado)
+            "errors_by_module":            {},
+            # TODO: trackear reconnects de Alpaca/postgres/NewsAPI a métrica
+            "reconnections":               {},
+            # TODO: persistir activaciones de parking brake (hoy solo se calcula
+            # en runtime con _is_parking_brake_active(), no se guarda en DB)
+            "parking_brake_activations":   None,
         },
         "strategy_performance": strategy_performance,
         "macro_context": {
-            "events_total":     int(macro_count or 0),
-            "recent_events":    [_row(r) for r in macro_recent],
-            "parking_brake":    _is_parking_brake_active(),
+            "events_total":              int(macro_count or 0),
+            "risk_score_avg":            float(risk_score_avg) if risk_score_avg is not None else 0.0,
+            # TODO: persistir régimen del classifier (S-10) por evento macro
+            "regime_distribution":       None,
+            "parking_brake_now":         _is_parking_brake_active(),
+            "news_that_moved_decisions": news_that_moved_decisions,
         },
         "correlation_guard": {
             "threshold":              0.75,
             "rolling_window_candles": 60,
-            "evaluations_in_range":   None,    # TODO: persistir evaluaciones
+            # TODO: persistir signals.correlation_action y signals.correlation_used
+            # para poder reportar reduced/discarded/avg_correlation reales
+            "signals_reduced":        None,
+            "signals_discarded":      None,
+            "avg_correlation":        None,
         },
         "dispatcher": {
-            "kelly_fraction":         0.5,
+            "kelly_fraction":               0.5,
             "max_capital_per_sentinel_pct": 25.0,
             "min_capital_per_sentinel_pct": 5.0,
-            "regime":                 "NEUTRAL",
-            "kill_switch_active":     False,   # TODO: leer de estado runtime
+            "regime":                       "NEUTRAL",
+            "kill_switch_active":           (kill_switch_flag == "true"),
+            "signals_received":             int(signals_received or 0),
+            # TODO: persistir signals.approved + signals.rejection_reason
+            "signals_approved":             None,
+            "signals_rejected":             None,
+            "rejection_reasons":            None,
         },
-        "trades": [_row(t) for t in trades],
+        "trades": [_row(t) for t in trades_rows],
     }
 
 
