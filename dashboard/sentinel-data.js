@@ -648,6 +648,9 @@ async function setupAdminLink() {
     if (r.status === 401) return;   // sin sesión — el resto del flujo redirige
     if (!r.ok) return;
     const me = await r.json();
+    // Guardar role para que otros módulos (e.g. setupRotationsBanner)
+    // condicionen UI sin volver a hacer fetch a /auth/me.
+    if (me && me.role) window._userRole = me.role;
     if (!me || me.role !== 'ADMIN') {
       // VIEWER no puede operar el kill switch — ocultar botón DETENER.
       // setupAdminLink() puede correr antes de que el DOM tenga #detenerBtn
@@ -693,10 +696,152 @@ async function setupAdminLink() {
   }
 }
 
+/* ============ ROTATIONS BANNER (#UNIVERSE-SELECTION) ============ *
+ * Muestra una franja discreta debajo del header cuando hubo una rotación
+ * automática de Sentinel en las últimas 24h. Visible para todos los roles;
+ * el link "Ver detalle" sólo aparece si el usuario es ADMIN (consume
+ * setupAdminLink que ya hace fetch a /auth/me y guarda window._userRole).
+ * ============================================================ */
+
+const ROTATIONS_RECENCY_MS = 24 * 60 * 60 * 1000;   // 24h
+const ROTATIONS_REFRESH_MS = 5 * 60 * 1000;         // refrescar cada 5 min
+const ROTATIONS_STYLE_ID   = 'sentinel-rotations-banner-style';
+const ROTATIONS_BANNER_ID  = 'rotationsBanner';
+
+function _injectRotationsStyles() {
+  if (document.getElementById(ROTATIONS_STYLE_ID)) return;
+  const css = `
+    #${ROTATIONS_BANNER_ID} {
+      display: flex; align-items: center; justify-content: center; gap: 14px;
+      padding: 10px 18px;
+      background: linear-gradient(90deg, rgba(255,0,212,0.08), rgba(0,245,255,0.04));
+      border-bottom: 1px solid rgba(255,0,212,0.32);
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 12px; letter-spacing: 0.10em; color: #d8e6f5;
+      flex-wrap: wrap;
+    }
+    #${ROTATIONS_BANNER_ID} .rb-tag {
+      color: #ff00d4; font-weight: bold; letter-spacing: 0.18em;
+      text-shadow: 0 0 6px rgba(255,0,212,0.5);
+    }
+    #${ROTATIONS_BANNER_ID} .rb-arrow { color: #00f5ff; padding: 0 4px; }
+    #${ROTATIONS_BANNER_ID} .rb-old   { color: #ff8aa0; }
+    #${ROTATIONS_BANNER_ID} .rb-new   { color: #00ff88; font-weight: bold; }
+    #${ROTATIONS_BANNER_ID} .rb-time  { color: #6a7a96; font-size: 11px; }
+    #${ROTATIONS_BANNER_ID} a.rb-link {
+      color: #ff00d4; text-decoration: none; border: 1px solid rgba(255,0,212,0.5);
+      padding: 4px 10px; font-size: 10px; letter-spacing: 0.16em;
+      transition: all 0.15s;
+    }
+    #${ROTATIONS_BANNER_ID} a.rb-link:hover {
+      background: rgba(255,0,212,0.1); border-color: #ff00d4;
+    }
+    #${ROTATIONS_BANNER_ID} button.rb-close {
+      background: transparent; border: none; color: #6a7a96; cursor: pointer;
+      font-family: inherit; font-size: 14px; padding: 0 4px;
+    }
+    #${ROTATIONS_BANNER_ID} button.rb-close:hover { color: #ff2060; }
+  `;
+  const style = document.createElement('style');
+  style.id = ROTATIONS_STYLE_ID;
+  style.textContent = css;
+  document.head.appendChild(style);
+}
+
+function _formatRelative(iso) {
+  if (!iso) return '';
+  const ts = new Date(iso).getTime();
+  const diff = Date.now() - ts;
+  if (diff < 0) return 'recién';
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1)  return 'recién';
+  if (mins < 60) return `hace ${mins} min`;
+  const hrs = Math.floor(mins / 60);
+  return `hace ${hrs}h`;
+}
+
+let _rotationsHidden = false;
+
+async function setupRotationsBanner() {
+  _injectRotationsStyles();
+
+  const fetchAndRender = async () => {
+    if (_rotationsHidden) return;
+    let rotations = [];
+    try {
+      const r = await fetch('/api/rotations/recent?limit=5', {
+        headers: { 'Accept': 'application/json' },
+        credentials: 'same-origin',
+      });
+      if (!r.ok) return;
+      rotations = await r.json();
+    } catch (e) {
+      console.debug('[sentinel-data] rotations fetch:', e);
+      return;
+    }
+    if (!Array.isArray(rotations) || rotations.length === 0) return;
+
+    // Solo mostrar si la rotación es reciente (24h)
+    const recent = rotations
+      .filter(rot => rot.executed_at &&
+        (Date.now() - new Date(rot.executed_at).getTime()) < ROTATIONS_RECENCY_MS)
+      .slice(0, 1);
+    if (recent.length === 0) return;
+    const rot = recent[0];
+
+    // Insertar banner debajo del header
+    let banner = document.getElementById(ROTATIONS_BANNER_ID);
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = ROTATIONS_BANNER_ID;
+      const header = document.querySelector('header.header-fixed') ||
+                     document.querySelector('.header-fixed') ||
+                     document.body.firstElementChild;
+      if (header && header.parentNode) {
+        header.parentNode.insertBefore(banner, header.nextSibling);
+      } else {
+        document.body.insertBefore(banner, document.body.firstChild);
+      }
+    }
+
+    const isAdmin = window._userRole === 'ADMIN';
+    const detailLink = isAdmin
+      ? `<a class="rb-link" href="/admin#rotations" target="_blank" rel="noopener">VER DETALLE</a>`
+      : '';
+
+    const sentinelName = (rot.sentinel_name || 'Sentinel');
+    banner.innerHTML = `
+      <span class="rb-tag">⟲ ROTATION</span>
+      <span>${escapeText(sentinelName)}:</span>
+      <span class="rb-old">${escapeText(rot.old_ticker || '?')}</span>
+      <span class="rb-arrow">→</span>
+      <span class="rb-new">${escapeText(rot.new_ticker || '?')}</span>
+      <span class="rb-time">${_formatRelative(rot.executed_at)}</span>
+      ${detailLink}
+      <button class="rb-close" title="Ocultar">×</button>
+    `;
+    banner.querySelector('.rb-close').addEventListener('click', () => {
+      _rotationsHidden = true;
+      banner.remove();
+    });
+  };
+
+  function escapeText(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;',
+    }[c]));
+  }
+
+  // Primera carga + refresh periódico
+  fetchAndRender();
+  setInterval(fetchAndRender, ROTATIONS_REFRESH_MS);
+}
+
 /* ============ BOOT ============ */
 setupPersistence();
 setupKillSwitch();
 setupAdminLink();
+setupRotationsBanner();
 
 // Disparar la primera carga + abrir SSE. No esperamos a DOMContentLoaded —
 // sentinel-app.js corre sincrónico justo después de este archivo y popula
