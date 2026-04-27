@@ -134,6 +134,95 @@ class Historian:
                 "ON api_keys(service_name)"
             )
 
+            # =================================================================
+            # UNIVERSE SELECTION (#UNIVERSE-SELECTION) — migraciones 008-010.
+            # Tres recursos relacionados:
+            #   - rotation_decisions: log inmutable de cada decisión de Claude.
+            #   - pending_candidates: Watchlist Anticipada por Sentinel.
+            #   - performance_scores.warning_status: pre-decay marker.
+            # Todos idempotentes; el orden importa porque pending_candidates
+            # tiene FK a rotation_decisions.
+            # =================================================================
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS rotation_decisions (
+                    decision_id          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+                    sentinel_id          UUID         NOT NULL REFERENCES sentinels(sentinel_id),
+                    owner_id             UUID         NOT NULL REFERENCES users(user_id),
+                    triggered_at         TIMESTAMP    NOT NULL DEFAULT NOW(),
+                    trigger_reason       TEXT         NOT NULL,
+                    old_ticker           TEXT         NOT NULL,
+                    old_win_rate         DOUBLE PRECISION,
+                    old_sharpe_ratio     DOUBLE PRECISION,
+                    old_total_trades     INTEGER,
+                    new_ticker           TEXT,
+                    candidates_proposed  JSONB        NOT NULL DEFAULT '[]'::jsonb,
+                    claude_reasoning     TEXT,
+                    claude_confidence    DOUBLE PRECISION,
+                    claude_model         TEXT,
+                    claude_input_tokens  INTEGER,
+                    claude_output_tokens INTEGER,
+                    claude_cost_usd      DOUBLE PRECISION,
+                    status               TEXT         NOT NULL DEFAULT 'pending',
+                    executed_at          TIMESTAMP,
+                    rolled_back_at       TIMESTAMP,
+                    rolled_back_by       TEXT,
+                    new_ticker_trades_after_30d  INTEGER,
+                    new_ticker_winrate_after_30d DOUBLE PRECISION,
+                    new_ticker_sharpe_after_30d  DOUBLE PRECISION,
+                    notes                TEXT
+                )
+            """)
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_rotation_decisions_sentinel "
+                "ON rotation_decisions(sentinel_id)"
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_rotation_decisions_status "
+                "ON rotation_decisions(status)"
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_rotation_decisions_triggered "
+                "ON rotation_decisions(triggered_at DESC)"
+            )
+
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS pending_candidates (
+                    candidate_id     UUID      PRIMARY KEY DEFAULT gen_random_uuid(),
+                    sentinel_id      UUID      NOT NULL REFERENCES sentinels(sentinel_id),
+                    proposed_ticker  TEXT      NOT NULL,
+                    proposed_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+                    expires_at       TIMESTAMP NOT NULL,
+                    decision_id      UUID      REFERENCES rotation_decisions(decision_id),
+                    status           TEXT      NOT NULL DEFAULT 'watching'
+                )
+            """)
+            # Solo un candidato 'watching' por Sentinel — índice parcial UNIQUE.
+            await conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_candidates_one_active "
+                "ON pending_candidates(sentinel_id) WHERE status = 'watching'"
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pending_candidates_status "
+                "ON pending_candidates(status)"
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pending_candidates_expires_at "
+                "ON pending_candidates(expires_at)"
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pending_candidates_sentinel "
+                "ON pending_candidates(sentinel_id)"
+            )
+
+            await conn.execute(
+                "ALTER TABLE performance_scores "
+                "ADD COLUMN IF NOT EXISTS warning_status BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+            await conn.execute(
+                "ALTER TABLE performance_scores "
+                "ADD COLUMN IF NOT EXISTS warning_detected_at TIMESTAMP"
+            )
+
             # Asegurar email + role=ADMIN del owner (#H-1). La columna `email`
             # ya existe en schema.sql desde la creación de la DB (multi-tenant
             # base). Este UPDATE solo corre cuando el email persistido no
