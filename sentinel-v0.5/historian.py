@@ -85,6 +85,26 @@ class Historian:
                     flag,
                 )
 
+            # Asegurar que trades.status soporta status largos de Alpaca (#FIX-005).
+            # El primer día de paper trading reveló que "PENDING_NEW" (11 chars)
+            # rompe el VARCHAR(10) original. Ampliamos a VARCHAR(32) y relajamos
+            # el CHECK constraint que solo admitía FILLED|CANCELLED|PENDING.
+            # Idempotente: solo amplía si está corto, solo dropea si existe.
+            await conn.execute("""
+                DO $$
+                BEGIN
+                    IF (SELECT character_maximum_length
+                          FROM information_schema.columns
+                         WHERE table_name = 'trades'
+                           AND column_name = 'status') < 32 THEN
+                        ALTER TABLE trades ALTER COLUMN status TYPE VARCHAR(32);
+                    END IF;
+                END $$;
+            """)
+            await conn.execute(
+                "ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_status_check"
+            )
+
             # Asegurar email + role=ADMIN del owner (#H-1). La columna `email`
             # ya existe en schema.sql desde la creación de la DB (multi-tenant
             # base). Este UPDATE solo corre cuando el email persistido no
