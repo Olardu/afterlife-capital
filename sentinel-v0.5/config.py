@@ -34,6 +34,12 @@ SESSION_MAX_AGE_SECONDS = 24 * 60 * 60   # 24 horas
 # Dominio verificado: afterlifecapital.co. Sender: noreply@afterlifecapital.co.
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 
+# Anthropic API — usada por el Universe Selector para proponer candidatos
+# de rotación cuando un Sentinel se acerca al decay (#UNIVERSE-SELECTION).
+# El bot llama a Claude Sonnet 4.6 con contexto de mercado + noticias macro.
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+ANTHROPIC_MODEL   = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+
 _CRITICAL_CREDENTIALS = {
     "ALPACA_API_KEY":       ALPACA_API_KEY,
     "ALPACA_SECRET_KEY":    ALPACA_SECRET_KEY,
@@ -44,6 +50,7 @@ _CRITICAL_CREDENTIALS = {
     "GOOGLE_CLIENT_SECRET": GOOGLE_CLIENT_SECRET,
     "SESSION_SECRET":       SESSION_SECRET,
     "RESEND_API_KEY":       RESEND_API_KEY,
+    "ANTHROPIC_API_KEY":    ANTHROPIC_API_KEY,
 }
 
 # =============================================================================
@@ -89,6 +96,40 @@ RISK_SCORE_VETO_THRESHOLD      = 0.7     # risk_score sobre este valor bloquea o
 PERFORMANCE_DECAY_THRESHOLD = 0.4    # win_rate mínimo antes de marcar decay
 SHARPE_MINIMUM              = 0.5    # Sharpe ratio mínimo aceptable
 WARMUP_TRADES_REQUIRED      = 10     # trades mínimos antes de evaluar decay
+
+# Aliases explícitos para Universe Selector (#UNIVERSE-SELECTION). Mantienen
+# coherencia entre el Historian (que usa los nombres genéricos) y el selector
+# (que también necesita warning thresholds anticipados).
+DECAY_THRESHOLD_WIN_RATE   = PERFORMANCE_DECAY_THRESHOLD
+DECAY_THRESHOLD_SHARPE     = SHARPE_MINIMUM
+
+# Warning thresholds — disparan request anticipado de candidato a Claude
+# antes de cruzar el umbral de decay. Si la performance se recupera el
+# candidato se descarta (status='discarded').
+WARNING_THRESHOLD_WIN_RATE = 0.45
+WARNING_THRESHOLD_SHARPE   = 0.65
+
+# =============================================================================
+# UNIVERSE SELECTION (#UNIVERSE-SELECTION)
+# Rotación automática de tickers usando Claude. Toggle global por si hay
+# que pausar el módulo entero sin bajar el bot.
+# =============================================================================
+
+UNIVERSE_SELECTION_ENABLED                = os.environ.get(
+    "UNIVERSE_SELECTION_ENABLED", "true"
+).lower() == "true"
+UNIVERSE_SELECTION_TIMEOUT_SECONDS        = float(os.environ.get(
+    "UNIVERSE_SELECTION_TIMEOUT_SECONDS", "30"
+))
+UNIVERSE_SELECTION_MAX_COST_PER_CALL_USD  = float(os.environ.get(
+    "UNIVERSE_SELECTION_MAX_COST_PER_CALL_USD", "0.20"
+))
+UNIVERSE_SELECTION_CYCLE_TIMEOUT_SECONDS  = float(os.environ.get(
+    "UNIVERSE_SELECTION_CYCLE_TIMEOUT_SECONDS", "60"
+))
+UNIVERSE_SELECTION_CANDIDATE_TTL_DAYS     = int(os.environ.get(
+    "UNIVERSE_SELECTION_CANDIDATE_TTL_DAYS", "7"
+))
 
 # =============================================================================
 # REGIME CLASSIFIER (S-10)
