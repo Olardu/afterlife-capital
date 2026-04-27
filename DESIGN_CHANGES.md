@@ -200,6 +200,85 @@ Estos no son desviaciones del handoff dashboard original, sino *handoffs nuevos*
   - Comparador lado-a-lado de dos rotaciones del mismo Sentinel
     (eficiencia A vs B).
 
+### 10. Render real de titulares en sección "NOTICIAS QUE MOVIERON DECISIONES" (sentinel-data.js)
+- **Archivo**: `dashboard/sentinel-data.js`.
+- **Fecha**: 2026-04-27
+- **Razón**: el handoff original mostraba el formato genérico
+  `"Macro update — risk X · VIX Y · SPY Z"` como placeholder cuando no
+  había contenido real. Con The Ear ya persistiendo titulares en
+  `macro_events.news_titles` (FIX-007 del Bloque 1), el frontend ahora
+  muestra los titulares específicos que movieron las decisiones de The
+  Ear, en lugar del fallback sintético.
+- **Componentes afectados**:
+  - Función `loadMacro()` reescrita para consumir
+    `GET /api/macro_events?limit=10` (endpoint nuevo creado en este mismo
+    bloque). Si el endpoint falla cae al legacy `/api/macro` (adapter
+    aplicado al shape).
+  - Por cada evento con `news_titles[]` no vacío, el primer titular real
+    reemplaza el placeholder genérico vía las keys i18n dinámicas
+    `_news_dyn_${i}` que el handoff ya consumía.
+  - `STATE.logs` agrega un sufijo `titles=N` al log macro para tener
+    señal en la sección LOGS de cuántos titulares se persistieron.
+- **Estilo aplicado**: idéntico al handoff. Solo cambia el contenido
+  textual dentro de la cell `.title` cuando hay datos reales. El layout
+  de la tabla (timestamp + título + badge NEUTRAL/RISK/CB) y el CSS son
+  intactos.
+- **Endpoints consumidos**:
+  - `GET /api/macro_events?limit=10` — VIEWER + ADMIN; devuelve eventos
+    con `news_titles` parseados (list[dict] con `title`, `source`,
+    `published_at`, `matched_keywords`).
+- **Nota para Design**: para próxima iteración, considerar:
+  - Resaltado visual de keywords matched (magenta para negativas, cyan
+    para positivas, badge superpuesto al titular).
+  - Tooltip al hover mostrando todos los titulares matched del evento
+    (no solo el primero) + source.
+  - Filtro/búsqueda en la sección por source o por keyword.
+  - Source de la noticia visible al lado del titular (Reuters,
+    Bloomberg, etc.).
+  - Traducción automática del titular al idioma activo (hoy se muestra
+    en inglés en los 4 locales — los titulares vienen así de NewsAPI).
+
+### 11. Indicador de estado del mercado en header (sentinel-data.js)
+- **Archivo**: `dashboard/sentinel-data.js`.
+- **Fecha**: 2026-04-27
+- **Razón**: Roman pidió visibilidad inmediata del estado del mercado
+  (abierto/cerrado/pre-mercado/post-mercado) y cuánto falta para el
+  próximo cambio de estado, sin tener que abrir un dashboard externo o
+  calcularlo mentalmente desde el reloj. El handoff original no incluía
+  este indicador.
+- **Componentes afectados**:
+  - Nueva columna `<div class="hs" id="hMercado">` insertada
+    dinámicamente en `.hdr-stats`, junto a SISTEMA / SENTINELS /
+    RÉGIMEN / TICKERS / REFRESH / RISK.
+  - Label estática "MERCADO" + valor con dos líneas: status + countdown.
+  - 4 estados con colores semánticos:
+    - **ABIERTO** (verde, `--green`) cuando OPEN.
+    - **CERRADO** (rojo atenuado 0.85, `--red`) cuando CLOSED.
+    - **PRE-MERCADO** (amarillo, `--yellow`) cuando PRE_MARKET.
+    - **POST-MERCADO** (magenta, `--magenta`) cuando AFTER_HOURS.
+  - Countdown sub-line: "cierra en 1h 42m" / "abre en 17h 14m" /
+    "abre en 2d 5h" (formato adaptativo: minutos / horas+minutos / días+horas).
+  - Refresh: fetch cada 60s + tick local cada 60s para que el countdown
+    decrezca entre llamadas.
+- **Estilo aplicado**: misma fuente, tamaño y paleta del handoff.
+  Reutiliza `.hs`, `.k`, `.v` del handoff sin sobrescribir; agrega
+  estilos extra solo bajo el selector `#hMercado` para no afectar al
+  resto del header.
+- **Endpoints consumidos**:
+  - `GET /api/market-status` — público (en `_PUBLIC_PATHS`, no requiere
+    sesión).
+- **Nota para Design**: para próxima iteración, considerar:
+  - Indicador visual más prominente cuando OPEN (badge animado, pulso
+    verde sutil).
+  - Calendario de holidays NYSE accesible al hover sobre el indicador.
+  - Cuando esté CLOSED y el siguiente open sea > 24h (fines de semana o
+    holiday), mostrar nombre del holiday inline ("Memorial Day —
+    abre en 2d 14h").
+  - Color graduado del countdown en los últimos 15 min antes de cierre
+    (ámbar → rojo).
+  - Toggle para ocultar/mostrar el indicador (algunos usuarios pueden
+    querer un dashboard más limpio).
+
 ## Histórico de revisiones de este documento
 
 - 2026-04-26 — versión inicial. Captura cambios 1–5 acumulados desde el handoff original.
@@ -207,3 +286,4 @@ Estos no son desviaciones del handoff dashboard original, sino *handoffs nuevos*
 - 2026-04-26 — agregada sección "Handoffs adicionales" con A (emails) y B (panel admin) integrados.
 - 2026-04-27 — agregado cambio 7 (sección API Keys en panel admin, #FIX-008).
 - 2026-04-27 — agregados cambios 8 y 9 (banner de rotaciones en dashboard, secciones de Rotaciones y Candidatos en panel admin, #UNIVERSE-SELECTION).
+- 2026-04-27 — agregados cambios 10 y 11 (titulares reales en NOTICIAS QUE MOVIERON DECISIONES, indicador de estado del mercado en header, #FIX-010 y #FIX-011).
