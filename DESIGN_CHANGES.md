@@ -83,8 +83,48 @@ Estos no son desviaciones del handoff dashboard original, sino *handoffs nuevos*
 - **Endpoints consumidos**: `GET/POST/DELETE /api/admin/users` (sin cambios en api.py).
 - **Manejo auth**: 401 → `/auth/login`; 403 → banner inline "ACCESO DENEGADO". Coherente con sentinel-data.js.
 
+### 7. Sección de API Keys en panel admin (admin.html + admin-app.js)
+- **Archivos**: `dashboard/admin.html`, `dashboard/admin-app.js`.
+- **Fecha**: 2026-04-27
+- **Razón**: el administrador necesita gestionar credenciales de servicios
+  externos (Alpaca, NewsAPI, Resend, Google OAuth, futuro Anthropic) sin editar
+  manualmente el archivo `.env` del servidor. El backend persiste las keys
+  encriptadas con Fernet (#FIX-008). Por ahora el bot sigue leyendo desde
+  `.env` — la sincronización automática es trabajo de una sesión futura.
+- **Componentes afectados**:
+  - Sección nueva "API KEYS" debajo de "AGREGAR USUARIO".
+  - Tabla con columnas: Servicio, Valor (enmascarado), Descripción, Última
+    rotación, Acciones.
+  - Botón toggle MOSTRAR/OCULTAR por fila — al revelar pinta el plaintext y
+    arranca un timer de 30s para volver a ocultarlo.
+  - Botón ELIMINAR con `confirm()` por fila.
+  - Banner amber arriba de la tabla advirtiendo que el bot todavía lee desde
+    `.env`.
+  - Sección "AGREGAR / ACTUALIZAR API KEY" con form: `service_name` (text),
+    `value` (password), `description` (text). Upsert por `service_name`.
+- **Estilo aplicado**: consistente con el handoff existente del panel admin
+  (cyberpunk: cyan `#00f5ff` para acciones de info, magenta `#ff00d4` para
+  estado revealed, amber `#ff9e2c` para warnings, red `#ff2060` para
+  destructivas). Reutiliza `.tbl`, `.btn-del`, `.btn-add`, `.field`,
+  `.feedback` del handoff. Solo agrega clases nuevas: `.warn-banner`,
+  `.btn-toggle`, `.key-cell`, `.api-key-form`.
+- **Endpoints consumidos**:
+  - `GET    /api/admin/api-keys` — lista con valores enmascarados.
+  - `POST   /api/admin/api-keys` — upsert (body: `service_name, value, description`).
+  - `POST   /api/admin/api-keys/{key_id}/reveal` — devuelve plaintext (loggea
+    WARN con email del admin que reveló).
+  - `DELETE /api/admin/api-keys/{key_id}`.
+  Todos ADMIN-only (gating por `_ADMIN_PREFIXES = ('/api/admin/',)`).
+- **Nota para Design**: para una próxima iteración, considerar:
+  - Ícono ojo abierto/cerrado para los toggles MOSTRAR/OCULTAR (hoy texto).
+  - Botón copy-to-clipboard al lado del valor revelado.
+  - Animación del countdown de 30s (barra de progreso o número visible).
+  - Badge visual para keys con > 90 días sin rotar (alerta de seguridad).
+  - Estado "key próxima a expirar" si se persisten fechas de expiración por servicio.
+
 ## Histórico de revisiones de este documento
 
 - 2026-04-26 — versión inicial. Captura cambios 1–5 acumulados desde el handoff original.
 - 2026-04-26 — agregado cambio 6 (link ADMIN en header).
 - 2026-04-26 — agregada sección "Handoffs adicionales" con A (emails) y B (panel admin) integrados.
+- 2026-04-27 — agregado cambio 7 (sección API Keys en panel admin, #FIX-008).
