@@ -288,6 +288,87 @@ main { padding: 0 24px 32px; position: relative; z-index: 1; max-width: 1200px; 
 }
 @media (max-width: 720px) { .api-key-form .form-grid { grid-template-columns: 1fr; } }
 
+/* ============ ROTATIONS SECTION (#UNIVERSE-SELECTION) ============ */
+.tbl .tk-old { color: var(--red);   font-weight: bold; letter-spacing: 1px; }
+.tbl .tk-new { color: var(--green); font-weight: bold; letter-spacing: 1px; }
+.tbl .tk-arrow { color: var(--cyan); padding: 0 6px; }
+.status-badge {
+  display: inline-block; padding: 3px 10px;
+  font-family: var(--display); font-weight: 700; font-size: 9px;
+  letter-spacing: 0.18em; border: 1px solid currentColor;
+}
+.status-badge.executed     { color: var(--green); }
+.status-badge.pending      { color: var(--yellow); }
+.status-badge.rolled_back  { color: var(--magenta); }
+.status-badge.failed       { color: var(--red); }
+.status-badge.discarded    { color: var(--faint); }
+.btn-rollback {
+  background: transparent; border: 1px solid var(--magenta); color: var(--magenta);
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em;
+  padding: 5px 12px; cursor: pointer; transition: all 0.15s;
+  text-shadow: 0 0 6px rgba(255,0,212,0.4);
+}
+.btn-rollback:hover { background: var(--magenta); color: #fff; text-shadow: none; }
+.btn-rollback:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-detail {
+  background: transparent; border: 1px solid var(--cyan); color: var(--cyan);
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em;
+  padding: 5px 12px; cursor: pointer; transition: all 0.15s; margin-right: 6px;
+}
+.btn-detail:hover { background: var(--cyan); color: #000; }
+
+/* Modal */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(3,6,16,0.85); backdrop-filter: blur(6px);
+  display: none; align-items: center; justify-content: center; padding: 20px;
+}
+.modal-backdrop.show { display: flex; }
+.modal-card {
+  background: var(--panel); border: 1px solid var(--border);
+  width: 100%; max-width: 720px; max-height: 90vh;
+  overflow-y: auto; font-family: var(--code);
+}
+.modal-h {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 20px; border-bottom: 1px solid var(--border-soft);
+  font-family: var(--display); font-weight: 700; font-size: 13px;
+  color: var(--cyan); letter-spacing: 0.16em;
+}
+.modal-h .close {
+  background: transparent; border: none; color: var(--dim);
+  cursor: pointer; font-size: 18px; padding: 0 6px;
+}
+.modal-h .close:hover { color: var(--red); }
+.modal-body { padding: 20px; }
+.modal-row {
+  display: grid; grid-template-columns: 140px 1fr; gap: 12px;
+  padding: 8px 0; font-size: 12px;
+  border-bottom: 1px dashed var(--border-soft);
+}
+.modal-row:last-child { border-bottom: none; }
+.modal-row .k { color: var(--faint); letter-spacing: 0.12em; font-size: 10px; }
+.modal-row .v { color: var(--text); word-break: break-word; }
+.modal-row .v.reasoning { white-space: pre-wrap; line-height: 1.5; }
+.modal-row .v .candidate-list { list-style: none; padding: 0; margin: 0; }
+.modal-row .v .candidate-list li { padding: 4px 0; border-bottom: 1px dotted var(--border-soft); }
+.modal-row .v .candidate-list li:last-child { border-bottom: none; }
+.cd-tk { color: var(--green); font-weight: bold; }
+.cd-conf { color: var(--cyan); }
+.cd-reason { color: var(--dim); display: block; font-size: 11px; margin-top: 2px; }
+
+/* Filters bar */
+.filters-bar {
+  display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px;
+  align-items: center;
+}
+.filters-bar select {
+  background: var(--bg-2); border: 1px solid var(--border); color: var(--text);
+  font-family: var(--code); font-size: 12px; padding: 6px 10px;
+  letter-spacing: 0.04em; cursor: pointer;
+}
+.filters-bar select:focus { outline: none; border-color: var(--cyan); }
+
 /* permission denied banner */
 .perm-banner {
   margin: 24px auto; max-width: 700px;
@@ -493,7 +574,100 @@ footer .version b { color: var(--cyan); font-weight: normal; margin-left: 4px; }
     </div>
   </div>
 
+  <!-- ============ SECCIÓN 5: ROTACIONES DE UNIVERSO (#UNIVERSE-SELECTION) ============ -->
+  <div class="section" id="rotations">
+    <div class="section-h">
+      <span class="label">// ROTACIONES DE UNIVERSO</span>
+      <span class="meta"><b id="rotationCount">—</b> decisiones</span>
+    </div>
+
+    <div class="warn-banner">
+      Las rotaciones se ejecutan automáticamente (Modo A) cuando un Sentinel cruza
+      el threshold de decay. Podés revertir cualquier rotación reciente; la decisión
+      original queda registrada para auditoría.
+    </div>
+
+    <div class="panel">
+      <div class="panel-h">
+        <span>// HISTÓRICO</span>
+        <span class="right" id="rotationsUpdated">cargando...</span>
+      </div>
+      <div class="panel-body">
+        <div class="filters-bar">
+          <label class="meta" for="filterStatus">filtrar status:</label>
+          <select id="filterStatus">
+            <option value="">todos</option>
+            <option value="executed">executed</option>
+            <option value="pending">pending</option>
+            <option value="rolled_back">rolled_back</option>
+            <option value="failed">failed</option>
+            <option value="discarded">discarded</option>
+          </select>
+        </div>
+      </div>
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th>FECHA</th>
+              <th>SENTINEL</th>
+              <th>ROTACIÓN</th>
+              <th>ESTADO</th>
+              <th>COSTO</th>
+              <th style="text-align:right;">ACCIONES</th>
+            </tr>
+          </thead>
+          <tbody id="rotationsBody">
+            <tr><td colspan="6"><div class="loading">CARGANDO ROTACIONES</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ SECCIÓN 6: CANDIDATOS PENDIENTES (Watchlist) ============ -->
+  <div class="section">
+    <div class="section-h">
+      <span class="label">// CANDIDATOS PENDIENTES</span>
+      <span class="meta"><b id="candCount">—</b> en watchlist</span>
+    </div>
+    <div class="panel">
+      <div class="panel-h">
+        <span>// WATCHLIST ANTICIPADA</span>
+        <span class="right">se activan automáticamente al confirmarse el decay</span>
+      </div>
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th>SENTINEL</th>
+              <th>CANDIDATO</th>
+              <th>PROPUESTO</th>
+              <th>EXPIRA</th>
+            </tr>
+          </thead>
+          <tbody id="candidatesBody">
+            <tr><td colspan="4"><div class="loading">CARGANDO CANDIDATOS</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
 </main>
+
+<!-- Modal de detalle de rotación -->
+<div class="modal-backdrop" id="rotationModal" role="dialog" aria-hidden="true">
+  <div class="modal-card">
+    <div class="modal-h">
+      <span>// DETALLE DE ROTACIÓN</span>
+      <button class="close" id="modalCloseBtn" aria-label="Cerrar">×</button>
+    </div>
+    <div class="modal-body" id="modalBody">
+      <div class="loading">CARGANDO</div>
+    </div>
+  </div>
+</div>
 
 <!-- permission denied template (hidden by default) -->
 <template id="permTpl">

@@ -486,6 +486,244 @@
     }
   }
 
+  // =============================================================
+  // ROTATIONS (#UNIVERSE-SELECTION) — historial + rollback + modal
+  // =============================================================
+  const ROTATIONS_API  = '/api/admin/rotations';
+  const CANDIDATES_API = '/api/admin/candidates';
+  const ROLLBACK_WINDOW_DAYS = 7;
+
+  const rotationsBody    = $('rotationsBody');
+  const rotationCount    = $('rotationCount');
+  const rotationsUpdated = $('rotationsUpdated');
+  const filterStatus     = $('filterStatus');
+  const candidatesBody   = $('candidatesBody');
+  const candCount        = $('candCount');
+  const rotationModal    = $('rotationModal');
+  const modalBody        = $('modalBody');
+  const modalCloseBtn    = $('modalCloseBtn');
+
+  function fmtUsd(n) {
+    if (n === null || n === undefined) return '—';
+    const v = Number(n);
+    if (!isFinite(v)) return '—';
+    return '$' + v.toFixed(4);
+  }
+  function fmtPct(n) {
+    if (n === null || n === undefined) return '—';
+    const v = Number(n);
+    if (!isFinite(v)) return '—';
+    return (v * 100).toFixed(1) + '%';
+  }
+  function fmtNum(n, digits = 2) {
+    if (n === null || n === undefined) return '—';
+    const v = Number(n);
+    if (!isFinite(v)) return '—';
+    return v.toFixed(digits);
+  }
+
+  async function apiListRotations(status) {
+    const url = status
+      ? `${ROTATIONS_API}?status=${encodeURIComponent(status)}&limit=50`
+      : `${ROTATIONS_API}?limit=50`;
+    const res = await fetch(url, {
+      headers: { 'Accept': 'application/json' }, credentials: 'same-origin',
+    });
+    handleAuthResponse(res);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }
+
+  async function apiGetRotation(decisionId) {
+    const res = await fetch(`${ROTATIONS_API}/${encodeURIComponent(decisionId)}`, {
+      headers: { 'Accept': 'application/json' }, credentials: 'same-origin',
+    });
+    handleAuthResponse(res);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }
+
+  async function apiRollbackRotation(decisionId) {
+    const res = await fetch(`${ROTATIONS_API}/${encodeURIComponent(decisionId)}/rollback`, {
+      method: 'POST',
+      headers: { 'Accept': 'application/json' },
+      credentials: 'same-origin',
+    });
+    handleAuthResponse(res);
+    if (!res.ok) {
+      let msg = 'HTTP ' + res.status;
+      try { const j = await res.json(); if (j && j.detail) msg = j.detail; } catch (_) {}
+      throw new Error(msg);
+    }
+    return res.json();
+  }
+
+  async function apiListCandidates() {
+    const res = await fetch(CANDIDATES_API, {
+      headers: { 'Accept': 'application/json' }, credentials: 'same-origin',
+    });
+    handleAuthResponse(res);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }
+
+  function canRollback(rotation) {
+    if (rotation.status !== 'executed') return false;
+    if (!rotation.executed_at) return false;
+    const ageDays = (Date.now() - new Date(rotation.executed_at).getTime()) / (1000*60*60*24);
+    return ageDays <= ROLLBACK_WINDOW_DAYS;
+  }
+
+  function renderRotations(rotations) {
+    if (!rotations || rotations.length === 0) {
+      rotationsBody.innerHTML = '<tr><td colspan="6" class="empty">// SIN ROTACIONES</td></tr>';
+      rotationCount.textContent = '0';
+      rotationsUpdated.textContent = 'actualizado ' + nowHHMMSS();
+      return;
+    }
+    const rows = rotations.map(r => {
+      const id = escapeHTML(r.decision_id);
+      const fecha = escapeHTML(fmtDate(r.triggered_at));
+      const sentinel = escapeHTML(r.sentinel_name || '?');
+      const old = escapeHTML(r.old_ticker || '?');
+      const nw  = escapeHTML(r.new_ticker || '—');
+      const status = String(r.status || 'pending');
+      const cost = fmtUsd(r.claude_cost_usd);
+      const rollbackBtn = canRollback(r)
+        ? `<button class="btn-rollback" data-action="rollback" data-id="${id}">ROLLBACK</button>`
+        : '<span class="no-action">—</span>';
+      return `
+        <tr>
+          <td class="date-cell">${fecha}</td>
+          <td>${sentinel}</td>
+          <td><span class="tk-old">${old}</span><span class="tk-arrow">→</span><span class="tk-new">${nw}</span></td>
+          <td><span class="status-badge ${escapeHTML(status)}">${escapeHTML(status.toUpperCase())}</span></td>
+          <td>${cost}</td>
+          <td style="text-align:right;">
+            <button class="btn-detail" data-action="detail" data-id="${id}">DETALLE</button>
+            ${rollbackBtn}
+          </td>
+        </tr>
+      `;
+    }).join('');
+    rotationsBody.innerHTML = rows;
+    rotationCount.textContent = rotations.length;
+    rotationsUpdated.textContent = 'actualizado ' + nowHHMMSS();
+
+    rotationsBody.querySelectorAll('button[data-action="detail"]').forEach(btn => {
+      btn.addEventListener('click', () => openRotationModal(btn.dataset.id));
+    });
+    rotationsBody.querySelectorAll('button[data-action="rollback"]').forEach(btn => {
+      btn.addEventListener('click', () => onRollbackClick(btn));
+    });
+  }
+
+  async function loadRotations() {
+    try {
+      const rotations = await apiListRotations(filterStatus ? filterStatus.value : '');
+      renderRotations(rotations);
+    } catch (err) {
+      if (err.message === 'REDIRECT_LOGIN' || err.message === 'NO_PERMISSION') return;
+      rotationsBody.innerHTML = '<tr><td colspan="6" class="empty">// ERROR AL CARGAR ROTACIONES</td></tr>';
+      console.error('[admin] loadRotations:', err);
+    }
+  }
+
+  function renderCandidates(cands) {
+    if (!cands || cands.length === 0) {
+      candidatesBody.innerHTML = '<tr><td colspan="4" class="empty">// SIN CANDIDATOS EN WATCHLIST</td></tr>';
+      candCount.textContent = '0';
+      return;
+    }
+    const rows = cands.map(c => `
+      <tr>
+        <td>${escapeHTML(c.sentinel_name || '?')}</td>
+        <td><span class="tk-new">${escapeHTML(c.proposed_ticker || '?')}</span></td>
+        <td class="date-cell">${escapeHTML(fmtDate(c.proposed_at))}</td>
+        <td class="date-cell">${escapeHTML(fmtDate(c.expires_at))}</td>
+      </tr>
+    `).join('');
+    candidatesBody.innerHTML = rows;
+    candCount.textContent = cands.length;
+  }
+
+  async function loadCandidates() {
+    try {
+      const cands = await apiListCandidates();
+      renderCandidates(cands);
+    } catch (err) {
+      if (err.message === 'REDIRECT_LOGIN' || err.message === 'NO_PERMISSION') return;
+      candidatesBody.innerHTML = '<tr><td colspan="4" class="empty">// ERROR AL CARGAR</td></tr>';
+      console.error('[admin] loadCandidates:', err);
+    }
+  }
+
+  async function onRollbackClick(btn) {
+    const id = btn.dataset.id;
+    const ok = window.confirm(
+      '¿Hacer rollback de esta rotación?\n\nEl ticker volverá al anterior. Esta acción quedará registrada con tu email.'
+    );
+    if (!ok) return;
+    btn.disabled = true;
+    btn.textContent = 'ROLLBACK...';
+    try {
+      await apiRollbackRotation(id);
+      await loadRotations();
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = 'ROLLBACK';
+      alert('Error al hacer rollback: ' + err.message);
+    }
+  }
+
+  function renderRotationDetail(rot) {
+    const cands = Array.isArray(rot.candidates_proposed) ? rot.candidates_proposed : [];
+    const candsHtml = cands.length === 0
+      ? '<span class="cd-reason">(sin candidatos alternativos)</span>'
+      : `<ul class="candidate-list">${cands.map(c => `
+          <li>
+            <span class="cd-tk">${escapeHTML(c.ticker || '?')}</span>
+            &nbsp;<span class="cd-conf">conf ${escapeHTML(fmtNum(c.confidence))}</span>
+            <span class="cd-reason">${escapeHTML(c.reason || '')}</span>
+          </li>
+        `).join('')}</ul>`;
+    return `
+      <div class="modal-row"><span class="k">SENTINEL</span><span class="v">${escapeHTML(rot.sentinel_name || '?')}</span></div>
+      <div class="modal-row"><span class="k">DISPARADOR</span><span class="v">${escapeHTML(rot.trigger_reason || '?')}</span></div>
+      <div class="modal-row"><span class="k">ROTACIÓN</span><span class="v"><span class="tk-old">${escapeHTML(rot.old_ticker || '?')}</span> <span class="tk-arrow">→</span> <span class="tk-new">${escapeHTML(rot.new_ticker || '—')}</span></span></div>
+      <div class="modal-row"><span class="k">ESTADO</span><span class="v"><span class="status-badge ${escapeHTML(rot.status || '')}">${escapeHTML((rot.status || '').toUpperCase())}</span></span></div>
+      <div class="modal-row"><span class="k">DISPARADO</span><span class="v">${escapeHTML(fmtDate(rot.triggered_at))}</span></div>
+      ${rot.executed_at ? `<div class="modal-row"><span class="k">EJECUTADO</span><span class="v">${escapeHTML(fmtDate(rot.executed_at))}</span></div>` : ''}
+      ${rot.rolled_back_at ? `<div class="modal-row"><span class="k">ROLLBACK</span><span class="v">${escapeHTML(fmtDate(rot.rolled_back_at))} · ${escapeHTML(rot.rolled_back_by || '?')}</span></div>` : ''}
+      <div class="modal-row"><span class="k">PERFORMANCE OLD</span><span class="v">win ${escapeHTML(fmtPct(rot.old_win_rate))} · sharpe ${escapeHTML(fmtNum(rot.old_sharpe_ratio))} · trades ${escapeHTML(String(rot.old_total_trades ?? '—'))}</span></div>
+      <div class="modal-row"><span class="k">CONFIDENCE</span><span class="v">${escapeHTML(fmtNum(rot.claude_confidence))}</span></div>
+      <div class="modal-row"><span class="k">RAZONAMIENTO</span><span class="v reasoning">${escapeHTML(rot.claude_reasoning || '(sin razonamiento)')}</span></div>
+      <div class="modal-row"><span class="k">CANDIDATOS</span><span class="v">${candsHtml}</span></div>
+      <div class="modal-row"><span class="k">MODELO</span><span class="v">${escapeHTML(rot.claude_model || '—')}</span></div>
+      <div class="modal-row"><span class="k">TOKENS</span><span class="v">in ${escapeHTML(String(rot.claude_input_tokens || 0))} · out ${escapeHTML(String(rot.claude_output_tokens || 0))}</span></div>
+      <div class="modal-row"><span class="k">COSTO</span><span class="v">${escapeHTML(fmtUsd(rot.claude_cost_usd))}</span></div>
+      ${rot.notes ? `<div class="modal-row"><span class="k">NOTAS</span><span class="v">${escapeHTML(rot.notes)}</span></div>` : ''}
+    `;
+  }
+
+  async function openRotationModal(decisionId) {
+    rotationModal.classList.add('show');
+    rotationModal.setAttribute('aria-hidden', 'false');
+    modalBody.innerHTML = '<div class="loading">CARGANDO</div>';
+    try {
+      const rot = await apiGetRotation(decisionId);
+      modalBody.innerHTML = renderRotationDetail(rot);
+    } catch (err) {
+      if (err.message === 'REDIRECT_LOGIN' || err.message === 'NO_PERMISSION') return;
+      modalBody.innerHTML = `<div class="empty">// ERROR: ${escapeHTML(err.message)}</div>`;
+    }
+  }
+
+  function closeModal() {
+    rotationModal.classList.remove('show');
+    rotationModal.setAttribute('aria-hidden', 'true');
+  }
+
   // ============ INIT ============
   function init() {
     addForm.addEventListener('submit', onAddSubmit);
@@ -496,8 +734,22 @@
         if (el) el.addEventListener('input', clearKeyFeedback);
       });
     }
+    if (filterStatus) {
+      filterStatus.addEventListener('change', loadRotations);
+    }
+    if (modalCloseBtn) {
+      modalCloseBtn.addEventListener('click', closeModal);
+      rotationModal.addEventListener('click', (ev) => {
+        if (ev.target === rotationModal) closeModal();
+      });
+      document.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape' && rotationModal.classList.contains('show')) closeModal();
+      });
+    }
     loadUsers();
     if (keysBody) loadKeys();
+    if (rotationsBody) loadRotations();
+    if (candidatesBody) loadCandidates();
   }
 
   if (document.readyState === 'loading') {
