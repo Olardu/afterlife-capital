@@ -547,3 +547,252 @@ async def send_removal_email(to_email: str) -> bool:
     subject = "Acceso revocado / Access revoked — Sentinel Control"
     html    = _render_revoked_html(to_email)
     return await _send(to_email, subject, html, ref_id=f"sentinel-revoked-{to_email}")
+
+
+# ---------------------------------------------------------------------------
+# Rotation email (#UNIVERSE-SELECTION)
+# Notifica al admin que el sistema rotó el ticker de un Sentinel
+# automáticamente. Incluye razonamiento de Claude resumido y CTA al detalle
+# en /admin (con opción de rollback). Estilo cyberpunk consistente con
+# welcome/revoked.
+# ---------------------------------------------------------------------------
+
+_ROTATION_TEMPLATE = """<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="x-apple-disable-message-reformatting">
+<title>Rotación ejecutada · Rotation executed</title>
+</head>
+<body style="margin:0;padding:0;background-color:#030610;font-family:'Courier New',Courier,monospace;color:#d8e6f5;-webkit-font-smoothing:antialiased;">
+<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#030610;">
+{sentinel_codename}: {old_ticker} -> {new_ticker} · Universe Selection rotation
+</div>
+
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color:#030610;">
+  <tr>
+    <td align="center" style="padding:32px 16px;">
+
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="600" style="max-width:600px;width:100%;background-color:#07091a;border:1px solid rgba(255,0,212,0.28);">
+
+        <!-- Brand bar -->
+        <tr>
+          <td style="padding:18px 28px;border-bottom:1px solid rgba(255,0,212,0.22);background-color:#060a18;">
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+              <tr>
+                <td align="left" style="font-family:'Courier New',Courier,monospace;font-size:13px;font-weight:bold;letter-spacing:3px;color:#d8e6f5;">
+                  AFTER<span style="color:#00f5ff;">LIFE</span> CAPITAL
+                </td>
+                <td align="right" style="font-family:'Courier New',Courier,monospace;font-size:10px;letter-spacing:2px;color:#6a7a96;">
+                  SENTINEL · v0.5
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Tag -->
+        <tr>
+          <td style="padding:28px 28px 0 28px;font-family:'Courier New',Courier,monospace;font-size:10px;letter-spacing:3px;color:#ff00d4;">
+            // ROTACIÓN AUTOMÁTICA EJECUTADA
+          </td>
+        </tr>
+
+        <!-- Title -->
+        <tr>
+          <td style="padding:8px 28px 4px 28px;font-family:'Courier New',Courier,monospace;font-size:24px;font-weight:900;letter-spacing:2px;line-height:1.15;color:#ff00d4;">
+            {sentinel_codename}
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:0 28px 24px 28px;font-family:'Courier New',Courier,monospace;font-size:14px;letter-spacing:2px;color:#6a7a96;">
+            {trigger_reason_label}
+          </td>
+        </tr>
+
+        <!-- Rotation block -->
+        <tr>
+          <td style="padding:0 28px 4px 28px;">
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color:#0a0e1f;border:1px solid rgba(0,245,255,0.22);">
+              <tr>
+                <td style="padding:18px;font-family:'Courier New',Courier,monospace;">
+                  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                    <tr>
+                      <td align="center" style="font-size:10px;letter-spacing:3px;color:#3a4660;padding-bottom:6px;">TICKER ANTERIOR</td>
+                      <td></td>
+                      <td align="center" style="font-size:10px;letter-spacing:3px;color:#3a4660;padding-bottom:6px;">TICKER NUEVO</td>
+                    </tr>
+                    <tr>
+                      <td align="center" style="font-size:24px;font-weight:bold;letter-spacing:2px;color:#ff2060;">
+                        {old_ticker}
+                      </td>
+                      <td align="center" style="font-size:18px;color:#00f5ff;padding:0 12px;">
+                        →
+                      </td>
+                      <td align="center" style="font-size:24px;font-weight:bold;letter-spacing:2px;color:#00ff88;">
+                        {new_ticker}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td align="center" style="font-size:10px;color:#6a7a96;padding-top:10px;">win:{old_winrate} sharpe:{old_sharpe}</td>
+                      <td></td>
+                      <td align="center" style="font-size:10px;color:#6a7a96;padding-top:10px;">conf:{confidence}</td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Reasoning -->
+        <tr>
+          <td style="padding:24px 28px 0 28px;font-family:'Courier New',Courier,monospace;font-size:10px;letter-spacing:3px;color:#00f5ff;">
+            // RAZONAMIENTO DE CLAUDE
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:10px 28px 0 28px;">
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color:#0a0e1f;border-left:2px solid #00f5ff;">
+              <tr>
+                <td style="padding:14px 16px;font-family:'Courier New',Courier,monospace;font-size:12px;line-height:1.6;color:#d8e6f5;">
+                  {reasoning}
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Cost line -->
+        <tr>
+          <td style="padding:18px 28px 0 28px;font-family:'Courier New',Courier,monospace;font-size:11px;color:#6a7a96;letter-spacing:1px;">
+            modelo: <span style="color:#d8e6f5;">{model}</span> · costo: <span style="color:#d8e6f5;">${cost_usd}</span> · tokens: <span style="color:#d8e6f5;">{tokens_in}/{tokens_out}</span>
+          </td>
+        </tr>
+
+        <!-- CTAs -->
+        <tr>
+          <td align="center" style="padding:24px 28px 8px 28px;">
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="background-color:#00f5ff;border:1px solid #00f5ff;">
+                  <a href="{detail_url}" target="_blank" style="display:inline-block;padding:12px 26px;font-family:'Courier New',Courier,monospace;font-size:11px;font-weight:bold;letter-spacing:3px;color:#000000;text-decoration:none;">
+                    + VER DETALLE
+                  </a>
+                </td>
+                <td style="width:10px;"></td>
+                <td style="border:1px solid #ff2060;">
+                  <a href="{rollback_url}" target="_blank" style="display:inline-block;padding:12px 26px;font-family:'Courier New',Courier,monospace;font-size:11px;font-weight:bold;letter-spacing:3px;color:#ff2060;text-decoration:none;">
+                    × ROLLBACK
+                  </a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Note -->
+        <tr>
+          <td style="padding:10px 28px 28px 28px;">
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color:#0a0e1f;border-left:2px solid #ffe000;">
+              <tr>
+                <td style="padding:12px 16px;font-family:'Courier New',Courier,monospace;font-size:11px;line-height:1.6;color:#d8e6f5;">
+                  <span style="color:#ffe000;letter-spacing:2px;font-size:10px;">[ AUTO ]</span>&nbsp; Esta rotación se ejecutó sin aprobación manual (Modo A). Si algo se ve raro, podés revertirla desde el panel admin.
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="padding:16px 28px;border-top:1px solid rgba(255,0,212,0.22);background-color:#060a18;font-family:'Courier New',Courier,monospace;font-size:10px;letter-spacing:2px;color:#6a7a96;line-height:1.6;">
+            Afterlife Capital · Sentinel v0.5 · Universe Selection · Correo automático.
+          </td>
+        </tr>
+
+      </table>
+
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="600" style="max-width:600px;width:100%;">
+        <tr>
+          <td align="center" style="padding:14px 8px;font-family:'Courier New',Courier,monospace;font-size:9px;letter-spacing:2px;color:#3a4660;">
+            noreply@afterlifecapital.co
+          </td>
+        </tr>
+      </table>
+
+    </td>
+  </tr>
+</table>
+</body>
+</html>"""
+
+
+_TRIGGER_LABELS = {
+    "pre_decay_warning": "Anticipación de decay",
+    "decay_confirmed":   "Decay confirmado",
+    "manual":            "Solicitud manual",
+}
+
+
+def _fmt(v, *, pct: bool = False, default: str = "n/a") -> str:
+    if v is None:
+        return default
+    try:
+        return f"{float(v) * 100:.1f}%" if pct else f"{float(v):.2f}"
+    except (TypeError, ValueError):
+        return default
+
+
+def _esc(s) -> str:
+    """HTML-escape mínimo defensivo (los templates no permiten inyección por
+    diseño pero el reasoning viene de Claude — escapamos por las dudas)."""
+    if s is None:
+        return ""
+    return (
+        str(s)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def _render_rotation_html(decision: dict, dashboard_base: str) -> str:
+    return _ROTATION_TEMPLATE.format(
+        sentinel_codename     = _esc(decision.get("sentinel_name") or "?"),
+        trigger_reason_label  = _esc(_TRIGGER_LABELS.get(
+            decision.get("trigger_reason"), decision.get("trigger_reason", "?")
+        )),
+        old_ticker            = _esc(decision.get("old_ticker") or "?"),
+        new_ticker            = _esc(decision.get("new_ticker") or "?"),
+        old_winrate           = _fmt(decision.get("old_win_rate"), pct=True),
+        old_sharpe            = _fmt(decision.get("old_sharpe_ratio")),
+        confidence            = _fmt(decision.get("claude_confidence")),
+        reasoning             = _esc(decision.get("claude_reasoning") or "(sin razonamiento)"),
+        model                 = _esc(decision.get("claude_model") or "?"),
+        cost_usd              = _fmt(decision.get("claude_cost_usd")),
+        tokens_in             = decision.get("claude_input_tokens") or 0,
+        tokens_out            = decision.get("claude_output_tokens") or 0,
+        detail_url            = f"{dashboard_base}/admin#rotations",
+        rollback_url          = f"{dashboard_base}/admin#rotations",
+    )
+
+
+async def send_rotation_email(
+    *,
+    to_email: str,
+    decision: dict,
+    dashboard_base: str = "https://sentinel.afterlifecapital.co",
+) -> bool:
+    """
+    Notifica al admin sobre una rotación ejecutada (#UNIVERSE-SELECTION).
+    decision es el dict retornado por historian.get_rotation_decision().
+    No bloquea el flujo: si Resend falla solo loggea.
+    """
+    sentinel = decision.get("sentinel_name") or "Sentinel"
+    new      = decision.get("new_ticker") or "?"
+    subject  = f"[ROTATION] {sentinel} → {new} · Sentinel Control"
+    html     = _render_rotation_html(decision, dashboard_base)
+    ref      = f"sentinel-rotation-{decision.get('decision_id','?')}"
+    return await _send(to_email, subject, html, ref_id=ref)
