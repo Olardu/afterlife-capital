@@ -41,28 +41,68 @@ logger = logging.getLogger("sentinel.universe_selector")
 # PROMPTS
 # =============================================================================
 
-SYSTEM_PROMPT = """Eres un analista cuantitativo experto especializado en selección de activos para estrategias algorítmicas de trading. Tu rol es proponer activos óptimos para una estrategia específica considerando:
+SYSTEM_PROMPT = """Eres un analista cuantitativo experto especializado en selección de activos para estrategias algorítmicas de trading retail. Tu rol es proponer activos óptimos para una estrategia específica, balanceando dos objetivos:
 
-1. Compatibilidad estadística entre el activo y el tipo de estrategia.
-2. Régimen de mercado actual (BULL/NEUTRAL/BEAR).
-3. Contexto geopolítico y macroeconómico vigente.
-4. Performance histórica del activo.
-5. Liquidez y volumen mínimos para trading retail.
+1. **Compatibilidad estadística** entre el activo y el tipo de estrategia técnica.
+2. **Diversificación factorial del portafolio agregado** — exposición balanceada a regímenes económicos distintos.
 
-Criterios por tipo de estrategia:
-- Trend Following (sma_crossover, ema_triple, macd_volume): activos con tendencias direccionales claras, ADX > 25, volumen estable.
-- Mean Reversion (rsi_short, bollinger_bounce, vwap_reversion): activos que oscilan en rangos predecibles, Hurst < 0.5.
-- Breakout (orb_breakout, bollinger_squeeze): activos con compresión de volatilidad seguida de expansiones, BBW en percentil bajo.
-- Reversal (rsi_divergence): activos con sobreextensiones técnicas frecuentes.
+## Criterios de compatibilidad por tipo de estrategia
 
-Restricciones obligatorias para tus propuestas:
+- **Trend Following** (sma_crossover, ema_triple, macd_volume): activos con tendencias direccionales claras, ADX > 25, volumen estable, beta moderado-alto.
+- **Mean Reversion** (rsi_short, bollinger_bounce, vwap_reversion): activos que oscilan en rangos predecibles, Hurst < 0.5, baja autocorrelación direccional.
+- **Breakout** (orb_breakout, bollinger_squeeze): activos con compresión de volatilidad seguida de expansiones, BBW en percentil bajo.
+- **Reversal** (rsi_divergence): activos con sobreextensiones técnicas frecuentes y mean-reversion en timeframes intermedios.
+
+## Marco de diversificación factorial (Bridgewater All Weather, AQR)
+
+Los activos financieros responden a 4 ambientes económicos posibles según crecimiento (G) e inflación (I):
+
+| Ambiente | Crecimiento | Inflación | Activos favorecidos                                       |
+|---|---|---|---|
+| 1 | G ↑ | I ↑ | Commodities, oro (GLD), TIPS, equity con pricing power     |
+| 2 | G ↑ | I ↓ | Equity growth (QQQ, tech), corporate credit                |
+| 3 | G ↓ | I ↑ | Oro (GLD), commodities, TIPS, equity defensivo (XLP, XLV)  |
+| 4 | G ↓ | I ↓ | Bonos largos (TLT), bonos intermedios (IEF), defensivo     |
+
+Cuando recibas información del portafolio actual del sistema (composición de tickers en otros Sentinels), evalúa explícitamente:
+
+- ¿Está el portafolio sobreexpuesto a un solo ambiente económico? (ej: SPY/QQQ + tech individual = sobreexposición a Ambiente 2)
+- ¿Hay regímenes sin cubrir? (ej: nada de oro/commodities = ciego al Ambiente 3)
+- ¿La estrategia del Sentinel tiene afinidad técnica con activos que cubrirían un régimen subexpuesto?
+
+Si la compatibilidad estadística es similar entre dos candidatos, **prefiere el que mejora la diversificación factorial del portafolio agregado**. Esto significa que a veces un candidato técnicamente "menos óptimo" pero estructuralmente descorrelacionado es la mejor recomendación. La decorrelación honesta requiere clases de activos distintas, no solo símbolos distintos sobre la misma clase.
+
+## Restricciones operativas (Alpaca paper trading)
+
+- Universo permitido: US stocks, ETFs (incluyendo GLD, TLT, IEF, VIXY, sectoriales XL*, commodities ETFs), crypto (BTC/USD, ETH/USD, etc.).
 - NUNCA propongas penny stocks (precio < $10 USD).
-- NUNCA propongas activos con volumen diario promedio < 1M shares.
-- NUNCA propongas el mismo ticker que está degradando a menos que sea explícitamente solicitado.
-- Prioriza diversificación: si el Sentinel ya operó tickers correlacionados sin éxito, propón algo descorrelacionado.
-- Sé honesto: si no encuentras buen candidato, devuelve recommended_ticker: null y explica por qué.
+- NUNCA propongas activos con volumen diario promedio < 1M shares (o equivalente en crypto).
+- NUNCA propongas el mismo ticker que el actual a menos que sea explícitamente solicitado.
+- Si el Sentinel ya falló en tickers correlacionados, propón algo descorrelacionado por construcción, no solo "otro tech que esté funcionando".
 
-Devuelve SIEMPRE un único objeto JSON que coincida con el schema solicitado. No agregues texto fuera del JSON."""
+## Formato de respuesta
+
+Devuelve SIEMPRE un JSON válido con esta estructura exacta:
+
+{
+  "recommended_ticker": "SYMBOL",
+  "candidates": [
+    {"ticker": "SYM1", "confidence": 0.85, "reason": "explicación corta incluyendo factor económico que cubre"},
+    {"ticker": "SYM2", "confidence": 0.72, "reason": "explicación corta"},
+    {"ticker": "SYM3", "confidence": 0.60, "reason": "explicación corta"}
+  ],
+  "overall_confidence": 0.85,
+  "reasoning": "Análisis detallado: (1) compatibilidad técnica con el tipo de estrategia, (2) cómo afecta la diversificación del portafolio agregado, (3) por qué este ticker en este momento macro.",
+  "factor_exposure_analysis": "Breve análisis: qué ambiente económico cubre la recomendación, qué ambientes ya están cubiertos por el portafolio, qué ambientes quedan descubiertos.",
+  "risks": ["riesgo 1", "riesgo 2"],
+  "expected_horizon_days": 30
+}
+
+## Honestidad sobre incertidumbre
+
+Si el contexto macro es ambiguo o las opciones son todas marginales, dilo. Es mejor `recommended_ticker: null` con explicación honesta que forzar una recomendación débil. El sistema operador (Afterlife Capital) prefiere transparencia sobre confianza fingida.
+
+No agregues texto fuera del JSON."""
 
 
 _RESPONSE_SCHEMA = {
@@ -87,6 +127,11 @@ _RESPONSE_SCHEMA = {
         },
         "overall_confidence": {"type": "number"},
         "reasoning":          {"type": "string"},
+        # Campo nuevo del marco All Weather/AQR — qué ambiente económico
+        # cubre la recomendación y cuáles quedan descubiertos. Persistido
+        # concatenado al claude_reasoning en rotation_decisions (sin
+        # cambios de schema en DB).
+        "factor_exposure_analysis": {"type": "string"},
         "risks":              {"type": "array", "items": {"type": "string"}},
         "expected_horizon_days": {"type": "integer"},
     },
@@ -114,12 +159,87 @@ def _format_failed(tickers: list[str]) -> str:
     return ", ".join(tickers[:20])
 
 
-def build_user_prompt(*, sentinel: dict, macro: dict, failed_tickers: list[str], reason: str) -> str:
+# Buckets de clasificación factorial usados para el resumen automático del
+# portafolio. Lista no exhaustiva — los buckets cubren la composición típica
+# que esperamos en los 9 Sentinels al 2026-04. Tickers fuera de esta tabla
+# caen en "otros" (no clasificados). Mantener en sincronía con los activos
+# que aparezcan en producción.
+_FACTOR_BUCKETS: dict[str, set[str]] = {
+    "broad_market":      {"SPY", "QQQ", "IWM", "DIA", "VTI", "VOO"},
+    "tech_individual":   {"NVDA", "AMD", "MSFT", "GOOGL", "GOOG", "META", "AAPL",
+                          "TSLA", "AMZN", "NFLX", "AVGO", "CRM", "ORCL", "ADBE",
+                          "INTC", "QCOM", "AMAT"},
+    "gold_commodities":  {"GLD", "GDX", "SLV", "IAU", "SLVO", "USO", "DBA", "DBC",
+                          "PALL", "PPLT"},
+    "bonds_long":        {"TLT", "ZROZ", "EDV"},
+    "bonds_intermediate":{"IEF", "AGG", "BND", "LQD", "HYG", "TIP"},
+    "defensive_sectors": {"XLP", "XLV", "XLU"},
+    "volatility":        {"VIXY", "VXX", "UVXY", "SVXY"},
+    "crypto":            {"BTC/USD", "ETH/USD", "BTCUSD", "ETHUSD"},
+    "energy":            {"XLE", "XOP", "USO", "UNG"},
+    "financials":        {"XLF", "KRE", "JPM", "BAC", "GS", "MS"},
+    "healthcare":        {"XLV", "JNJ", "UNH", "PFE", "MRK"},
+    "international":     {"EFA", "EEM", "VEA", "VWO", "IEMG"},
+}
+
+
+def _classify_ticker(ticker: str) -> str:
+    """Devuelve el bucket factorial al que pertenece el ticker, o 'otros'."""
+    if not ticker:
+        return "otros"
+    t = ticker.upper().strip()
+    for bucket, tickers in _FACTOR_BUCKETS.items():
+        if t in tickers:
+            return bucket
+    return "otros"
+
+
+def _format_portfolio_composition(portfolio: list[dict]) -> str:
+    """
+    Renderiza una lista de Sentinels con sus tickers + un resumen automático
+    de concentración factorial. portfolio es lista de
+    {sentinel_codename, current_ticker, strategy_type}; si un Sentinel tiene
+    múltiples tickers activos el caller los aplana en filas separadas.
+    """
+    if not portfolio:
+        return "(sin información del portafolio agregado)"
+
+    lines = []
+    bucket_counts: dict[str, int] = {}
+    for entry in portfolio:
+        codename = entry.get("sentinel_codename", "?")
+        ticker   = entry.get("current_ticker", "?")
+        strategy = entry.get("strategy_type", "?")
+        lines.append(f"  {codename} ({strategy}) -> {ticker}")
+        bucket = _classify_ticker(ticker)
+        bucket_counts[bucket] = bucket_counts.get(bucket, 0) + 1
+
+    body = "\n".join(lines)
+
+    # Resumen automático ordenado por count DESC para que la concentración
+    # sea evidente (máxima primero).
+    if bucket_counts:
+        ordered = sorted(bucket_counts.items(), key=lambda kv: kv[1], reverse=True)
+        summary = ", ".join(f"{count}× {bucket}" for bucket, count in ordered)
+        body += f"\n\n[Resumen automático de exposición: {summary}]"
+    return body
+
+
+def build_user_prompt(
+    *,
+    sentinel: dict,
+    macro: dict,
+    failed_tickers: list[str],
+    reason: str,
+    portfolio_composition: Optional[list[dict]] = None,
+) -> str:
     win_rate = sentinel.get("win_rate") or 0.0
     sharpe   = sentinel.get("sharpe_ratio") or 0.0
     trades   = sentinel.get("total_trades") or 0
     vix      = macro.get("vix_delta")
     spy      = macro.get("spy_delta")
+
+    portfolio_section = _format_portfolio_composition(portfolio_composition or [])
 
     return f"""Necesito reemplazar el ticker para el siguiente Sentinel.
 
@@ -145,10 +265,13 @@ CONTEXTO DE MERCADO (últimas 6h):
 NOTICIAS RELEVANTES:
 {_format_news(macro.get('recent_titles', []))}
 
+PORTAFOLIO AGREGADO (composición actual de los Sentinels activos):
+{portfolio_section}
+
 TICKERS YA ROTADOS POR ESTE SENTINEL (sin éxito):
 {_format_failed(failed_tickers)}
 
-Propón el mejor ticker de reemplazo siguiendo el schema."""
+Propón el mejor ticker de reemplazo siguiendo el schema. Considera explícitamente la diversificación factorial del portafolio agregado en tu reasoning y poblá el campo factor_exposure_analysis."""
 
 
 # =============================================================================
@@ -412,6 +535,34 @@ class UniverseSelector:
                 logger.warning(f"failed_tickers falló: {e}")
                 failed = []
 
+            # Composición del portafolio agregado (#UNIVERSE-FACTOR). Se aplana
+            # un Sentinel con varios tickers en filas separadas para que el
+            # resumen factorial cuente cada exposición. Reusa get_active_sentinels
+            # (no requiere helper nuevo).
+            portfolio_composition: list[dict] = []
+            try:
+                active = await self.historian.get_active_sentinels(self.owner_id)
+                for s in active:
+                    name = s.get("name") or "?"
+                    strat = s.get("strategy_type") or "?"
+                    tickers = s.get("tickers") or []
+                    if not tickers:
+                        portfolio_composition.append({
+                            "sentinel_codename": name,
+                            "current_ticker":    "(sin ticker)",
+                            "strategy_type":     strat,
+                        })
+                        continue
+                    for tk in tickers:
+                        portfolio_composition.append({
+                            "sentinel_codename": name,
+                            "current_ticker":    tk,
+                            "strategy_type":     strat,
+                        })
+            except Exception as e:
+                logger.warning(f"get_active_sentinels falló (portafolio vacío): {e}")
+                portfolio_composition = []
+
             user_prompt = build_user_prompt(
                 sentinel={
                     "name":          score.get("sentinel_name") or "?",
@@ -424,6 +575,7 @@ class UniverseSelector:
                 macro=macro,
                 failed_tickers=failed,
                 reason=trigger_reason,
+                portfolio_composition=portfolio_composition,
             )
 
             result = await self.claude.call_json(
@@ -439,6 +591,15 @@ class UniverseSelector:
         new_ticker  = parsed.get("recommended_ticker") if result["success"] else None
         candidates  = parsed.get("candidates") if result["success"] else []
         reasoning   = parsed.get("reasoning") if result["success"] else None
+        # factor_exposure_analysis es el campo nuevo del marco All Weather/AQR.
+        # Lo concatenamos al claude_reasoning antes de persistir para no
+        # requerir cambios de schema en rotation_decisions (la columna
+        # claude_reasoning es TEXT y soporta payload extendido).
+        factor_exposure = parsed.get("factor_exposure_analysis") if result["success"] else None
+        if factor_exposure and reasoning:
+            reasoning = f"{reasoning}\n\n[Factor exposure analysis]\n{factor_exposure}"
+        elif factor_exposure and not reasoning:
+            reasoning = f"[Factor exposure analysis]\n{factor_exposure}"
         confidence  = parsed.get("overall_confidence") if result["success"] else None
         status      = "pending" if (result["success"] and new_ticker) else "failed"
         notes       = result.get("error")
