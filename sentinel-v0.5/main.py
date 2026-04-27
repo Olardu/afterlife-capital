@@ -25,6 +25,8 @@ from config import (
     MIN_CAPITAL_PER_SENTINEL,
     OWNER_USERNAME,
     TIMEZONE,
+    UNIVERSE_SELECTION_CYCLE_TIMEOUT_SECONDS,
+    UNIVERSE_SELECTION_ENABLED,
     validate_config,
 )
 from correlation_guard import CorrelationGuard
@@ -221,6 +223,48 @@ async def initialize() -> dict:
             tickers     = [BASE_TICKER],
         ))
 
+    # 7. Universe Selector (#UNIVERSE-SELECTION) — opcional, behind feature flag.
+    # Si UNIVERSE_SELECTION_ENABLED=false (o ANTHROPIC_API_KEY ausente), seteamos
+    # universe_selector=None y main_loop lo skipea. No bloquea el bot.
+    universe_selector = None
+    if UNIVERSE_SELECTION_ENABLED:
+        try:
+            from claude_client     import ClaudeClient
+            from universe_selector import UniverseSelector
+            from email_service     import send_rotation_email
+
+            claude_client = ClaudeClient()
+
+            async with historian.pool.acquire() as conn:
+                owner_email = await conn.fetchval(
+                    "SELECT email FROM users WHERE user_id = $1", owner_id,
+                )
+
+            async def _email_sender(decision: dict) -> bool:
+                if not owner_email:
+                    return False
+                return await send_rotation_email(
+                    to_email=owner_email,
+                    decision=decision,
+                )
+
+            universe_selector = UniverseSelector(
+                historian      = historian,
+                claude_client  = claude_client,
+                owner_id       = owner_id,
+                email_sender   = _email_sender,
+            )
+            logger.info("Universe Selector habilitado (Claude API configurada).")
+        except RuntimeError as e:
+            # ANTHROPIC_API_KEY no configurada — feature degrada limpio.
+            logger.warning(f"Universe Selector no inicializado: {e}")
+            universe_selector = None
+        except Exception as e:
+            logger.error(f"Error al inicializar Universe Selector: {e}")
+            universe_selector = None
+    else:
+        logger.info("Universe Selector deshabilitado (UNIVERSE_SELECTION_ENABLED=false).")
+
     logger.info(f"Sistema listo — {len(sentinels)} Sentinel(s) activo(s).")
     return {
         "historian":         historian,
@@ -230,6 +274,7 @@ async def initialize() -> dict:
         "dispatcher":        dispatcher,
         "sentinels":         sentinels,
         "owner_id":          owner_id,
+        "universe_selector": universe_selector,
     }
 
 
@@ -252,6 +297,7 @@ async def main_loop(system: dict):
     """
     dispatcher: Dispatcher = system["dispatcher"]
     sentinels: list        = system["sentinels"]
+    universe_selector      = system.get("universe_selector")
 
     logger.info("Main loop iniciado. Esperando horario de mercado...")
 
@@ -291,6 +337,23 @@ async def main_loop(system: dict):
             await dispatcher.run_cycle(pending_signals=pending_signals)
         except Exception as e:
             logger.error(f"Error en Dispatcher.run_cycle: {e}")
+
+        # 3.5. Universe Selection (#UNIVERSE-SELECTION) — rotación automática
+        # de tickers degradados. Aislado con timeout y try/except amplio:
+        # un error o rate-limit de Claude NO debe interrumpir el bot.
+        if universe_selector is not None:
+            try:
+                await asyncio.wait_for(
+                    universe_selector.evaluate_all_sentinels(),
+                    timeout=UNIVERSE_SELECTION_CYCLE_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"Universe Selection timeout "
+                    f"({UNIVERSE_SELECTION_CYCLE_TIMEOUT_SECONDS}s) — skip este ciclo"
+                )
+            except Exception as e:
+                logger.exception(f"Error en Universe Selection (no fatal): {e}")
 
         # 4. Dormir hasta el próximo múltiplo de 15 minutos
         wait = _seconds_to_next_candle()
