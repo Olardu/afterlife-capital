@@ -119,7 +119,7 @@ UNIVERSE_SELECTION_ENABLED                = os.environ.get(
     "UNIVERSE_SELECTION_ENABLED", "true"
 ).lower() == "true"
 UNIVERSE_SELECTION_TIMEOUT_SECONDS        = float(os.environ.get(
-    "UNIVERSE_SELECTION_TIMEOUT_SECONDS", "30"
+    "UNIVERSE_SELECTION_TIMEOUT_SECONDS", "60"   # default 60s — subido tras test de latencia con system prompt nuevo (All Weather + AQR)
 ))
 UNIVERSE_SELECTION_MAX_COST_PER_CALL_USD  = float(os.environ.get(
     "UNIVERSE_SELECTION_MAX_COST_PER_CALL_USD", "0.20"
