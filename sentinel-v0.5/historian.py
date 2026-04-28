@@ -1454,14 +1454,26 @@ class Historian:
             raise
 
     async def get_active_pending_candidates(self, owner_id: UUID) -> list[dict]:
-        """Lista candidatos en watching (no expirados) para el owner."""
+        """
+        Lista candidatos en watching (no expirados) para el owner.
+
+        Incluye trigger_reason via LEFT JOIN con rotation_decisions para que
+        el Universe Selector pueda usarlo en el prompt de coordinación
+        ("MORPHEUS reclamó GLD por pre_decay_warning"). Backwards-compatible:
+        el endpoint admin /api/admin/candidates ignora trigger_reason si no
+        lo usa.
+        """
         sql = """
             SELECT pc.candidate_id, pc.sentinel_id, s.name AS sentinel_name,
                    pc.proposed_ticker, pc.proposed_at, pc.expires_at,
-                   pc.decision_id, pc.status
+                   pc.decision_id, pc.status,
+                   rd.trigger_reason
             FROM pending_candidates pc
             JOIN sentinels s ON s.sentinel_id = pc.sentinel_id
-            WHERE s.owner_id = $1 AND pc.status = 'watching'
+            LEFT JOIN rotation_decisions rd ON rd.decision_id = pc.decision_id
+            WHERE s.owner_id = $1
+              AND pc.status = 'watching'
+              AND pc.expires_at > NOW()
             ORDER BY pc.proposed_at DESC
         """
         try:

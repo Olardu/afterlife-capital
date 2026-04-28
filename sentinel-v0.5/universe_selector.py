@@ -225,6 +225,35 @@ def _format_portfolio_composition(portfolio: list[dict]) -> str:
     return body
 
 
+def _format_pending_watchlist(pending: list[dict]) -> str:
+    """
+    Renderiza el bloque de coordinación entre Sentinels (#UNIVERSE-COORD).
+    Si pending está vacío retorna "" — sin overhead en el prompt.
+    """
+    if not pending:
+        return ""
+    header = (
+        "\n\n[!] TICKERS PENDIENTES EN WATCHLIST "
+        "(reclamados por otros Sentinels en barridos recientes, aún no rotados):\n"
+    )
+    body = "\n".join(
+        f"- {p.get('sentinel_codename','?')} reclamó "
+        f"{p.get('proposed_ticker','?')} ({p.get('trigger_reason') or 'pre_decay_warning'})"
+        for p in pending
+    )
+    footer = (
+        "\n\nIMPORTANTE: si propones uno de estos tickers, varios Sentinels "
+        "terminarán rotando al mismo activo y se anula el beneficio de la "
+        "diversificación factorial. Considera alternativas que cubran "
+        "ambientes económicos similares pero con tickers distintos. Ejemplos: "
+        "si GLD ya está reclamado, GDX (gold miners) o SLV (silver) cubren "
+        "Ambientes 1+3; si TLT ya está reclamado, IEF (bonos intermedios) "
+        "cubre Ambiente 4 con menor duration; si XLP ya está reclamado, XLV "
+        "(healthcare) cubre Ambiente 3 defensivo."
+    )
+    return header + body + footer
+
+
 def build_user_prompt(
     *,
     sentinel: dict,
@@ -232,6 +261,7 @@ def build_user_prompt(
     failed_tickers: list[str],
     reason: str,
     portfolio_composition: Optional[list[dict]] = None,
+    pending_tickers_in_watchlist: Optional[list[dict]] = None,
 ) -> str:
     win_rate = sentinel.get("win_rate") or 0.0
     sharpe   = sentinel.get("sharpe_ratio") or 0.0
@@ -240,6 +270,7 @@ def build_user_prompt(
     spy      = macro.get("spy_delta")
 
     portfolio_section = _format_portfolio_composition(portfolio_composition or [])
+    pending_section   = _format_pending_watchlist(pending_tickers_in_watchlist or [])
 
     return f"""Necesito reemplazar el ticker para el siguiente Sentinel.
 
@@ -266,7 +297,7 @@ NOTICIAS RELEVANTES:
 {_format_news(macro.get('recent_titles', []))}
 
 PORTAFOLIO AGREGADO (composición actual de los Sentinels activos):
-{portfolio_section}
+{portfolio_section}{pending_section}
 
 TICKERS YA ROTADOS POR ESTE SENTINEL (sin éxito):
 {_format_failed(failed_tickers)}
@@ -563,6 +594,29 @@ class UniverseSelector:
                 logger.warning(f"get_active_sentinels falló (portafolio vacío): {e}")
                 portfolio_composition = []
 
+            # Coordinación entre Sentinels (#UNIVERSE-COORD). Listamos los
+            # pending_candidates 'watching' del owner para que Claude vea
+            # qué tickers ya reclamaron otros Sentinels en barridos
+            # recientes (incluyendo el actual: si MORPHEUS ya pasó por aquí
+            # 30s antes y reclamó GLD, NETRUNNER ahora lo ve). Filtramos
+            # el candidato del propio Sentinel para evitar autoreferencia
+            # (si ya tenía pending lo descarta el caller antes de llegar acá).
+            pending_tickers_in_watchlist: list[dict] = []
+            try:
+                pending = await self.historian.get_active_pending_candidates(self.owner_id)
+                self_name = score.get("sentinel_name") or ""
+                for p in pending:
+                    if p.get("sentinel_name") == self_name:
+                        continue
+                    pending_tickers_in_watchlist.append({
+                        "sentinel_codename": p.get("sentinel_name"),
+                        "proposed_ticker":   p.get("proposed_ticker"),
+                        "trigger_reason":    p.get("trigger_reason"),
+                    })
+            except Exception as e:
+                logger.warning(f"get_active_pending_candidates falló: {e}")
+                pending_tickers_in_watchlist = []
+
             user_prompt = build_user_prompt(
                 sentinel={
                     "name":          score.get("sentinel_name") or "?",
@@ -576,6 +630,7 @@ class UniverseSelector:
                 failed_tickers=failed,
                 reason=trigger_reason,
                 portfolio_composition=portfolio_composition,
+                pending_tickers_in_watchlist=pending_tickers_in_watchlist,
             )
 
             result = await self.claude.call_json(
