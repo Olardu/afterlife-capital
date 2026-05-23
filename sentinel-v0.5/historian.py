@@ -7,6 +7,7 @@
 import json
 import logging
 import math
+from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
@@ -250,7 +251,7 @@ class Historian:
         owner_id: UUID,
         ticker: str,
         signal_type: str,
-        price_at_signal: float,
+        price_at_signal: Decimal,
     ) -> UUID:
         """
         Inserta una señal en la tabla signals.
@@ -258,6 +259,10 @@ class Historian:
         Returns:
             signal_id del registro insertado.
         """
+        # Precio monetario → Decimal en todo el pipeline (#H-4). Conversión defensiva
+        # (acepta callers que aún pasen float durante la migración gradual).
+        price_at_signal = Decimal(str(price_at_signal))
+
         sql = """
             INSERT INTO signals (sentinel_id, owner_id, ticker, signal_type, price_at_signal)
             VALUES ($1, $2, $3, $4, $5)
@@ -280,9 +285,9 @@ class Historian:
         owner_id: UUID,
         ticker: str,
         side: str,
-        qty: float,
-        filled_price: Optional[float],
-        slippage: Optional[float],
+        qty: Decimal,
+        filled_price: Optional[Decimal],
+        slippage: Optional[Decimal],
         status: str,
         order_id: Optional[str] = None,
     ) -> UUID:
@@ -297,6 +302,11 @@ class Historian:
         Returns:
             trade_id del registro insertado.
         """
+        # qty/precios monetarios → Decimal (#H-4). Conversión defensiva (callers float ok).
+        qty = Decimal(str(qty))
+        filled_price = Decimal(str(filled_price)) if filled_price is not None else None
+        slippage = Decimal(str(slippage)) if slippage is not None else None
+
         sql = """
             INSERT INTO trades
                 (signal_id, sentinel_id, owner_id, ticker, side, qty,
@@ -324,8 +334,8 @@ class Historian:
         trade_id: Optional[UUID] = None,
         order_id: Optional[str] = None,
         status: str,
-        filled_price: Optional[float] = None,
-        slippage: Optional[float] = None,
+        filled_price: Optional[Decimal] = None,
+        slippage: Optional[Decimal] = None,
     ):
         """
         Actualiza el status de un trade PENDING → FILLED o CANCELLED.
@@ -338,6 +348,10 @@ class Historian:
             filled_price - price_at_signal (del signal original asociado).
         Si el trade no tiene signal_id asociado, slippage queda en None.
         """
+        # Precios monetarios → Decimal (#H-4). Conversión defensiva (callers float ok).
+        filled_price = Decimal(str(filled_price)) if filled_price is not None else None
+        slippage = Decimal(str(slippage)) if slippage is not None else None
+
         if trade_id is None and order_id is None:
             raise ValueError("Debe proveerse trade_id u order_id")
         if trade_id is not None and order_id is not None:
@@ -368,7 +382,8 @@ class Historian:
                         where_value,
                     )
                     if row and row["price_at_signal"] is not None:
-                        slippage = filled_price - float(row["price_at_signal"])
+                        # asyncpg devuelve Decimal para columnas NUMERIC → resta exacta (#H-4)
+                        slippage = filled_price - row["price_at_signal"]
 
                 await conn.execute(
                     f"""
@@ -425,8 +440,10 @@ class Historian:
         if total_trades == 0:
             return {"win_rate": 0.0, "sharpe_ratio": 0.0, "total_trades": 0}
 
+        # Cálculo en Decimal (precios monetarios, #H-4) y conversión a float al final:
+        # `returns` es un ratio adimensional usado en sharpe → float OK (§8.6).
         returns = [
-            (float(sell["filled_price"]) - float(buy["filled_price"])) / float(buy["filled_price"])
+            float((sell["filled_price"] - buy["filled_price"]) / buy["filled_price"])
             for buy, sell in pairs
         ]
         win_rate = sum(1 for r in returns if r > 0) / total_trades
@@ -1232,11 +1249,14 @@ class Historian:
         claude_model: Optional[str],
         claude_input_tokens: int,
         claude_output_tokens: int,
-        claude_cost_usd: float,
+        claude_cost_usd: Decimal,
         status: str = "pending",
         notes: Optional[str] = None,
     ) -> UUID:
         """Persiste una rotation_decision. Retorna decision_id."""
+        # Costo USD monetario → Decimal (#H-4). Conversión defensiva.
+        claude_cost_usd = Decimal(str(claude_cost_usd))
+
         sql = """
             INSERT INTO rotation_decisions
                 (sentinel_id, owner_id, trigger_reason,
