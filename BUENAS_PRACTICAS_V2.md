@@ -1,9 +1,16 @@
 # Manual de Buenas Prácticas v2.0
 
 **Autor:** Roman Alejandro  
-**Versión:** 2.2  
-**Fecha:** 13 de mayo de 2026  
+**Versión:** 2.3  
+**Fecha:** 23 de mayo de 2026  
 **Alcance:** Universal — aplica a todos los proyectos, lenguajes y frameworks.
+
+**Cambios v2.2 → v2.3 (23-may-2026):**
+- Nueva sección 8.6: Piso de testing para paths financieros críticos (gate pre-live).
+- Ampliación 10.2: Cadencia de commits (lección del lock huérfano + 50 archivos uncommitted del 13-23 may en Sentinel).
+- Ampliación 13: Layout del repo es extensión por proyecto (estructura de §2 es referencia, no obligatorio).
+- Sección 14 completada (estaba truncada).
+- Nueva sección 15: Automatización y Enforcement (pre-commit hooks + CI). Distinción "regla" vs "hook que la fuerza".
 
 **Cambios v2.1 → v2.2 (13-may-2026):**
 - Nueva sección 5.3: Tiempo y fechas en sistemas time-sensitive.
@@ -719,6 +726,38 @@ Comparar el rendimiento "por dólar deployado" contra el rendimiento "absoluto" 
 
 Reportar las dos métricas siempre. La primera mide la calidad del sistema. La segunda mide el costo de oportunidad de no haber deployado todo.
 
+### 8.6 Piso de testing para paths financieros críticos (gate pre-live)
+
+**Cuándo aplica:** sistemas que manejan dinero real (trading, pagos, custodia, settlement). La regla del 8.1 sigue vigente — no se busca 100% de cobertura genérica — pero los **paths financieros críticos** son la excepción y deben tener test antes de pasar a fase live.
+
+**Definición de "path financiero crítico":** TODA función que:
+
+- Calcule sizing/allocation de posiciones (`allocate_capital`, `calculate_position_size`).
+- Procese fills u órdenes (`process_signal`, `submit_order`, callbacks de fills).
+- Modifique el cache de posiciones abiertas o la representación de equity en memoria.
+- Calcule P&L, Sharpe, drawdown, equity ajustado.
+- Dispare kill switch, circuit breaker, parking brake o cualquier control de riesgo.
+- Manipule cash, buying power, allocation de capital entre estrategias.
+
+**Cobertura objetivo en estos paths: 100%.** Resto del código sigue regla genérica §8.1-8.4 (criterio del autor).
+
+**Por qué:**
+
+Los bugs en paths financieros no se manifiestan como "feature roto" — se manifiestan como dinero perdido, posiciones huérfanas, shorts accidentales, o métricas falseadas. El costo de detectar tarde es asimétrico vs el costo de mantener tests.
+
+**Caso de aplicación real (Sentinel, 23-may-2026):** el bug `#H-5b` (cache `open_positions` que se sobreescribía con `side='SELL'` en lugar de removerse tras SELL FILLED) generó **45 warnings "Posiciones fantasma" en 5 días** y dos intervenciones manuales (SPY 11-may, QQQ 15-may, costo neto $-12). Un test unitario sobre `_apply_fill_to_cache(ticker, status, position)` lo habría atrapado el primer día. El fix posterior (HANDOFF #6 de la sesión 23-may) refactorizó el helper específicamente para hacerlo testeable de forma aislada — patrón a replicar en cualquier path crítico.
+
+**Gate operativo:**
+
+Antes de transición a fase live (capital real), checklist:
+
+- [ ] Test unitario para cada función listada en "path financiero crítico" arriba.
+- [ ] Tests rojos antes del fix de cualquier bug financiero (TDD), verdes después.
+- [ ] Test de regresión por cada bug financiero resuelto previamente (no se debe poder reintroducir).
+- [ ] Cobertura ≥95% sobre módulos `dispatcher.py`, `historian.py`, módulo de cálculo de riesgo, callbacks de fills.
+
+Sin este checklist, NO se promueve a live. Es una regla durable, no una sugerencia.
+
 ---
 
 ## 9. Documentación
@@ -819,6 +858,7 @@ def enviar_mensaje_chat(self, hilo_id: int, contenido: str,
 - **Formato de mensaje:** `tipo: descripción corta` — ejemplo: `feat: agregar auto-título de hilos`
 - **Tipos:** `feat` (nueva funcionalidad), `fix` (corrección), `refactor`, `docs`, `test`, `chore`
 - **Nunca commitear:** `.env`, `node_modules/`, `__pycache__/`, `dist/`, `*.db`, archivos temporales.
+- **Cadencia:** commitear al cerrar cada cambio lógico completo. No acumular más de 24-48 hs sin commitear. **Lección del 13-23 may en Sentinel:** un `.git/index.lock` huérfano del 13-may bloqueó toda escritura git por 10 días sin que nadie lo detectara. Para el 23-may había ~50 archivos modificados sin commitear, contaminación cruzada de mayo, y casi se expone un `.env.bak` con secretos al hacer el commit grande. La falta de cadencia fue corresponsable del problema. Verificar `.git/` por locks huérfanos si `git commit` falla silenciosamente o si pasan días sin que el repo registre actividad esperada.
 
 ### 10.3 Line endings
 
@@ -927,13 +967,128 @@ Durante el período vas a sentir presión para "tocar el sistema cuando muestre 
 Este manual es la base universal. Cada proyecto puede tener un documento hijo con reglas específicas:
 
 - **Meridian:** `CLAUDE.md` contiene decisiones de UI (oklch tokens, tipografía), reglas de chat grupal, divergencias con Claude Design.
-- **AfterLife:** tendría sus propias reglas de endpoints, modelos de datos, flujos de usuario.
+- **AfterLife (Sentinel):** `sentinel-v0.5/CLAUDE.md` mantiene reglas específicas del bot (régimen NEUTRAL fijo, scheduler reporte diario flag, restricciones del período de observación, plan de 6 fases post-observación, etc.). El proyecto también tiene `teamwork/LOG.md` con coordinación bidireccional Cowork↔Code (ver §11.5 si existe, o memoria `project_cowork_code_protocol.md` de cada instancia).
 - **Proyectos futuros:** copian este manual y agregan su extensión.
 
 El hijo **nunca contradice** al padre. Si hay conflicto, el manual universal gana.
+
+### 13.1 Layout del repo es extensión por proyecto
+
+§2 da una **estructura de referencia** con `src/`, `tests/`, `docs/`, etc. **No es obligatorio.** Proyectos pueden ser:
+
+- **Flat:** ej. `afterlife-capital/sentinel-v0.5/dispatcher.py` directo, sin `src/`. Usual en proyectos chicos o cuando hay una sola "app" en el repo.
+- **Con `src/`:** ej. `meridian/src/agents/`, `meridian/src/api/`. Usual en proyectos medianos/grandes o con múltiples paquetes.
+- **Monorepo:** múltiples sub-proyectos con su propio layout, cada uno con su `PROJECT_MAP.md`.
+
+Cada proyecto **documenta su layout en `PROJECT_MAP.md`**. Si el layout difiere de §2, el `PROJECT_MAP.md` explica por qué y cómo. Lo importante es la coherencia interna y la legibilidad, no la fidelidad al template.
 
 ---
 
 ## 14. Checklist de Revisión
 
-Antes de dar por terminado un camb
+Antes de dar por terminado un cambio significativo, recorrer este checklist:
+
+**Diseño:**
+- [ ] ¿Cumple SOLID (§3)? Especialmente SRP — una sola responsabilidad por unidad.
+- [ ] Si toca dinero/equity/posiciones, ¿usa `Decimal` everywhere (no `float`)?
+- [ ] Si agrega un endpoint nuevo, ¿sigue el formato estándar de §6.2 (`{ data, meta }` o `{ error, codigo, detalle, status }`)?
+
+**Código:**
+- [ ] Nombres descriptivos (§4.1). Booleanos con prefijo `es_/tiene_/puede_`. Funciones con verbo.
+- [ ] Funciones ≤30 líneas, ≤4 parámetros (§4.2).
+- [ ] Sin magic numbers (§4.5).
+- [ ] Errores específicos con logging y propagación adecuada (§4.6).
+- [ ] Sin código muerto, sin imports sin usar (§4.4).
+
+**Persistencia y seguridad:**
+- [ ] Queries parametrizadas, sin concatenación de strings (§7.4).
+- [ ] Inputs validados en servidor (§7.2).
+- [ ] `.env`, `client_secret_*`, `*.dump`, backups in-place excluidos del repo (§7.1 + `.gitignore`).
+- [ ] Si es repo público, **audit de archivos sensibles** antes de push (PII, dumps DB, inventarios, code-outputs, ZIPs binarios sin auditar).
+
+**Tests:**
+- [ ] Lógica de negocio crítica testeada (§8.1-8.2).
+- [ ] **Si toca path financiero crítico, cobertura objetivo 100% (§8.6).**
+- [ ] Edge cases cubiertos (inputs vacíos, ATR=0, qty=0, error de API externa).
+- [ ] Tests TDD: rojo → fix → verde demostrado.
+
+**Documentación:**
+- [ ] `CLAUDE.md` del proyecto actualizado (§9.1).
+- [ ] `CHANGELOG.md` con entrada nueva (§9.3).
+- [ ] `PROJECT_MAP.md` actualizado si se agregaron/eliminaron archivos (§9.2).
+- [ ] Docstrings en funciones públicas (§9.4).
+
+**Control de cambios:**
+- [ ] Backup pre-edit catalogado en `backups/YYYY-MM-DD/` si los cambios son significativos (§10.1).
+- [ ] Commit atómico con mensaje formato `tipo: descripción` en español (§10.2).
+- [ ] **Cadencia respetada:** no acumular ≥48 hs sin commitear (§10.2).
+- [ ] Line endings consistentes con `.gitattributes` del proyecto (§10.3).
+
+**Si el proyecto está en período de validación (§10.4):**
+- [ ] El cambio cae en "PERMITIDO" del documento del proyecto.
+- [ ] Si es excepción, está documentada con justificación + marca de datos + decisión sobre contador.
+
+---
+
+## 15. Automatización y Enforcement
+
+**Principio rector:** una regla escrita en el manual que depende de criterio humano sesión a sesión se viola eventualmente. La diferencia entre "regla" y "regla efectiva" es el **hook que la fuerza automáticamente**.
+
+### 15.1 Por qué existe esta sección
+
+Casos reales de Sentinel (sesión 23-may-2026) que motivaron esta sección:
+
+- `.env.bak.131426` con credenciales reales casi commiteado y pusheado a repo público. Lo cazó Code manualmente al revisar el staging. Un hook `gitleaks` o `detect-secrets` lo habría rechazado automáticamente sin necesidad de memoria del operador.
+- `.git/index.lock` huérfano del 13-may bloqueó commits 10 días. Un check pre-commit que verifique el estado del repo lo habría detectado al primer intento bloqueado.
+- 72 warnings de line-endings (`LF→CRLF`) sin `.gitattributes`. Un check de configuración del repo lo habría señalado.
+- Backups in-place (`*.bak.*`, `*.backup_*`) entraron al staging porque el `.gitignore` no los cubría. Un hook que liste archivos staged contra patterns sospechosos lo atrapa.
+- Path financiero crítico (`#H-5b`) sin test unitario por 4 semanas. Un check de CI que falle si módulos `dispatcher.py`/`historian.py` bajan de X% cobertura lo previene.
+
+En todos los casos, el manual ya tenía reglas que cubrían el escenario. El problema fue que las reglas dependían del operador recordándolas en cada sesión.
+
+### 15.2 Stack mínimo recomendado
+
+**Pre-commit hooks** (`.pre-commit-config.yaml` en raíz del repo, instalado via `pre-commit install` después del clone):
+
+| Hook | Propósito | Razón |
+|---|---|---|
+| `gitleaks` o `detect-secrets` | Detectar API keys, tokens, passwords en staged files | Cierra el caso `.env.bak` |
+| `check-added-large-files` | Bloquear archivos > 500KB | Cierra el caso DB dumps, ZIPs binarios |
+| `check-merge-conflict` | Detectar `<<<<<<< HEAD` huérfanos | Cierra merges mal cerrados |
+| `end-of-file-fixer` + `trailing-whitespace` | Normalizar finales de línea/whitespace | Cierra el caso line-endings |
+| `ruff` (Python) | Linting + auto-fix | Cierra estilo, imports sin usar, magic numbers detectables |
+| `black` (Python) | Formato consistente | Cierra debates de estilo |
+| `pytest --collect-only` | Verificar que los tests al menos colectan sin error | Cierra tests rotos por refactor |
+
+**CI básico** (GitHub Actions u otro, archivo `.github/workflows/ci.yml`):
+
+| Check | Propósito |
+|---|---|
+| Ejecutar suite de tests completa | Bloquear push/merge si rompe |
+| Cobertura ≥ piso definido en módulos críticos (§8.6) | Bloquear bajadas de cobertura en paths financieros |
+| Audit de archivos sensibles en commits del PR | Doble red ante secretos |
+| Lint completo (ruff + black --check) | Asegurar que pre-commit corrió |
+
+### 15.3 Anti-patrón a evitar
+
+"Lo arreglo a mano esta vez, después configuro el hook." En la práctica el hook nunca se configura, y el próximo operador comete el mismo error con peor resultado. Si una regla se viola dos veces, la tercera vez es configurar el enforcement, no escribir más documentación.
+
+### 15.4 Cuándo aplicar enforcement
+
+- **Sí, desde el día uno** si el proyecto va a tener varios contribuidores (incluyendo instancias de IA distintas).
+- **Sí, antes de transición a producción** si hay capital real, datos sensibles, o consecuencias regulatorias.
+- **Opcional al principio** si es un proyecto experimental personal sin secretos ni paths críticos. Pero documentar la decisión de NO hacerlo.
+
+### 15.5 Implementación es trabajo separado
+
+Esta sección define la spec. **Implementar pre-commit + CI en un proyecto existente es trabajo propio**, no un cambio cosmético. Estimación: 2-3 sesiones de ingeniería:
+
+1. Setup base (`.pre-commit-config.yaml`, instalar tools, primera corrida cleanup).
+2. Setup CI (workflow YAML, configurar secrets en GitHub, primera corrida verde).
+3. Iteración (ajustar exclusiones, calibrar pisos de cobertura, fixear flakies).
+
+Agendar como ítem de Fase 2 (auditoría) cuando el proyecto entre a esa fase. No bloquear features urgentes por esto.
+
+---
+
+*Manual de Buenas Prácticas — fin del documento. v2.3, 23 de mayo de 2026.*
