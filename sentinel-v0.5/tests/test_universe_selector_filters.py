@@ -15,13 +15,19 @@ import asyncio
 import os
 import sys
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 from alpaca.trading.enums import AssetStatus
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from universe_selector import SYSTEM_PROMPT, _filter_candidate_eligibility
+from universe_selector import (
+    SYSTEM_PROMPT,
+    UniverseSelector,
+    _BLACKLIST,
+    _filter_candidate_eligibility,
+)
 
 
 def _run(coro):
@@ -82,3 +88,109 @@ def test_system_prompt_contiene_lista_negra():
     for simbolo in ("SQQQ", "TQQQ", "UVXY", "VXX", "USO", "BITI"):
         assert simbolo in SYSTEM_PROMPT, f"{simbolo} falta en la lista negra del prompt"
     assert "PROHIBIDO PROPONER" in SYSTEM_PROMPT
+
+
+# =============================================================================
+# Cableo POST-Claude en _request_candidate — defensa doble (blacklist + filtro)
+# =============================================================================
+
+def _claude_result(ticker):
+    """Resultado exitoso de claude.call_json proponiendo `ticker`."""
+    return {
+        "success": True,
+        "parsed": {
+            "recommended_ticker": ticker,
+            "candidates": [],
+            "reasoning": "razonamiento de prueba",
+            "overall_confidence": 0.8,
+            "factor_exposure_analysis": "cubre Ambiente 2",
+        },
+        "error": None,
+        "model": "claude-sonnet-4-6",
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "cost_usd": 0.01,
+    }
+
+
+def _selector(claude_ticker):
+    """UniverseSelector con historian + claude mockeados; Claude propone claude_ticker."""
+    hist = MagicMock()
+    hist.get_recent_macro_context = AsyncMock(return_value={
+        "risk_score": 0.0, "circuit_breaker": False,
+        "vix_delta": None, "spy_delta": None, "recent_titles": [],
+    })
+    hist.get_failed_tickers_for_sentinel = AsyncMock(return_value=[])
+    hist.get_active_sentinels = AsyncMock(return_value=[])
+    hist.get_active_pending_candidates = AsyncMock(return_value=[])
+    hist.save_rotation_decision = AsyncMock(return_value=uuid4())
+    hist.save_pending_candidate = AsyncMock()
+
+    claude = MagicMock()
+    claude.call_json = AsyncMock(return_value=_claude_result(claude_ticker))
+
+    sel = UniverseSelector(
+        historian=hist, claude_client=claude, owner_id=uuid4(), email_sender=None,
+    )
+    return sel, hist
+
+
+def _score(ticker="OLDT"):
+    return {
+        "sentinel_id": uuid4(), "ticker": ticker, "sentinel_name": "S-X TEST",
+        "strategy_type": "macd_volume", "win_rate": 0.3,
+        "sharpe_ratio": -0.5, "total_trades": 20,
+    }
+
+
+# --- Caso 6: ticker en blacklist → bloqueado, fail-cerrada ------------------
+def test_request_candidate_bloquea_ticker_en_blacklist():
+    assert "SQQQ" in _BLACKLIST  # precondición
+    sel, hist = _selector("SQQQ")
+    # SQQQ se bloquea por lista negra SIN tocar Alpaca.
+    result = _run(sel._request_candidate(_score(), trigger_reason="decay_confirmed"))
+    assert result is None  # fail-cerrada, no rota
+    _, kwargs = hist.save_rotation_decision.call_args
+    assert kwargs["status"] == "failed"
+    assert kwargs["new_ticker"] is None
+    assert "blocked_blacklist" in kwargs["claude_reasoning"]
+
+
+# --- Caso 7: ticker no fractionable → bloqueado por filtro técnico ----------
+def test_request_candidate_bloquea_ticker_no_elegible():
+    sel, hist = _selector("XYZ")
+    fake_client = MagicMock()
+    fake_client.get_asset = MagicMock(return_value=_asset(fractionable=False))
+    with patch("alpaca.trading.client.TradingClient", return_value=fake_client):
+        result = _run(sel._request_candidate(_score(), trigger_reason="decay_confirmed"))
+    assert result is None
+    _, kwargs = hist.save_rotation_decision.call_args
+    assert kwargs["status"] == "failed"
+    assert "blocked_eligibility" in kwargs["claude_reasoning"]
+    assert "not_fractionable" in kwargs["claude_reasoning"]
+
+
+# --- Caso 8: ticker válido → procede normalmente (no bloquea) ---------------
+def test_request_candidate_permite_ticker_valido():
+    sel, hist = _selector("MSFT")
+    fake_client = MagicMock()
+    fake_client.get_asset = MagicMock(return_value=_asset())
+    with patch("alpaca.trading.client.TradingClient", return_value=fake_client):
+        result = _run(sel._request_candidate(_score(), trigger_reason="decay_confirmed"))
+    assert result is not None  # decision_id devuelto, rotación procede
+    _, kwargs = hist.save_rotation_decision.call_args
+    assert kwargs["status"] == "pending"
+    assert kwargs["new_ticker"] == "MSFT"
+
+
+# --- Caso 9: falla de red en get_asset → fail-cerrada -----------------------
+def test_request_candidate_falla_red_alpaca_es_fail_cerrada():
+    sel, hist = _selector("ABCD")
+    fake_client = MagicMock()
+    fake_client.get_asset = MagicMock(side_effect=Exception("connection reset"))
+    with patch("alpaca.trading.client.TradingClient", return_value=fake_client):
+        result = _run(sel._request_candidate(_score(), trigger_reason="decay_confirmed"))
+    assert result is None
+    _, kwargs = hist.save_rotation_decision.call_args
+    assert kwargs["status"] == "failed"
+    assert "asset_lookup_failed" in kwargs["claude_reasoning"]

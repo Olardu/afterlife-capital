@@ -37,6 +37,25 @@ from config import (
 logger = logging.getLogger("sentinel.universe_selector")
 
 
+# Lista negra de productos prohibidos para rotación (defensa en código).
+# Espejo de la sección "PROHIBIDO PROPONER" del SYSTEM_PROMPT: el prompt es
+# prevención (guía a Claude), este set es enforcement. Si Claude propone uno
+# a pesar del prompt, `_request_candidate` lo bloquea (fail-cerrada) y deja el
+# motivo en rotation_decisions.claude_reasoning para auditoría.
+_BLACKLIST = frozenset({
+    # Leveraged inverse ETFs
+    "SQQQ", "SOXS", "TZA", "SDS", "FAZ",
+    # Leveraged long ETFs
+    "TQQQ", "UPRO", "SPXL", "TNA", "FAS",
+    # Volatility ETFs/ETNs
+    "UVXY", "VIXY", "VXX", "SVXY",
+    # Commodity futures con contango/decay
+    "USO", "UNG", "DBA",
+    # Inverse single-stock
+    "BITI", "ETHU",
+})
+
+
 # =============================================================================
 # PROMPTS
 # =============================================================================
@@ -592,6 +611,40 @@ class UniverseSelector:
         return "rotation"
 
     # ---------------------------------------------------------------------
+    # Defensa doble POST-Claude (#UNIVERSE-FILTER)
+    # ---------------------------------------------------------------------
+    async def _screen_candidate(self, ticker: str) -> Optional[str]:
+        """
+        Valida un ticker propuesto por Claude antes de aceptarlo como rotación.
+        Defensa en dos capas, fail-cerrada:
+
+            1. Lista negra en código (`_BLACKLIST`) — enforcement del prompt.
+            2. Elegibilidad técnica vía Alpaca (`_filter_candidate_eligibility`).
+
+        Returns:
+            None si el ticker pasa (se puede rotar), o un str con el motivo de
+            bloqueo (prefijo `blocked_blacklist` / `blocked_eligibility`) que
+            queda registrado para auditoría.
+        """
+        if ticker.upper() in _BLACKLIST:
+            return (
+                f"blocked_blacklist: {ticker} está en lista negra "
+                f"(leveraged/decay/inverse); Claude lo propuso a pesar del prompt"
+            )
+
+        # Cliente Alpaca local por función (patrón del codebase: api.py,
+        # dispatcher.py, reconcile_pending_trades). No se inyecta en __init__.
+        from alpaca.trading.client import TradingClient
+        from config import ALPACA_API_KEY, ALPACA_SECRET_KEY
+
+        client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
+        eligibility = await _filter_candidate_eligibility(ticker, client)
+        if not eligibility["eligible"]:
+            return f"blocked_eligibility: {ticker} — {eligibility['reason']}"
+
+        return None
+
+    # ---------------------------------------------------------------------
     # Llamada a Claude
     # ---------------------------------------------------------------------
     async def _request_candidate(
@@ -716,6 +769,24 @@ class UniverseSelector:
             reasoning = f"{reasoning}\n\n[Factor exposure analysis]\n{factor_exposure}"
         elif factor_exposure and not reasoning:
             reasoning = f"[Factor exposure analysis]\n{factor_exposure}"
+
+        # Defensa doble POST-Claude (#UNIVERSE-FILTER, fail-cerrada): si Claude
+        # propuso un ticker pese al prompt, lo bloqueamos en código. El bloqueo
+        # se persiste como decisión 'failed' (new_ticker → None) con el motivo
+        # en claude_reasoning para auditoría; no se crea pending ni se rota,
+        # se reintenta el próximo ciclo.
+        block_reason = await self._screen_candidate(new_ticker) if new_ticker else None
+        if block_reason is not None:
+            logger.error(
+                f"Universe Selection: candidato '{new_ticker}' bloqueado "
+                f"(sentinel={sentinel_id}/{ticker}) — {block_reason}"
+            )
+            reasoning = (
+                f"[BLOQUEADO POST-Claude: {block_reason}]\n\n{reasoning}"
+                if reasoning else f"[BLOQUEADO POST-Claude: {block_reason}]"
+            )
+            new_ticker = None
+
         confidence  = parsed.get("overall_confidence") if result["success"] else None
         status      = "pending" if (result["success"] and new_ticker) else "failed"
         notes       = result.get("error")
