@@ -13,6 +13,7 @@ client_secret_*.json
 **/__pycache__/
 **/*.pyc
 **/*.pyo
+**/.pytest_cache/
 
 # === Logs y bases de datos ===
 **/logs/*.log
@@ -54,6 +55,8 @@ sentinel-v0.5/backups/inventory_*
 sentinel-v0.5/inventory_*.txt
 backups/**/config.py.*
 backups/**/sentinel-v0.5_CLAUDE.md.bak*
+# general: cualquier backup de código .py (supera la lista per-file frágil)
+backups/**/*.py.*
 
 # === Code outputs (logs de sesiones de Claude Code) ===
 code-outputs/

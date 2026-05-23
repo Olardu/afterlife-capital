@@ -7,6 +7,7 @@
 import asyncio
 import logging
 import math
+from decimal import Decimal
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -135,7 +136,7 @@ class CorrelationGuard:
     async def evaluate_signal(
         self,
         incoming_ticker: str,
-        incoming_qty: float,
+        incoming_qty: Decimal,
         open_positions: list[dict],
         performance_scores: list[dict],
     ) -> dict:
@@ -144,7 +145,8 @@ class CorrelationGuard:
 
         Parámetros:
             incoming_ticker:   ticker de la señal a evaluar
-            incoming_qty:      tamaño de posición propuesto por el Dispatcher
+            incoming_qty:      tamaño de posición propuesto por el Dispatcher (Decimal;
+                               se convierte defensivamente si un caller aún pasa float)
             open_positions:    [{ticker, qty, sentinel_id}, ...]
             performance_scores: [{sentinel_id, ticker, sharpe_ratio}, ...]
                                usado para priorizar señales (descendente por sharpe)
@@ -163,12 +165,16 @@ class CorrelationGuard:
         Retorna:
             {
                 "approved":        bool,
-                "original_qty":    float,
-                "adjusted_qty":    float,
+                "original_qty":    Decimal,
+                "adjusted_qty":    Decimal,
                 "avg_correlation": float,
                 "reason":          str   # "approved" | "reduced" | "discarded_high_correlation"
             }
         """
+        # qty es monetaria → Decimal en todo el pipeline (#H-4). Conversión defensiva:
+        # acepta callers que aún pasen float durante la migración gradual del dispatcher.
+        incoming_qty = Decimal(str(incoming_qty))
+
         if not open_positions:
             logger.debug(f"Sin posiciones abiertas — señal {incoming_ticker} aprobada directamente.")
             return {
@@ -245,9 +251,9 @@ class CorrelationGuard:
 
         # Reducción proporcional — cuanto más cerca de 1.0, más se reduce
         reduction_factor = 1.0 - (avg_correlation - CORRELATION_THRESHOLD) / (1.0 - CORRELATION_THRESHOLD)
-        adjusted_qty     = incoming_qty * reduction_factor
+        adjusted_qty     = incoming_qty * Decimal(str(reduction_factor))
 
-        if adjusted_qty < MIN_POSITION_SIZE:
+        if adjusted_qty < Decimal(MIN_POSITION_SIZE):
             logger.info(
                 f"Señal {incoming_ticker} DESCARTADA — "
                 f"avg_corr={avg_correlation:.4f} qty ajustada={adjusted_qty:.4f} "
@@ -256,7 +262,7 @@ class CorrelationGuard:
             return {
                 "approved":        False,
                 "original_qty":    incoming_qty,
-                "adjusted_qty":    0.0,
+                "adjusted_qty":    Decimal("0"),
                 "avg_correlation": avg_correlation,
                 "reason":          "discarded_high_correlation",
             }
