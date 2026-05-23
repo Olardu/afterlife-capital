@@ -1,0 +1,97 @@
+# Instrucciones permanentes para Claude Code
+
+## Idioma
+Siempre responder en español, sin excepción.
+
+## Al iniciar cualquier sesión — obligatorio
+1. Leer `C:\Users\roman\.claude\projects\C--Users-roman-Nueva-Ruta\memory\MEMORY.md`
+2. Leer los archivos de memoria relevantes según el contexto de la conversación
+3. Si hay un CLAUDE.md en el proyecto activo, leerlo también para estar al día
+4. Confirmarle a Roman qué encontraste y desde qué punto retomás
+
+## Al cerrar cualquier sesión — obligatorio
+1. Actualizar el archivo de memoria correspondiente con lo que se avanzó, lo que se planteó y el próximo paso concreto
+2. Actualizar el CLAUDE.md del proyecto activo con: estado actual, tareas completadas, tareas pendientes, bugs conocidos, decisiones tomadas
+3. Sincronizar Google Drive: `! powershell -File "C:/Users/roman/Nueva Ruta/sync-drive.ps1"`
+4. Confirmarle a Roman qué se guardó antes de despedirse
+
+## CLAUDE.md por proyecto — regla permanente
+En cada repositorio de proyecto activo, mantener un archivo CLAUDE.md actualizado con:
+- **Nombre y propósito** del proyecto
+- **Stack tecnológico**
+- **Estado actual** (qué funciona, qué no)
+- **Decisiones de arquitectura** tomadas y por qué
+- **Tareas completadas**
+- **Tareas pendientes**
+- **Problemas conocidos**
+- **Contexto importante** para retomar el trabajo
+
+Actualizar con cada commit relevante o cambio significativo. Leer al iniciar trabajo en el proyecto.
+
+## Autonomía
+Operar con el mayor nivel de autonomía posible:
+- Leer, editar y crear archivos sin pedir confirmación
+- Ejecutar comandos de desarrollo (python, pip, npm, git) sin pedir confirmación
+- Tomar decisiones de implementación menores sin consultar
+- Solo pedir confirmación antes de: eliminar archivos, hacer push a repositorios remotos, o acciones irreversibles de alto impacto
+
+## Proyectos activos
+- **MERIDIAN** — `C:\Users\roman\Nueva Ruta\meridian\` — plataforma de orquestación multi-agente (Flask + React)
+- Otros proyectos en este directorio pueden aparecer — leer memoria para contexto
+
+## Perfil del operador
+Roman. Trabaja en Windows 11. Nivel técnico alto. Prefiere respuestas cortas y directas. No explicar lo obvio.
+
+---
+
+## División Cowork↔Code (añadida 2026-05-23)
+
+**Contexto:** Cowork (Roma — instancia de Claude en Cowork desktop) y Claude Code colaboran en proyectos donde ambos tienen acceso al filesystem pero memoria persistente separada. El protocolo handoff/report es el único canal de comunicación entre los dos.
+
+### Reglas (proyecto Sentinel / afterlife-capital)
+
+**1. División por tipo de trabajo:**
+
+- **Cowork** piensa, escribe `.md` de proyecto, lee logs/DB/Alpaca, prueba via Claude in Chrome, conversa con Roman.
+- **Code** edita código fuente (`.py`, `.js`, `.html`, `.css`), corre scripts bash, ejecuta tests, hace commits locales, pushea a GitHub **solo con luz verde de Cowork**, ejecuta `sync-drive.ps1` al cerrar sesión.
+
+**2. Archivos que Code NO toca** (los mantiene Cowork):
+
+- `CHANGELOG.md`, `TECHDEBT.md`, `NEXT_ITERATION.md`, `OBSERVATION_PERIOD.md` (raíz del proyecto)
+- `BUENAS_PRACTICAS_V2.md`, `PROTOCOL_SESSION.md` (manuales universales)
+- `dashboard/CHANGELOG-UI.md`
+- Memorias persistentes de Cowork (otro filesystem, no accesibles a Code de todas formas)
+
+Si Code identifica que uno de estos archivos requiere cambio, lo propone en el REPORT, no lo edita.
+
+**3. Archivos que Code SIGUE manteniendo** (regla preexistente):
+
+- `CLAUDE.md` del proyecto activo (ej. `sentinel-v0.5/CLAUDE.md`)
+- Este `CLAUDE.md` global (instrucciones permanentes)
+- Su propia `MEMORY.md` en `C:\Users\roman\.claude\projects\...\memory\MEMORY.md`
+
+**4. Archivos compartidos** (cualquiera puede editar, coordinar via handoff):
+
+- `API_REFERENCE.md`
+- `PROJECT_MAP.md`
+
+**5. Protocolo handoff/report:**
+
+- Cowork escribe `HANDOFF_TO_CODE.md` (raíz del proyecto) con objetivo + contexto + restricciones + criterios de aceptación + qué reportar.
+- Code lee, ejecuta, escribe `REPORT_FROM_CODE.md` con archivos tocados + paths de backups + validaciones + hash del commit local + hallazgos + acciones pendientes para Cowork/Roman.
+- **Solo un handoff vivo a la vez.** Cuando se cierra, Cowork archiva ambos archivos en `backups/YYYY-MM-DD/handoffs/` antes de escribir el siguiente.
+- **Push remoto requiere HANDOFF tipo `PUSH_APROBADO` de Cowork** con el hash exacto a pushear. Sin ese handoff, Code commitea localmente pero NO pushea, esperando validación de Cowork.
+
+**6. DB y cuenta Alpaca:** ninguna de las dos instancias modifica autónomamente. Proponen SQL/comandos en el HANDOFF (Cowork) o REPORT (Code), Roman ejecuta.
+
+**7. Memoria separada (CRÍTICO):** Cowork y Code **NO comparten** `MEMORY.md`. Cada uno tiene la suya en filesystems distintos. Si Cowork descubre algo importante (ej. un bug, una restricción nueva, contexto reciente del bot), debe escribirlo explícitamente en el HANDOFF — no asumir que Code lo sabrá leyendo memoria.
+
+### Cuándo se aplica
+
+Todo trabajo en proyectos donde Cowork está activo. Hoy: `afterlife-capital`. Otros proyectos sin Cowork siguen el flujo normal de Code sin restricciones adicionales.
+
+### Cómo iniciar trabajo cuando Cowork está activo
+
+1. Al recibir instrucción de trabajar en `afterlife-capital`, leer `HANDOFF_TO_CODE.md` en la raíz del proyecto.
+2. Si hay un handoff PENDIENTE, ejecutar siguiendo las reglas de arriba.
+3. Si no hay handoff o está COMPLETADO/ARCHIVADO, esperar instrucción explícita de Roman.

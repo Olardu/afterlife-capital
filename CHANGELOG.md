@@ -5,6 +5,50 @@ All notable changes to Afterlife Capital — Sentinel v0.5 are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 2026-05-23 (tarde) — Migración al protocolo teamwork/LOG.md
+
+### Added
+
+- **`teamwork/LOG.md`** — canal bidireccional Cowork ↔ Code, cronológico, append-only,
+  compacto (entradas tipo `[YYYY-MM-DD HH:MM AUTOR TAG] mensaje 1-5 líneas`).
+  Reemplaza el protocolo handoff/report en raíz (que llegó a ~250 líneas por
+  handoff y consumía muchos tokens). Roman lee/intercede cuando quiere.
+
+### Changed
+
+- **`HANDOFF_TO_CODE.md` y `REPORT_FROM_CODE.md` en raíz** vaciados a placeholders
+  con puntero a `teamwork/LOG.md`. Mantenidos como compatibilidad para no
+  confundir a quien busque el flujo viejo.
+
+### Deprecated
+
+- **Protocolo handoff/report en raíz.** Histórico de los 5 ciclos del 2026-05-23
+  archivado en `backups/2026-05-23/handoffs/`. Para tareas grandes con
+  especificación tipo handoff (criterios de aceptación, restricciones múltiples)
+  se sigue usando un archivo en `backups/YYYY-MM-DD/handoffs/HANDOFF_##.md`
+  referenciado desde el LOG.
+- **`BUENAS_PRACTICAS.md` v1** (último update 6-may) — superado desde el 13-may
+  por `BUENAS_PRACTICAS_V2.md` v2.x. Code lo manda a papelera de Windows en
+  HANDOFF de migración (rescatable desde Explorer si hace falta).
+
+### Decisions
+
+- **NO mover** `BUENAS_PRACTICAS_V2.md` ni `PROTOCOL_SESSION.md` fuera del repo.
+  Razón: `sentinel-v0.5/CLAUDE.md` + otras docs los referencian con paths
+  relativos; moverlos rompería referencias. Hoy son "manuales universales que
+  físicamente viven en afterlife-capital/". Cuando aparezca un segundo proyecto
+  activo que también los use, reevaluamos.
+- **Patrón forward para deletes:** mandar a papelera de Windows vía PowerShell,
+  no `rm` permanente. Roman objetó el delete permanente como "feo".
+
+### Notes
+
+- Próxima entrada del LOG (post `PUSH-OK`) arranca Fase 1: snapshot del bot al
+  23-may + instalar QuantStats (`#HE-1`) + reporte balance.
+- Objetivo del fin de semana: v0.6 corriendo el martes (decidido por Roman).
+
+---
+
 ## [Unreleased] — 2026-05-23 — Cierre anticipado del período de observación
 
 ### Closed
