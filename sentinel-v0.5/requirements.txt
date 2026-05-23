@@ -12,3 +12,5 @@ authlib>=1.7.0
 itsdangerous>=2.2.0
 httpx>=0.28.0
 anthropic>=0.78.0
+# Reporte de balance del período de observación (Fase 1). Pin exacto (#H-5b/Fase1).
+quantstats==0.0.81

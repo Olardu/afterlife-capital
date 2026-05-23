@@ -404,14 +404,12 @@ class Dispatcher:
             signal_id = None
             trade_id  = None
 
-        # Actualizar posiciones locales si se ejecutó
-        if order_result.get("status") == "FILLED":
-            self.open_positions[ticker] = {
-                "ticker":      ticker,
-                "qty":         final_qty,
-                "side":        side,
-                "sentinel_id": sentinel_id,
-            }
+        # Actualizar el cache local de posiciones según el resultado del fill (#H-5b).
+        self._apply_fill_to_cache(
+            ticker,
+            order_result.get("status"),
+            {"ticker": ticker, "qty": final_qty, "side": side, "sentinel_id": sentinel_id},
+        )
 
         # PENDING (limit orders en background, FIX #H-6) NO se cuenta como aprobada
         # hasta que el background task confirme FILLED via update_trade_status.
@@ -428,6 +426,27 @@ class Dispatcher:
             "trade_id":     trade_id,
             "qty_executed": final_qty if approved else 0.0,
         }
+
+    def _apply_fill_to_cache(self, ticker: str, status: str, position: dict) -> None:
+        """Sincroniza el cache `open_positions` tras un fill (#H-5b).
+
+        En un SELL FILLED la posición se cierra en Alpaca, así que debe REMOVERSE
+        del cache. Antes se sobreescribía con side='SELL', dejando entradas fantasma
+        que el sync con Alpaca marcaba como desincronización y que habilitaban shorts
+        accidentales (incidentes SPY 11-may y QQQ 15-may; 45 warnings 18-22 may
+        confirmaron que el bug era crónico). Solo un fill confirmado muta el cache.
+
+        Args:
+            ticker: símbolo operado.
+            status: estado del fill que devolvió Alpaca; solo "FILLED" muta el cache.
+            position: payload a cachear en un BUY ({ticker, qty, side, sentinel_id}).
+        """
+        if status != "FILLED":
+            return
+        if position["side"] == "SELL":
+            self.open_positions.pop(ticker, None)
+        else:
+            self.open_positions[ticker] = position
 
     # -------------------------------------------------------------------------
     # Ejecución de órdenes
