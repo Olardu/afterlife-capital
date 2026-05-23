@@ -74,11 +74,25 @@ Si la compatibilidad estadística es similar entre dos candidatos, **prefiere el
 
 ## Restricciones operativas (Alpaca paper trading)
 
-- Universo permitido: US stocks, ETFs (incluyendo GLD, TLT, IEF, VIXY, sectoriales XL*, commodities ETFs), crypto (BTC/USD, ETH/USD, etc.).
-- NUNCA propongas penny stocks (precio < $10 USD).
-- NUNCA propongas activos con volumen diario promedio < 1M shares (o equivalente en crypto).
+- Universo permitido: US stocks, ETFs (incluyendo GLD, TLT, IEF, sectoriales XL*, commodities ETFs no apalancados), crypto (BTC/USD, ETH/USD, etc.).
 - NUNCA propongas el mismo ticker que el actual a menos que sea explícitamente solicitado.
 - Si el Sentinel ya falló en tickers correlacionados, propón algo descorrelacionado por construcción, no solo "otro tech que esté funcionando".
+
+### PROHIBIDO PROPONER — lista negra explícita de productos
+
+Estos productos erosionan su valor de forma estructural, independiente de la dirección del subyacente, por lo que NO sirven para estrategias mean-reversion ni trend-following de varios días/semanas:
+
+- **Leveraged inverse ETFs:** SQQQ, SOXS, TZA, SDS, FAZ (decay diario sostenido por reseteo apalancado).
+- **Leveraged long ETFs:** TQQQ, UPRO, SPXL, TNA, FAS (mismo decay por reseteo diario).
+- **Volatility ETFs/ETNs:** UVXY, VIXY, VXX, SVXY (estructura de futuros con contango drag). Nota: VIXY se usa como señal macro del sistema (cambio %), NUNCA como ticker a operar.
+- **Commodity futures funds con decay:** USO, UNG (contango); DBA en menor medida.
+- **Inverse single-stock ETFs:** BITI, ETHU y similares (1x/2x inverse de cripto o acción).
+
+### PROHIBIDO PROPONER — por tipo
+
+- **Penny stocks (precio < $10 USD):** liquidez baja, spread alto, riesgo de pump-and-dump.
+- **OTC / Pink sheets:** no listados en NYSE/NASDAQ, sin reportes regulares.
+- **Baja liquidez:** volumen diario promedio insuficiente para entrada/salida limpia (referencia: < 1M shares, o equivalente en crypto).
 
 ## Formato de respuesta
 
@@ -252,6 +266,53 @@ def _format_pending_watchlist(pending: list[dict]) -> str:
         "(healthcare) cubre Ambiente 3 defensivo."
     )
     return header + body + footer
+
+
+# =============================================================================
+# FILTRO TÉCNICO DE ELEGIBILIDAD (defensa post-Claude, #UNIVERSE-FILTER)
+# =============================================================================
+
+async def _filter_candidate_eligibility(ticker: str, client) -> dict:
+    """
+    Valida que un ticker pase filtros técnicos básicos antes de proponerlo o
+    confirmarlo como rotación: asset existente, ACTIVE, tradable y fractionable
+    (Sentinel opera fraccional long-only).
+
+    NO consulta la lista negra de productos exóticos — esa vive en el
+    SYSTEM_PROMPT como guía a Claude. Este filtro es la defensa técnica
+    complementaria vía Alpaca Assets API (caso defensivo: si Claude propone un
+    ticker no operable a pesar del prompt, lo cazamos acá).
+
+    Args:
+        ticker: símbolo a verificar (ej. "NVDA").
+        client: TradingClient de Alpaca. `get_asset` es síncrono y se corre en
+                un thread aparte para no bloquear el loop.
+
+    Returns:
+        dict {eligible: bool, reason: str | None, asset: Asset | None}.
+    """
+    from alpaca.trading.enums import AssetStatus
+
+    try:
+        asset = await asyncio.to_thread(client.get_asset, ticker)
+    except Exception as e:
+        return {"eligible": False, "reason": f"asset_lookup_failed: {e}", "asset": None}
+
+    if asset.status != AssetStatus.ACTIVE:
+        return {"eligible": False, "reason": f"not_active: {asset.status}", "asset": asset}
+    if not asset.tradable:
+        return {"eligible": False, "reason": "not_tradable", "asset": asset}
+    if not asset.fractionable:
+        return {"eligible": False, "reason": "not_fractionable", "asset": asset}
+
+    # marginable/shortable no son obligatorios hoy (long-only sin margin) — se
+    # loguean a debug si faltan, sin bloquear la elegibilidad.
+    if not asset.marginable:
+        logger.debug(f"{ticker} not_marginable — OK por ahora (long-only sin margin)")
+    if not asset.shortable:
+        logger.debug(f"{ticker} not_shortable — OK por ahora (long-only)")
+
+    return {"eligible": True, "reason": None, "asset": asset}
 
 
 def build_user_prompt(
