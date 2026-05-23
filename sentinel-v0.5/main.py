@@ -32,6 +32,7 @@ from config import (
 from correlation_guard import CorrelationGuard
 from dispatcher import Dispatcher
 from historian import Historian
+from reconcile_pending_trades import reconcile_pending
 from regime_classifier import RegimeClassifier
 from sentinels import SENTINEL_REGISTRY, SentinelSMACrossover
 from the_ear import TheEar
@@ -434,6 +435,48 @@ def _ks_task_done(task: asyncio.Task):
         logger.warning("kill_switch_poller terminó sin excepción pero sin estar cancelado.")
 
 
+_RECONCILE_POLL_INTERVAL = 300  # segundos (5 min)
+
+
+async def _reconciliation_poller(historian: Historian, interval_sec: int = _RECONCILE_POLL_INTERVAL):
+    """
+    Cada `interval_sec` segundos reconcilia trades PENDING_NEW > 5 min con Alpaca.
+    Cierra #H-6b: trades que quedaban huérfanos por status no actualizado.
+
+    Resiliencia: errores transitorios se loggean y se reintenta en el próximo tick.
+    El task solo muere por cancelación explícita.
+    """
+    logger.info(f"Reconciliation poller iniciado (cada {interval_sec}s).")
+    while True:
+        await asyncio.sleep(interval_sec)
+        try:
+            stats = await reconcile_pending(
+                historian.pool, apply=True, max_age_minutes=5, verbose=False,
+            )
+            if stats["updates_applied"] > 0:
+                logger.info(
+                    f"Reconciliation: {stats['updates_applied']} trades actualizados "
+                    f"({stats['filled']} FILLED, {stats['cancelled']} CANCELLED)."
+                )
+            else:
+                logger.debug("Reconciliation: 0 actualizaciones (nada pendiente).")
+        except asyncio.CancelledError:
+            logger.info("Reconciliation poller cancelado.")
+            raise
+        except Exception as e:
+            logger.error(f"Reconciliation falló: {e}", exc_info=True)
+
+
+def _reconcile_task_done(task: asyncio.Task):
+    """Callback para detectar fallas silenciosas del reconciliation poller."""
+    if task.cancelled():
+        logger.info("reconciliation_poller cancelado limpiamente.")
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error(f"reconciliation_poller terminó con excepción: {exc!r}", exc_info=exc)
+
+
 async def main():
     """Inicializa el sistema, arranca The Ear en background y entra al main loop."""
     system = await initialize()
@@ -453,6 +496,14 @@ async def main():
     )
     kill_switch_task.add_done_callback(_ks_task_done)
 
+    # Reconciliation poller — auto-reconcilia PENDING_NEW cada 5 min (#H-6b)
+    reconcile_task = asyncio.create_task(
+        _reconciliation_poller(system["historian"]),
+        name="reconciliation_poller",
+    )
+    reconcile_task.add_done_callback(_reconcile_task_done)
+    logger.info("Reconciliation poller iniciado en background.")
+
     try:
         await main_loop(system)
     finally:
@@ -465,6 +516,12 @@ async def main():
         kill_switch_task.cancel()
         try:
             await kill_switch_task
+        except asyncio.CancelledError:
+            pass
+
+        reconcile_task.cancel()
+        try:
+            await reconcile_task
         except asyncio.CancelledError:
             pass
 
