@@ -1,15 +1,63 @@
+# === Secretos y credenciales ===
 client_secret_*.json
 **/.env
 **/.env.local
 **/.env.production
 **/.env.staging
+**/.env.bak*
+**/*.env.bak*
+
+# === Entornos Python ===
 **/venv/
 **/.venv/
 **/__pycache__/
 **/*.pyc
 **/*.pyo
+
+# === Logs y bases de datos ===
 **/logs/*.log
+**/*.log
 **/*.db
-**/*.sqlite
-.DS_Store
-Thumbs.db
+**/*.dump
+
+# === Backups in-place: copias de archivos editados (NO van a git) ===
+dashboard/*.bak
+dashboard/*.bak.*
+dashboard/*.backup_*
+dashboard/*.pre-*.html
+dashboard/*.pre-*.js
+dashboard/*.pre-*.py
+sentinel-v0.5/*.bak
+sentinel-v0.5/*.bak.*
+sentinel-v0.5/*.backup_*
+sentinel-v0.5/*.pre-*.py
+sentinel-v0.5/*.pre-*.js
+
+# === Backups con código completo / dumps / inventarios (subcarpetas) ===
+backups/**/*.original
+backups/**/*.pre-ronda*
+backups/**/*.pre-fix*
+backups/**/*.pre-equity-card
+backups/**/*.with-cap-total
+backups/**/*.tar.gz
+backups/**/api.py.*
+backups/**/email_service.py.*
+backups/**/historian.py.*
+backups/**/dispatcher.py.*
+backups/**/sentinel-app.js.*
+backups/**/sentinel-data.js.*
+backups/**/sentinel-i18n.js.*
+backups/**/index.html.*
+sentinel-v0.5/backups/*.tar.gz
+sentinel-v0.5/backups/*.dump
+sentinel-v0.5/backups/inventory_*
+sentinel-v0.5/inventory_*.txt
+backups/**/config.py.*
+backups/**/sentinel-v0.5_CLAUDE.md.bak*
+
+# === Code outputs (logs de sesiones de Claude Code) ===
+code-outputs/
+
+# === Handoffs Design archivados (binarios sin auditar) ===
+panel-admin/panel-admin.zip
+templetes-correo/templetes-correo.zip

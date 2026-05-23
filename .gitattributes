@@ -1,0 +1,19 @@
+# Normalización de fin de línea — HANDOFF #3 opción A (2026-05-23)
+# El repositorio guarda LF para todo archivo de texto (estándar git/GitHub).
+# En Windows el working tree se sirve según core.autocrlf (CRLF), sin afectar
+# el contenido almacenado. Esto elimina el churn de line-endings hacia adelante.
+* text=auto
+
+# Scripts shell: siempre LF (se rompen con CRLF)
+*.sh text eol=lf
+
+# Binarios: sin conversión de line-endings
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.gz   binary
+*.zip  binary
+*.dump binary
+*.pdf  binary
