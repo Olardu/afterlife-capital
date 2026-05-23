@@ -20,6 +20,7 @@
 import asyncio
 import logging
 import math
+from decimal import Decimal
 from uuid import UUID
 
 from config import (
@@ -126,15 +127,17 @@ class Dispatcher:
 
         client    = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
         positions = client.get_all_positions()
-        return {
-            p.symbol: {
+        # qty viene del SDK Alpaca como string → Decimal (#H-4), computado una vez.
+        result: dict[str, dict] = {}
+        for p in positions:
+            qty_dec = Decimal(str(p.qty))
+            result[p.symbol] = {
                 "ticker":      p.symbol,
-                "qty":         float(p.qty),
-                "side":        "BUY" if float(p.qty) > 0 else "SELL",
+                "qty":         qty_dec,
+                "side":        "BUY" if qty_dec > 0 else "SELL",
                 "sentinel_id": None,   # Alpaca no conoce el sentinel_id; se cruza por ticker si es necesario
             }
-            for p in positions
-        }
+        return result
 
     # ════════════════════════════════════════════════════════
     # § 4 — Distribución de capital
@@ -252,12 +255,12 @@ class Dispatcher:
         owner_id: UUID,
         ticker: str,
         signal_type: str,
-        price: float,
-        qty: float,
+        price: Decimal,
+        qty: Decimal,
         strategy_type: str = "",
         ear_state: dict = None,
         allocation: dict = None,
-        account_equity: float = None,
+        account_equity: Decimal = None,
     ) -> dict:
         """
         Pipeline completo de evaluación para una señal entrante.
@@ -279,6 +282,13 @@ class Dispatcher:
         Returns:
             dict con approved, reason, signal_id, trade_id y qty_ejecutada.
         """
+        # Montos monetarios → Decimal en todo el pipeline (#H-4). Conversión defensiva
+        # (acepta callers que aún pasen float durante la migración gradual).
+        price = Decimal(str(price))
+        qty = Decimal(str(qty))
+        if account_equity is not None:
+            account_equity = Decimal(str(account_equity))
+
         base_result = {
             "approved":     False,
             "reason":       "",
@@ -329,13 +339,13 @@ class Dispatcher:
                 )
             except asyncio.TimeoutError:
                 logger.error("Timeout (15s) al obtener equity de cuenta")
-                account_equity = 0.0
+                account_equity = Decimal("0")
             except Exception as e:
                 logger.error(f"Error al obtener equity de cuenta: {e}")
-                account_equity = 0.0
+                account_equity = Decimal("0")
 
         if account_equity > 0 and price > 0:
-            max_dollar_value = account_equity * (sentinel_alloc / 100.0)
+            max_dollar_value = account_equity * Decimal(str(sentinel_alloc / 100.0))
             max_qty          = max_dollar_value / price
             qty              = min(qty, max_qty)
 
@@ -476,9 +486,9 @@ class Dispatcher:
         self,
         ticker: str,
         side: str,
-        qty: float,
+        qty: Decimal,
         strategy_type: str = "",
-        limit_price: float = None,
+        limit_price: Decimal = None,
     ) -> dict:
         """
         Envía una orden a Alpaca con Smart Routing:
@@ -491,6 +501,11 @@ class Dispatcher:
         Returns:
             {order_id, filled_price, status}
         """
+        # Montos monetarios → Decimal (#H-4). Conversión defensiva (callers float ok).
+        qty = Decimal(str(qty))
+        if limit_price is not None:
+            limit_price = Decimal(str(limit_price))
+
         is_limit = self._is_limit_strategy(strategy_type) and limit_price is not None
 
         original_qty = qty
@@ -558,11 +573,16 @@ class Dispatcher:
         self,
         ticker: str,
         side: str,
-        qty: float,
+        qty: Decimal,
         strategy_type: str,
-        limit_price: float,
+        limit_price: Decimal,
     ) -> dict:
         """Construye y envía la orden. Ejecutado en thread separado."""
+        # Montos monetarios → Decimal (#H-4). Conversión defensiva.
+        qty = Decimal(str(qty))
+        if limit_price is not None:
+            limit_price = Decimal(str(limit_price))
+
         from alpaca.trading.client import TradingClient
         from alpaca.trading.enums import OrderSide, TimeInForce
         from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
@@ -589,7 +609,7 @@ class Dispatcher:
 
         order = client.submit_order(order_data)
 
-        filled_price = float(order.filled_avg_price) if order.filled_avg_price else None
+        filled_price = Decimal(str(order.filled_avg_price)) if order.filled_avg_price else None
         status       = order.status.value.upper() if order.status else "PENDING"
 
         logger.info(
@@ -615,7 +635,7 @@ class Dispatcher:
             logger.info(f"Limit order {order_id} ejecutada exitosamente.")
             return {
                 "order_id":    order_id,
-                "filled_price": float(order.filled_avg_price) if order.filled_avg_price else None,
+                "filled_price": Decimal(str(order.filled_avg_price)) if order.filled_avg_price else None,
                 "status":       "FILLED",
             }
 
@@ -627,13 +647,13 @@ class Dispatcher:
 
         return {"order_id": order_id, "filled_price": None, "status": "CANCELLED"}
 
-    def _get_account_equity(self) -> float:
+    def _get_account_equity(self) -> Decimal:
         """Retorna equity de la cuenta paper. Ejecutado en thread separado."""
         from alpaca.trading.client import TradingClient
 
         client  = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
         account = client.get_account()
-        return float(account.equity)
+        return Decimal(str(account.equity))
 
     # ════════════════════════════════════════════════════════
     # § 7 — Kill switch
