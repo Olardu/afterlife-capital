@@ -42,6 +42,9 @@ from sse_starlette.sse import EventSourceResponse
 from starlette.middleware.sessions import SessionMiddleware
 
 from config import (
+    ALPACA_API_KEY,
+    ALPACA_SECRET_KEY,
+    DAILY_REPORT_ENABLED,
     DATABASE_URL,
     GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET,
@@ -54,7 +57,10 @@ from config import (
     SESSION_SECRET,
     TIMEZONE,
 )
-from email_service import send_removal_email, send_welcome_email
+
+# Fecha inicio del periodo de observacion (trades antes de esto son contaminacion)
+OBSERVATION_START = datetime(2026, 4, 28)
+from email_service import send_daily_report, send_removal_email, send_welcome_email
 from historian import Historian
 
 
@@ -119,7 +125,29 @@ async def lifespan(app: FastAPI):
         )
     _owner_id = row["user_id"]
     logger.info(f"API lista | owner_id={_owner_id} | dashboard_dir={DASHBOARD_DIR}")
+
+    # Arrancar scheduler del reporte diario (#DAILY-REPORT)
+    # Desactivado el 2026-05-23 vía DAILY_REPORT_ENABLED=false (cierre anticipado
+    # del período de observación, HANDOFF #2). Reactivar para el 2do período (junio).
+    global _daily_report_task
+    if DAILY_REPORT_ENABLED:
+        _daily_report_task = asyncio.create_task(_daily_report_loop())
+        logger.info("Daily report scheduler arrancado.")
+    else:
+        logger.info(
+            "Daily report scheduler NO arrancado (DAILY_REPORT_ENABLED=false). "
+            "Reactivar poniendo DAILY_REPORT_ENABLED=true en .env."
+        )
+
     yield
+
+    # Cancelar scheduler al cerrar
+    if _daily_report_task and not _daily_report_task.done():
+        _daily_report_task.cancel()
+        try:
+            await _daily_report_task
+        except asyncio.CancelledError:
+            pass
     await historian.close()
     logger.info("API cerrada limpiamente.")
 
@@ -493,6 +521,7 @@ async def api_sentinels():
             "pnl":            0.0,   # TODO: calcular FIFO cuando haya trades reales
             "win_rate":       float(r["win_rate"]) if r["win_rate"] is not None else 0.0,
             "sharpe_ratio":   float(r["sharpe_ratio"]) if r["sharpe_ratio"] is not None else 0.0,
+            "total_trades":   int(r["total_trades"]) if r["total_trades"] is not None else 0,
         })
         if r["performance_decay"]:
             grouped[sid]["decay_status"] = True
@@ -508,8 +537,8 @@ async def api_trades(
     sentinel: Optional[str] = Query(None, description="sentinel_id (UUID)"),
     ticker:   Optional[str] = Query(None),
 ):
-    where     = ["t.owner_id = $1"]
-    params: list = [_owner_id]
+    where     = ["t.owner_id = $1", "t.created_at >= $2"]
+    params: list = [_owner_id, OBSERVATION_START]
 
     if sentinel:
         try:
@@ -645,6 +674,219 @@ async def api_performance():
         return [_row(r) for r in rows]
     except Exception as e:
         _http_500("/api/performance", e)
+
+
+@app.get("/api/account/equity")
+async def api_account_equity():
+    """
+    Endpoint read-only que consulta la cuenta Alpaca para obtener
+    balance, equity, posiciones abiertas y PnL no realizado.
+    Alimenta los KPIs del dashboard (Frente B).
+    """
+    try:
+        from alpaca.trading.client import TradingClient
+
+        client  = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
+        account = await asyncio.to_thread(client.get_account)
+        positions = await asyncio.to_thread(client.get_all_positions)
+
+        # Calcular PnL no realizado total
+        unrealized_pl = sum(
+            float(p.unrealized_pl) for p in positions if p.unrealized_pl
+        )
+
+        return {
+            "equity":            float(account.equity),
+            "cash":              float(account.cash),
+            "portfolio_value":   float(account.portfolio_value) if account.portfolio_value else float(account.equity),
+            "buying_power":      float(account.buying_power),
+            "positions_count":   len(positions),
+            "unrealized_pl":     round(unrealized_pl, 2),
+            "positions": [
+                {
+                    "ticker":        p.symbol,
+                    "qty":           float(p.qty),
+                    "market_value":  float(p.market_value) if p.market_value else 0,
+                    "unrealized_pl": float(p.unrealized_pl) if p.unrealized_pl else 0,
+                    "avg_entry":     float(p.avg_entry_price) if p.avg_entry_price else 0,
+                    "current_price": float(p.current_price) if p.current_price else 0,
+                }
+                for p in positions
+            ],
+        }
+    except Exception as e:
+        logger.error(f"/api/account/equity error: {e}")
+        _http_500("/api/account/equity", e)
+
+
+
+@app.get("/api/account/capital")
+async def api_account_capital():
+    """
+    Endpoint read-only con responsabilidad única: métricas de capital total vs
+    capital efectivamente invertido y rentabilidad del día sobre el capital
+    deployado (no sobre el equity total, que diluye con el cash dormido).
+
+    Cumple el formato estándar { data, meta } definido en BUENAS_PRACTICAS_V2.md
+    sección 6.2. Introducido como Excepción 1.2 del período de observación
+    (2026-05-13) — cosmética/observabilidad sin tocar lógica del bot.
+    """
+    try:
+        from alpaca.trading.client import TradingClient
+
+        client  = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
+        account = await asyncio.to_thread(client.get_account)
+
+        equity      = float(account.equity)
+        last_equity = float(account.last_equity) if account.last_equity else equity
+        long_mv     = float(account.long_market_value) if account.long_market_value else 0.0
+        short_mv    = float(account.short_market_value) if account.short_market_value else 0.0
+        invested    = abs(long_mv) + abs(short_mv)
+        day_pnl     = equity - last_equity
+
+        invested_pct_of_equity   = (invested / equity * 100) if equity > 0 else 0.0
+        day_pnl_pct_of_equity    = (day_pnl / last_equity * 100) if last_equity > 0 else 0.0
+        day_pnl_pct_of_invested  = (day_pnl / invested * 100) if invested > 0 else 0.0
+
+        return {
+            "data": {
+                "equity":                  round(equity, 2),
+                "last_equity":             round(last_equity, 2),
+                "long_market_value":       round(long_mv, 2),
+                "short_market_value":      round(short_mv, 2),
+                "invested":                round(invested, 2),
+                "invested_pct_of_equity":  round(invested_pct_of_equity, 2),
+                "day_pnl":                 round(day_pnl, 2),
+                "day_pnl_pct_of_equity":   round(day_pnl_pct_of_equity, 4),
+                "day_pnl_pct_of_invested": round(day_pnl_pct_of_invested, 4),
+            },
+            "meta": {
+                "source":      "alpaca",
+                "as_of":       datetime.now(ZoneInfo("UTC")).isoformat(),
+                "definitions": {
+                    "invested":                "abs(long_market_value) + abs(short_market_value) — capital efectivamente expuesto al mercado",
+                    "day_pnl_pct_of_invested": "rentabilidad del día sobre el capital REALMENTE invertido (no sobre el equity total)",
+                },
+            },
+        }
+    except Exception as e:
+        logger.error(f"/api/account/capital error: {e}")
+        _http_500("/api/account/capital", e)
+
+
+@app.get("/api/account/portfolio-history")
+async def api_portfolio_history(period: str = Query("1D", regex="^(4H|8H|1D|1W|1M|1A)$")):
+    """
+    Endpoint read-only que consulta Alpaca portfolio history via REST API.
+    Alimenta la curva de equity del dashboard con datos temporales reales.
+    No modifica datos ni lógica del bot — pura observabilidad.
+
+    Períodos: 4H, 8H, 1D, 1W, 1M, 1A
+    Granularidad automática según período (Alpaca default).
+    """
+    import httpx
+
+    try:
+        # Mapear períodos cortos a parámetros Alpaca REST API
+        period_map = {
+            "4H":  {"period": "1D",  "timeframe": "5Min"},
+            "8H":  {"period": "1D",  "timeframe": "15Min"},
+            "1D":  {"period": "1D",  "timeframe": "5Min"},
+            "1W":  {"period": "1W",  "timeframe": "1H"},
+            "1M":  {"period": "1M",  "timeframe": "1D"},
+            "1A":  {"period": "1A",  "timeframe": "1D"},
+        }
+        params = period_map.get(period, {"period": "1D", "timeframe": "5Min"})
+
+        # Alpaca Paper Trading REST API
+        base_url = "https://paper-api.alpaca.markets"
+        headers = {
+            "APCA-API-KEY-ID": ALPACA_API_KEY,
+            "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
+        }
+        query_params = {
+            "period": params["period"],
+            "timeframe": params["timeframe"],
+            "extended_hours": "true",
+        }
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{base_url}/v2/account/portfolio/history",
+                headers=headers,
+                params=query_params,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        timestamps = data.get("timestamp", [])
+        equity_vals = data.get("equity", [])
+        pnl_vals = data.get("profit_loss", [])
+        pnl_pct_vals = data.get("profit_loss_pct", [])
+
+        # Filtrar nulls (Alpaca puede devolver null en barras sin actividad)
+        clean = [
+            (t, e, p, pp)
+            for t, e, p, pp in zip(timestamps, equity_vals, pnl_vals, pnl_pct_vals)
+            if e is not None
+        ]
+        if clean:
+            timestamps, equity_vals, pnl_vals, pnl_pct_vals = map(list, zip(*clean))
+        else:
+            timestamps, equity_vals, pnl_vals, pnl_pct_vals = [], [], [], []
+
+        # --- Filtro de valores stale (paper trading artifact) ---
+        # Si un valor de equity se repite idéntico 3+ barras seguidas en
+        # timeframes sub-diarios, es un dato stale de Alpaca paper (no hay
+        # repricing real fuera de mercado). Interpolamos linealmente entre
+        # el último valor real antes del bloque y el primero después.
+        if params["timeframe"] != "1D" and len(equity_vals) > 4:
+            i = 0
+            while i < len(equity_vals):
+                # Buscar inicio de bloque stale
+                j = i + 1
+                while j < len(equity_vals) and equity_vals[j] == equity_vals[i]:
+                    j += 1
+                run_len = j - i
+                if run_len >= 3:
+                    # Bloque stale detectado: interpolar
+                    before = equity_vals[i - 1] if i > 0 else equity_vals[i]
+                    after  = equity_vals[j] if j < len(equity_vals) else equity_vals[j - 1]
+                    for k in range(i, j):
+                        t = (k - i + 1) / (run_len + 1)
+                        equity_vals[k] = round(before + (after - before) * t, 2)
+                    i = j
+                else:
+                    i += 1
+
+        # Para 4H/8H: recortar al número de barras correspondiente
+        if period == "4H":
+            n = 48   # 4h × 12 barras/hora (5min)
+            timestamps = timestamps[-n:]
+            equity_vals = equity_vals[-n:]
+            pnl_vals = pnl_vals[-n:]
+            pnl_pct_vals = pnl_pct_vals[-n:]
+        elif period == "8H":
+            n = 32   # 8h × 4 barras/hora (15min)
+            timestamps = timestamps[-n:]
+            equity_vals = equity_vals[-n:]
+            pnl_vals = pnl_vals[-n:]
+            pnl_pct_vals = pnl_pct_vals[-n:]
+
+        # base_value: primer equity del rango (punto de equilibrio)
+        base_value = equity_vals[0] if equity_vals else 100000
+
+        return {
+            "timestamps":   timestamps,
+            "equity":       equity_vals,
+            "profit_loss":  pnl_vals,
+            "profit_loss_pct": pnl_pct_vals,
+            "base_value":   base_value,
+            "period":       period,
+        }
+    except Exception as e:
+        logger.error(f"/api/account/portfolio-history error: {e}")
+        _http_500("/api/account/portfolio-history", e)
 
 
 @app.get("/api/report")
@@ -914,6 +1156,343 @@ async def api_report(range: str = Query("today", regex="^(today|last_week|last_m
         },
         "trades": [_row(t) for t in trades_rows],
     }
+
+
+# =============================================================================
+# DAILY REPORT — endpoint + data collector + scheduler (#DAILY-REPORT)
+# Consolida todos los datos del día en un solo dict que alimenta:
+#   1. GET /api/report/daily — JSON para integraciones
+#   2. send_daily_report()   — email al cierre del mercado (16:30 ET)
+# Read-only: no modifica lógica del bot ni datos en DB.
+# =============================================================================
+
+OBSERVATION_END = datetime(2026, 5, 27)
+
+async def collect_daily_report_data(
+    conn, owner_id, report_date: Optional[date] = None
+) -> dict:
+    """
+    Recopila todos los datos necesarios para el reporte diario.
+    Si report_date es None, usa la fecha actual en ET.
+    Retorna dict listo para _render_daily_report_html() y para JSON response.
+    """
+    tz_et = ZoneInfo("America/New_York")
+    if report_date is None:
+        report_date = datetime.now(tz=tz_et).date()
+
+    day_start = datetime(report_date.year, report_date.month, report_date.day)
+    day_end   = day_start + timedelta(days=1)
+
+    # Trades del dia
+    trades_rows = await conn.fetch(
+        """
+        SELECT t.trade_id, s.name AS sentinel_name, t.ticker, t.side,
+               t.qty, t.filled_price, t.slippage, t.status, t.created_at
+        FROM trades t
+        JOIN sentinels s ON t.sentinel_id = s.sentinel_id
+        WHERE t.owner_id = $1 AND t.created_at >= $2 AND t.created_at < $3
+        ORDER BY t.created_at ASC
+        """,
+        owner_id, day_start, day_end,
+    )
+
+    filled    = [r for r in trades_rows if (r["status"] or "").upper() == "FILLED"]
+    cancelled = [r for r in trades_rows if (r["status"] or "").upper() == "CANCELLED"]
+
+    # P&L por sentinel — solo round trips completos (BUY+SELL mismo ticker mismo dia)
+    from collections import defaultdict
+    _st_trades = defaultdict(list)   # (sentinel, ticker) -> [(side, px*qty, timestamp)]
+    for t in filled:
+        key = (t["sentinel_name"], t["ticker"])
+        px  = float(t["filled_price"] or 0)
+        qty = float(t["qty"] or 0)
+        _st_trades[key].append(((t["side"] or "").upper(), px * qty))
+
+    pnl_by_sentinel: dict = {}
+    for (sentinel, ticker), ops in _st_trades.items():
+        buys  = [v for side, v in ops if side == "BUY"]
+        sells = [v for side, v in ops if side == "SELL"]
+        matched = min(len(buys), len(sells))
+        if matched > 0:
+            realized = sum(sells[:matched]) - sum(buys[:matched])
+            pnl_by_sentinel.setdefault(sentinel, 0.0)
+            pnl_by_sentinel[sentinel] += realized
+
+    pnl_sentinel_list = sorted(
+        [{"name": k, "pnl": round(v, 2)} for k, v in pnl_by_sentinel.items()],
+        key=lambda x: x["pnl"],
+        reverse=True,
+    )
+
+    # Equity y posiciones (Alpaca)
+    equity = 0.0
+    cash = 0.0
+    last_equity = 0.0
+    positions_list = []
+    positions_count = 0
+    unrealized_pl = 0.0
+
+    try:
+        from alpaca.trading.client import TradingClient
+        client  = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
+        account = await asyncio.to_thread(client.get_account)
+        positions = await asyncio.to_thread(client.get_all_positions)
+
+        equity = float(account.equity)
+        cash   = float(account.cash)
+        last_equity = float(account.last_equity) if account.last_equity else equity
+        positions_count = len(positions)
+        unrealized_pl = sum(float(p.unrealized_pl or 0) for p in positions)
+
+        positions_list = [
+            {
+                "ticker":        p.symbol,
+                "qty":           float(p.qty),
+                "market_value":  float(p.market_value or 0),
+                "unrealized_pl": float(p.unrealized_pl or 0),
+                "avg_entry":     float(p.avg_entry_price or 0),
+                "current_price": float(p.current_price or 0),
+            }
+            for p in positions
+        ]
+    except Exception as e:
+        logger.warning(f"Daily report: Alpaca data unavailable: {e}")
+
+    realized_pl = sum(pnl_by_sentinel.values())
+    # P&L diario real = equity actual - equity cierre dia anterior (Alpaca)
+    total_pnl   = equity - last_equity if last_equity > 0 else (realized_pl + unrealized_pl)
+    pnl_pct     = (total_pnl / last_equity * 100) if last_equity > 0 else 0.0
+
+    # Macro events (The Ear)
+    news_col_exists = await conn.fetchval(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'macro_events' AND column_name = 'news_titles'
+        )
+        """
+    )
+    if news_col_exists:
+        ear_rows = await conn.fetch(
+            """
+            SELECT created_at, risk_score, circuit_breaker_triggered, news_titles
+            FROM macro_events
+            WHERE created_at >= $1 AND created_at < $2
+            ORDER BY created_at ASC
+            """,
+            day_start, day_end,
+        )
+    else:
+        ear_rows = await conn.fetch(
+            """
+            SELECT created_at, risk_score, circuit_breaker_triggered
+            FROM macro_events
+            WHERE created_at >= $1 AND created_at < $2
+            ORDER BY created_at ASC
+            """,
+            day_start, day_end,
+        )
+
+    ear_events = []
+    latest_risk = 0.0
+    for r in ear_rows:
+        risk = float(r["risk_score"] or 0)
+        latest_risk = risk
+        titles = []
+        if news_col_exists:
+            raw = r.get("news_titles")
+            if isinstance(raw, str):
+                try:
+                    titles = json.loads(raw)
+                except Exception:
+                    titles = []
+            elif isinstance(raw, list):
+                titles = raw
+        ear_events.append({
+            "timestamp":  r["created_at"],
+            "risk_score": risk,
+            "impact":     "circuit_breaker" if r["circuit_breaker_triggered"] else (
+                          "risk_elevated" if risk > 0.5 else "neutral"),
+            "titles":     titles,
+        })
+
+    # Rotaciones del dia
+    rotations_rows = await conn.fetch(
+        """
+        SELECT rd.decision_id, s.name AS sentinel_name, rd.old_ticker, rd.new_ticker,
+               rd.trigger_reason, rd.claude_confidence, rd.status
+        FROM rotation_decisions rd
+        JOIN sentinels s ON rd.sentinel_id = s.sentinel_id
+        WHERE rd.triggered_at >= $1 AND rd.triggered_at < $2
+              AND rd.status = 'executed'
+        ORDER BY rd.triggered_at ASC
+        """,
+        day_start, day_end,
+    )
+    rotations = [dict(r) for r in rotations_rows]
+
+    return {
+        "date":             str(report_date),
+        "equity":           round(equity, 2),
+        "cash":             round(cash, 2),
+        "pnl":              round(total_pnl, 2),
+        "pnl_pct":          round(pnl_pct, 3),
+        "positions_count":  positions_count,
+        "filled_count":     len(filled),
+        "cancelled_count":  len(cancelled),
+        "pending_count":    len([r for r in trades_rows if (r["status"] or "").upper() == "PENDING_NEW"]),
+        "risk_score":       round(latest_risk, 2),
+        "trades":           [_row(t) for t in trades_rows],
+        "pnl_by_sentinel":  pnl_sentinel_list,
+        "positions":        positions_list,
+        "ear_events":       ear_events,
+        "rotations":        rotations,
+    }
+
+
+@app.get("/api/report/daily")
+async def api_report_daily(
+    dt: Optional[str] = Query(None, description="Fecha YYYY-MM-DD (default: hoy ET)")
+):
+    """
+    Reporte diario consolidado (#DAILY-REPORT). Read-only.
+    Alimenta el email de cierre de mercado y sirve como API para integraciones.
+    """
+    try:
+        report_date = date.fromisoformat(dt) if dt else None
+    except ValueError:
+        raise HTTPException(400, f"Fecha invalida: {dt}. Usar formato YYYY-MM-DD.")
+
+    try:
+        async with historian.pool.acquire() as conn:
+            data = await collect_daily_report_data(conn, _owner_id, report_date)
+    except Exception as e:
+        _http_500("/api/report/daily", e)
+
+    return data
+
+
+@app.post("/api/report/daily/send-now")
+async def api_report_daily_send_now(
+    dt: Optional[str] = Query(None, description="Fecha YYYY-MM-DD (default: hoy ET)")
+):
+    """
+    Disparo manual del reporte diario por email.
+    Envia a todos los usuarios activos. Util para pruebas o reenvios.
+    """
+    try:
+        report_date = date.fromisoformat(dt) if dt else None
+    except ValueError:
+        raise HTTPException(400, f"Fecha invalida: {dt}. Usar formato YYYY-MM-DD.")
+
+    try:
+        async with historian.pool.acquire() as conn:
+            data = await collect_daily_report_data(conn, _owner_id, report_date)
+            users = await conn.fetch(
+                "SELECT email FROM users WHERE email IS NOT NULL"
+            )
+
+        sent = 0
+        failed = []
+        for user in users:
+            email = user["email"]
+            if email:
+                ok = await send_daily_report(to_email=email, data=data)
+                if ok:
+                    sent += 1
+                else:
+                    failed.append(email)
+
+        logger.info(f"Daily report manual: enviado a {sent}/{len(users)} usuarios.")
+        return {
+            "status": "ok",
+            "sent": sent,
+            "total_users": len(users),
+            "failed": failed,
+            "report_date": data.get("report_date", "hoy"),
+        }
+    except Exception as e:
+        _http_500("/api/report/daily/send-now", e)
+
+
+# ---------------------------------------------------------------------------
+# Scheduler: envio automatico del reporte diario a las 16:30 ET (L-V)
+# ---------------------------------------------------------------------------
+
+_daily_report_task: Optional[asyncio.Task] = None
+
+
+async def _daily_report_loop():
+    """
+    Loop que espera hasta las 16:30 ET de lunes a viernes y dispara
+    el envio del reporte diario a todos los usuarios registrados.
+    """
+    tz_et = ZoneInfo("America/New_York")
+    TARGET_HOUR, TARGET_MIN = 16, 30
+
+    while True:
+        try:
+            now = datetime.now(tz=tz_et)
+
+            # Auto-stop: no enviar despues del periodo de observacion
+            if now.date() > OBSERVATION_END.date():
+                logger.info(
+                    "Daily report scheduler: periodo de observacion finalizado "
+                    f"({OBSERVATION_END.date()}). Scheduler detenido."
+                )
+                break
+
+            target_today = now.replace(
+                hour=TARGET_HOUR, minute=TARGET_MIN, second=0, microsecond=0
+            )
+
+            if now >= target_today or now.weekday() >= 5:
+                days_ahead = 1
+                candidate = now + timedelta(days=days_ahead)
+                while candidate.weekday() >= 5:
+                    days_ahead += 1
+                    candidate = now + timedelta(days=days_ahead)
+                target = candidate.replace(
+                    hour=TARGET_HOUR, minute=TARGET_MIN, second=0, microsecond=0
+                )
+            else:
+                target = target_today
+
+            wait_seconds = (target - now).total_seconds()
+            logger.info(
+                f"Daily report scheduler: proximo envio en {wait_seconds/3600:.1f}h "
+                f"({target.strftime('%Y-%m-%d %H:%M')} ET)"
+            )
+            await asyncio.sleep(wait_seconds)
+
+            logger.info("Daily report scheduler: generando reporte...")
+            try:
+                async with historian.pool.acquire() as conn:
+                    data = await collect_daily_report_data(conn, _owner_id)
+
+                    users = await conn.fetch(
+                        "SELECT email FROM users WHERE email IS NOT NULL"
+                    )
+
+                sent = 0
+                for user in users:
+                    email = user["email"]
+                    if email:
+                        ok = await send_daily_report(to_email=email, data=data)
+                        if ok:
+                            sent += 1
+                logger.info(f"Daily report enviado a {sent}/{len(users)} usuarios.")
+            except Exception as e:
+                logger.error(f"Daily report scheduler error: {e}")
+
+            await asyncio.sleep(61)
+
+        except asyncio.CancelledError:
+            logger.info("Daily report scheduler cancelado.")
+            break
+        except Exception as e:
+            logger.error(f"Daily report loop error inesperado: {e}")
+            await asyncio.sleep(300)
 
 
 # =============================================================================

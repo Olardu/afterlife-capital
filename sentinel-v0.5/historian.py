@@ -447,12 +447,22 @@ class Historian:
         )
         return {"win_rate": win_rate, "sharpe_ratio": sharpe_ratio, "total_trades": total_trades}
 
+    # Mínimo de round trips para escribir scores parciales (sin evaluar decay).
+    # Con 2+ trades hay suficientes datos para un Sharpe y win_rate indicativos
+    # que alimentan al Dispatcher y Dashboard, aunque no sean definitivos.
+    _PARTIAL_SCORE_MIN_TRADES = 2
+
     async def evaluate_decay(self, sentinel_id: UUID, ticker: str) -> bool:
         """
         Evalúa si el par (sentinel_id, ticker) está en performance decay.
 
-        Warm-Up Protocol: si total_trades < WARMUP_TRADES_REQUIRED retorna False
-        sin insertar nada — no hay historia suficiente para juzgar rotación.
+        Scores Parciales: si total_trades >= _PARTIAL_SCORE_MIN_TRADES pero
+        < WARMUP_TRADES_REQUIRED, se escriben scores a performance_scores con
+        performance_decay = False (no se juzga rotación aún). Esto permite que
+        Dispatcher y Dashboard tengan datos antes de alcanzar warmup completo.
+
+        Warm-Up Protocol: solo con total_trades >= WARMUP_TRADES_REQUIRED se
+        evalúa decay real (win_rate y sharpe vs thresholds).
 
         Decay se marca TRUE si:
             win_rate < PERFORMANCE_DECAY_THRESHOLD  O  sharpe_ratio < SHARPE_MINIMUM
@@ -466,16 +476,28 @@ class Historian:
         metrics      = await self.calculate_performance(sentinel_id, ticker)
         total_trades = metrics["total_trades"]
 
-        if total_trades < WARMUP_TRADES_REQUIRED:
+        if total_trades < self._PARTIAL_SCORE_MIN_TRADES:
             logger.info(
                 f"Warm-Up activo ({sentinel_id}, {ticker}): "
-                f"{total_trades}/{WARMUP_TRADES_REQUIRED} trades. Decay no evaluado."
+                f"{total_trades}/{self._PARTIAL_SCORE_MIN_TRADES} trades. "
+                f"Sin datos suficientes para scores parciales."
             )
             return False
 
         win_rate     = metrics["win_rate"]
         sharpe_ratio = metrics["sharpe_ratio"]
-        decay        = win_rate < PERFORMANCE_DECAY_THRESHOLD or sharpe_ratio < SHARPE_MINIMUM
+
+        # Solo evaluar decay si alcanzó warmup completo
+        if total_trades >= WARMUP_TRADES_REQUIRED:
+            decay = win_rate < PERFORMANCE_DECAY_THRESHOLD or sharpe_ratio < SHARPE_MINIMUM
+        else:
+            # Scores parciales: escribir métricas pero no juzgar decay
+            decay = False
+            logger.info(
+                f"Scores parciales ({sentinel_id}, {ticker}): "
+                f"{total_trades}/{WARMUP_TRADES_REQUIRED} trades. "
+                f"Escribiendo scores sin evaluar decay."
+            )
 
         upsert_sql = """
             INSERT INTO performance_scores
@@ -564,7 +586,14 @@ class Historian:
         """
         Retorna performance_scores de todos los Sentinels del owner,
         ordenados por sharpe_ratio DESC. El Dispatcher usa este ranking
-        para distribuir capital con Half-Kelly.
+        para distribuir capital con Sharpe-weighted Half-Kelly.
+
+        Filtra por sentinel_tickers.is_active = TRUE: scores de tickers ya
+        rotados (zombies) se ignoran. Sin este filtro, evaluate_decay deja
+        de actualizar scores zombies pero sus filas viejas siguen en DB,
+        haciendo que el Universe Selector vuelva a verlos como "en decay"
+        cada ciclo y dispare rotaciones repetidas (bug observado en Mantis
+        el 2026-05-08: 23 rotaciones en 6h sobre TSLA y SPY ya rotados).
 
         Sentinels sin score aún no aparecen en el resultado.
         """
@@ -581,7 +610,9 @@ class Historian:
                 ps.calculated_at
             FROM performance_scores ps
             JOIN sentinels s ON ps.sentinel_id = s.sentinel_id
-            WHERE s.owner_id = $1
+            JOIN sentinel_tickers st
+              ON st.sentinel_id = ps.sentinel_id AND st.ticker = ps.ticker
+            WHERE s.owner_id = $1 AND st.is_active = TRUE
             ORDER BY ps.sharpe_ratio DESC NULLS LAST
         """
         try:

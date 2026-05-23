@@ -132,6 +132,18 @@ UNIVERSE_SELECTION_CANDIDATE_TTL_DAYS     = int(os.environ.get(
 ))
 
 # =============================================================================
+# DAILY REPORT (#DAILY-REPORT)
+# Reporte diario por email a las 16:30 ET (L-V). Toggle global para pausar el
+# envío automático sin tocar la lógica del reporte ni bajar la API.
+# Desactivado el 2026-05-23 con el cierre anticipado del período de observación
+# (HANDOFF #2). Reactivar para el segundo período de observación (junio):
+# poner DAILY_REPORT_ENABLED=true en .env (o quitar la línea — default es True).
+# El endpoint manual /api/report/daily/send-now sigue activo aunque esto sea False.
+# =============================================================================
+
+DAILY_REPORT_ENABLED = os.environ.get("DAILY_REPORT_ENABLED", "true").lower() == "true"
+
+# =============================================================================
 # REGIME CLASSIFIER (S-10)
 # Meta-agente que clasifica cada sesión antes de que el mercado abra.
 # Entrenado sobre 25 años de datos SPY con Random Forest.

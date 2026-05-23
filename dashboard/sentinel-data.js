@@ -145,13 +145,184 @@ const PRICES    = {};   // sin endpoint dedicado — se mantiene vacío
 const STATE = {
   lang: 'es', view: 'full', theme: 'cyber',
   trades: [], logs: [],
-  balance: 100000, balanceChange: 0,   // TODO: extender API con /api/account/equity
+  // balance/balanceChange neutralizados (Frente A — 2026-04-28). Sin endpoint
+  // de equity Alpaca, mostramos "—" en vez de inventar 100000. Cuando exista
+  // /api/account/equity (Frente B), repoblar con datos reales y reactivar
+  // los renders de osBalance/osPnl/eqCapital/eqPnl.
+  balance: null, balanceChange: null,
   riskScore: 0,
   nextId: 1,
   equityHist: [],
+  equityTimestamps: [],
+  equityBaseValue: 100000,
+  equityPeriod: '1D',
+  equityLoading: false,
   expandedDetails: new Set(),
   logsOpen: false,
 };
+
+/* ============ TICKER NAMES ============ */
+const TICKER_NAMES = {
+  // Major indices / ETFs
+  SPY:  'SPDR S&P 500 ETF Trust',
+  QQQ:  'Invesco QQQ Trust (Nasdaq-100)',
+  IWM:  'iShares Russell 2000 ETF',
+  DIA:  'SPDR Dow Jones Industrial Average ETF',
+  VOO:  'Vanguard S&P 500 ETF',
+  VTI:  'Vanguard Total Stock Market ETF',
+  IVV:  'iShares Core S&P 500 ETF',
+  // Sector ETFs
+  XLF:  'Financial Select Sector SPDR Fund',
+  XLK:  'Technology Select Sector SPDR Fund',
+  XLE:  'Energy Select Sector SPDR Fund',
+  XLV:  'Health Care Select Sector SPDR Fund',
+  XLP:  'Consumer Staples Select Sector SPDR Fund',
+  XLY:  'Consumer Discretionary Select Sector SPDR Fund',
+  XLI:  'Industrial Select Sector SPDR Fund',
+  XLB:  'Materials Select Sector SPDR Fund',
+  XLC:  'Communication Services Select Sector SPDR Fund',
+  XLU:  'Utilities Select Sector SPDR Fund',
+  XLRE: 'Real Estate Select Sector SPDR Fund',
+  // Commodities / Safe haven
+  GLD:  'SPDR Gold Shares',
+  SLV:  'iShares Silver Trust',
+  USO:  'United States Oil Fund',
+  TLT:  'iShares 20+ Year Treasury Bond ETF',
+  SHY:  'iShares 1-3 Year Treasury Bond ETF',
+  IEF:  'iShares 7-10 Year Treasury Bond ETF',
+  BND:  'Vanguard Total Bond Market ETF',
+  // Volatility
+  VXX:  'iPath Series B S&P 500 VIX Short-Term Futures ETN',
+  VIXY: 'ProShares VIX Short-Term Futures ETF',
+  UVXY: 'ProShares Ultra VIX Short-Term Futures ETF',
+  SVXY: 'ProShares Short VIX Short-Term Futures ETF',
+  // Tech mega-caps
+  AAPL: 'Apple Inc.',
+  MSFT: 'Microsoft Corporation',
+  GOOGL:'Alphabet Inc. (Class A)',
+  GOOG: 'Alphabet Inc. (Class C)',
+  AMZN: 'Amazon.com Inc.',
+  META: 'Meta Platforms Inc.',
+  NVDA: 'NVIDIA Corporation',
+  TSLA: 'Tesla Inc.',
+  AMD:  'Advanced Micro Devices Inc.',
+  INTC: 'Intel Corporation',
+  AVGO: 'Broadcom Inc.',
+  CRM:  'Salesforce Inc.',
+  ORCL: 'Oracle Corporation',
+  ADBE: 'Adobe Inc.',
+  NFLX: 'Netflix Inc.',
+  // Other large caps
+  JPM:  'JPMorgan Chase & Co.',
+  V:    'Visa Inc.',
+  MA:   'Mastercard Inc.',
+  BAC:  'Bank of America Corporation',
+  WMT:  'Walmart Inc.',
+  JNJ:  'Johnson & Johnson',
+  PG:   'Procter & Gamble Co.',
+  UNH:  'UnitedHealth Group Inc.',
+  HD:   'The Home Depot Inc.',
+  KO:   'The Coca-Cola Company',
+  PEP:  'PepsiCo Inc.',
+  COST: 'Costco Wholesale Corporation',
+  MRK:  'Merck & Co. Inc.',
+  ABBV: 'AbbVie Inc.',
+  LLY:  'Eli Lilly and Company',
+  CVX:  'Chevron Corporation',
+  XOM:  'Exxon Mobil Corporation',
+  BA:   'The Boeing Company',
+  CAT:  'Caterpillar Inc.',
+  DIS:  'The Walt Disney Company',
+  PYPL: 'PayPal Holdings Inc.',
+  SQ:   'Block Inc.',
+  COIN: 'Coinbase Global Inc.',
+  PLTR: 'Palantir Technologies Inc.',
+  SOFI: 'SoFi Technologies Inc.',
+  // International / Emerging
+  EEM:  'iShares MSCI Emerging Markets ETF',
+  EFA:  'iShares MSCI EAFE ETF',
+  FXI:  'iShares China Large-Cap ETF',
+  // Crypto-adjacent
+  MSTR: 'MicroStrategy Inc.',
+  MARA: 'Marathon Digital Holdings Inc.',
+  RIOT: 'Riot Platforms Inc.',
+  // ARK
+  ARKK: 'ARK Innovation ETF',
+  ARKW: 'ARK Next Generation Internet ETF',
+  // Leveraged
+  TQQQ: 'ProShares UltraPro QQQ (3x)',
+  SQQQ: 'ProShares UltraPro Short QQQ (-3x)',
+  SPXL: 'Direxion Daily S&P 500 Bull 3X',
+  SPXS: 'Direxion Daily S&P 500 Bear 3X',
+};
+
+/**
+ * Devuelve HTML de un ticker con tooltip (nombre completo).
+ * Tooltip vía div fijo (#tickerTooltip) posicionado por JS.
+ * Funciona con hover (desktop) y touch/tap (móvil).
+ */
+function tickerSpan(sym) {
+  const name = TICKER_NAMES[sym] || '';
+  if (!name) return `<span class="ticker-sym">${sym}</span>`;
+  return `<span class="ticker-sym" data-tip="${name}">${sym}</span>`;
+}
+
+/* Universal tooltip — floating div positioned via JS, no overflow issues.
+ * Works for .ticker-sym (ticker names) AND .tip-trigger (status, positions, etc.) */
+(function initTickerTooltip() {
+  function ensureTip() {
+    let tip = document.getElementById('tickerTooltip');
+    if (!tip) { tip = document.createElement('div'); tip.id = 'tickerTooltip'; document.body.appendChild(tip); }
+    return tip;
+  }
+
+  let touchActive = false;
+
+  function show(el) {
+    const tip = ensureTip();
+    const text = el.getAttribute('data-tip');
+    if (!text) return;
+    tip.textContent = text;
+    tip.classList.add('visible');
+    const r = el.getBoundingClientRect();
+    const tipW = tip.offsetWidth;
+    let left = r.left + r.width / 2 - tipW / 2;
+    if (left < 8) left = 8;
+    if (left + tipW > window.innerWidth - 8) left = window.innerWidth - tipW - 8;
+    tip.style.left = left + 'px';
+    tip.style.top = (r.top - tip.offsetHeight - 6) + 'px';
+  }
+
+  function hide() {
+    const tip = document.getElementById('tickerTooltip');
+    if (tip) tip.classList.remove('visible');
+    touchActive = false;
+  }
+
+  const TIP_SEL = '[data-tip]';
+
+  document.addEventListener('mouseover', function(e) {
+    const el = e.target.closest(TIP_SEL);
+    if (el) show(el); else hide();
+  });
+
+  document.addEventListener('mouseout', function(e) {
+    if (e.target.closest(TIP_SEL)) hide();
+  });
+
+  // Touch: tap to show, tap again or tap elsewhere to hide
+  document.addEventListener('touchstart', function(e) {
+    const el = e.target.closest(TIP_SEL);
+    if (el) {
+      e.preventDefault();
+      if (touchActive) { hide(); return; }
+      show(el);
+      touchActive = true;
+    } else {
+      hide();
+    }
+  }, { passive: false });
+})();
 
 /* ============ INTERCEPT TICK MOCK ============
  * sentinel-app.js termina con `setTimeout(tick, 2500)` que arranca un loop
@@ -226,6 +397,11 @@ async function loadStatus() {
     hsCyans[2].textContent = data.refresh_interval || '15MIN';
   }
 
+  // Frente A — renderers que consumen el mismo /api/status:
+  renderAgentsActiveCount();
+  renderCircuitBreakerToggle(!!data.circuit_breaker);
+  renderParkingBrakeToggle(!!data.parking_brake);
+
   return data;
 }
 
@@ -251,11 +427,21 @@ async function loadSentinels() {
     const nonHold = tList.find(t => t.last_signal && t.last_signal !== 'HOLD');
     const sig = (nonHold ? nonHold.last_signal : (tList[0]?.last_signal)) || 'HOLD';
 
-    // win/sharpe: promedio sobre los tickers (la API los expone por ticker)
-    const wins    = tList.map(t => Number(t.win_rate) || 0).filter(x => x > 0);
-    const sharpes = tList.map(t => Number(t.sharpe_ratio) || 0);
-    const win    = wins.length    ? wins.reduce((a, b) => a + b, 0)    / wins.length    : 0;
-    const sharpe = sharpes.length ? sharpes.reduce((a, b) => a + b, 0) / sharpes.length : 0;
+    // win/sharpe: promedio ponderado por trades (excluye tickers sin datos)
+    const wins = tList.map(t => Number(t.win_rate) || 0).filter(x => x > 0);
+    const win  = wins.length ? wins.reduce((a, b) => a + b, 0) / wins.length : 0;
+
+    // Sharpe: ponderado por total_trades para reflejar peso real de cada ticker
+    let sharpe = 0;
+    {
+      let wSum = 0, tSum = 0;
+      for (const t of tList) {
+        const sh = Number(t.sharpe_ratio) || 0;
+        const tr = Number(t.total_trades) || 0;
+        if (tr > 0) { wSum += sh * tr; tSum += tr; }
+      }
+      sharpe = tSum > 0 ? wSum / tSum : 0;
+    }
 
     const alloc = (Number(s.allocation_pct) || 0) / 100;
 
@@ -306,7 +492,7 @@ async function loadTrades() {
       qty:    Number(t.qty) || 0,
       px:     Number(t.filled_price) || 0,
       status: t.status || 'PENDING',
-      ts:     (t.created_at || '').slice(11, 19),    // HH:MM:SS
+      ts:     ((t.created_at || '').slice(5, 10) + ' ' + (t.created_at || '').slice(11, 16)),  // MM-DD HH:MM
     };
   });
   STATE.nextId = 1000 + data.length + 1;
@@ -317,23 +503,67 @@ async function loadTrades() {
 }
 
 function synthEquityHist(trades) {
-  // PnL acumulado naive a partir de slippage * qty * sign(side).
-  // No es PnL real (FIFO BUY→SELL) — solo da forma a una curva
-  // hasta que el backend exponga equity series real.
-  if (!trades.length) {
-    // Sin trades: devolver una línea horizontal en 100000 con jitter mínimo
-    const out = [];
-    for (let i = 0; i < 24; i++) out.push(100000 + Math.sin(i * 0.4) * 10);
-    return out;
+  // Curva de equity real: acumula PnL desde trades FILLED con precio.
+  // Usa filled_price para construir la curva. Sin trades = linea plana.
+  const filled = trades.filter(t => t.status === 'FILLED' && t.px > 0);
+  if (!filled.length) {
+    return [100000, 100000, 100000, 100000];
   }
   let acc = 100000;
-  const ordered = [...trades].reverse();   // ASC por created_at
-  return ordered.map(t => {
-    const sign = t.side === 'SELL' ? 1 : -1;
-    const slip = 0;   // sin slippage en el formato handoff — placeholder cero
-    acc += sign * slip * (t.qty || 1);
+  const ordered = [...filled].reverse();   // ASC por created_at
+  return [100000, ...ordered.map(t => {
+    // Aproximacion: BUY resta, SELL suma (proporcional al precio)
+    const delta = t.side === 'SELL' ? (t.px * t.qty * 0.01) : -(t.px * t.qty * 0.01);
+    acc += delta;
     return acc;
-  });
+  })];
+}
+
+/* ============ PORTFOLIO HISTORY (Alpaca read-only) ============ */
+async function fetchPortfolioHistory(period) {
+  if (STATE.equityLoading) return;
+  STATE.equityLoading = true;
+  STATE.equityPeriod = period || STATE.equityPeriod;
+
+  // Map 1Y to 1A for Alpaca API
+  const apiPeriod = STATE.equityPeriod === '1Y' ? '1A' : STATE.equityPeriod;
+
+  try {
+    const data = await _fetchJson('/api/account/portfolio-history?period=' + apiPeriod);
+    if (data && data.equity && data.equity.length > 1) {
+      STATE.equityHist = data.equity;
+      STATE.equityTimestamps = data.timestamps || [];
+      STATE.equityBaseValue = data.base_value || data.equity[0] || 100000;
+
+      // Update KPIs from latest point
+      const latest = data.equity[data.equity.length - 1];
+      const base = STATE.equityBaseValue;
+      const pnl = latest - base;
+      const sign = pnl >= 0 ? '+' : '-';
+
+      const eqCapEl = document.getElementById('eqCapital');
+      const eqPnlEl = document.getElementById('eqPnl');
+      if (eqCapEl) eqCapEl.textContent = '$' + latest.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+      if (eqPnlEl) {
+        eqPnlEl.textContent = sign + '$' + Math.abs(pnl).toFixed(2);
+        eqPnlEl.className = pnl >= 0 ? 'green' : 'red';
+      }
+    } else {
+      // Fallback a sintético
+      STATE.equityHist = synthEquityHist(STATE.trades);
+      STATE.equityBaseValue = 100000;
+      STATE.equityTimestamps = [];
+    }
+  } catch (e) {
+    console.warn('[sentinel-data] fetchPortfolioHistory error:', e);
+    STATE.equityHist = synthEquityHist(STATE.trades);
+    STATE.equityBaseValue = 100000;
+    STATE.equityTimestamps = [];
+  }
+  STATE.equityLoading = false;
+
+  // Re-render equity chart
+  if (typeof renderEquity === 'function') renderEquity();
 }
 
 async function loadMacro() {
@@ -430,9 +660,22 @@ async function reloadFromAPI() {
   if (typeof renderAll === 'function') {
     try { renderAll(); } catch (e) { console.error('[sentinel-data] renderAll:', e); }
   }
+  // Frente B -- poblar KPIs con datos reales de Alpaca (/api/account/equity)
+  if (typeof fetchAndRenderKPIs === 'function') {
+    try { await fetchAndRenderKPIs(); } catch (e) { console.error('[sentinel-data] fetchAndRenderKPIs:', e); }
+  }
+  // Capital card (Excepción 1.2): rentabilidad sobre capital invertido real.
+  if (typeof loadCapitalMetrics === 'function') {
+    try { await loadCapitalMetrics(); } catch (e) { console.error('[sentinel-data] loadCapitalMetrics:', e); }
+  }
   // Footer "Actualizado HH:MM:SS"
   const upd = document.getElementById('footUpd');
   if (upd) upd.textContent = new Date().toTimeString().slice(0, 8);
+
+  // Cargar curva de equity real desde Alpaca (evita el flash de synthEquityHist)
+  if (typeof fetchPortfolioHistory === 'function') {
+    try { await fetchPortfolioHistory(STATE.equityPeriod || '1D'); } catch (e) { console.error('[sentinel-data] fetchPortfolioHistory:', e); }
+  }
 }
 
 let _sse = null;
@@ -1005,12 +1248,211 @@ async function setupMarketStatusIndicator() {
   setInterval(_renderMarketIndicator, 60_000);
 }
 
+/* ============ FRENTE A — RENDERERS HONESTOS (2026-04-28) ============ *
+ * Reemplaza markup literal del bundle handoff por:
+ *   - valores reales cuando hay endpoint que los alimenta
+ *     (agents activos, circuit breaker, parking brake)
+ *   - "—" cuando no hay endpoint y la alternativa sería inventar
+ *     (balance, P&L, posiciones, signals procesadas, max DD,
+ *      correlation guard stats, uptime).
+ * Cuando se cree el endpoint correspondiente (Frente B), reemplazar
+ * el "—" por el valor real en la función renderEmptyKPIs().
+ * ============================================================ */
+
+const _DASH = '—';
+
+function _setText(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+function renderAgentsActiveCount() {
+  const count = AGENTS.filter(a => a.active).length;
+  // textContent porque el bundle pintaba i18n; al sobrescribir perdemos
+  // la traducción dinámica. Acepted trade-off — el número es lo importante,
+  // el resto del label "agentes activos/active" queda en español por ahora.
+  _setText('agentsActiveCount', `${count} ${t('agents_active_label')}`);
+}
+
+function renderCircuitBreakerToggle(active) {
+  const el = document.getElementById('bbCircuit');
+  if (!el) return;
+  el.classList.toggle('on', !active);   // markup original: "on" cuando off — convención inversa
+  el.classList.toggle('off', !!active);
+  const span = el.querySelector('span');
+  if (span) {
+    span.removeAttribute('data-i18n');   // evitar que applyI18n lo pise
+    span.textContent = active ? 'CIRCUIT BREAKER · ON' : 'CIRCUIT BREAKER · OFF';
+  }
+}
+
+function renderParkingBrakeToggle(active) {
+  const el = document.getElementById('bbParking');
+  if (!el) return;
+  el.classList.toggle('on', !active);
+  el.classList.toggle('off', !!active);
+  const span = el.querySelector('span');
+  if (span) {
+    span.removeAttribute('data-i18n');
+    span.textContent = active ? 'PARKING BRAKE · ON' : 'PARKING BRAKE · OFF';
+  }
+}
+
+/* KPIs -- Frente B conectado.
+ * Consulta /api/account/equity (read-only desde Alpaca) y popula los KPIs
+ * del dashboard con datos reales. Los campos que aun no tienen endpoint
+ * (signals, correlation guard, uptime) quedan con "--" hasta implementarlos. */
+
+let _lastEquityData = null;
+const _INITIAL_CAPITAL = 100000; // Capital inicial paper trading
+
+async function fetchAndRenderKPIs() {
+  try {
+    const r = await fetch('/api/account/equity', { credentials: 'same-origin' });
+    if (!r.ok) {
+      console.warn('[sentinel-data] /api/account/equity HTTP', r.status);
+      renderFallbackKPIs();
+      return;
+    }
+    const data = await r.json();
+    _lastEquityData = data;
+
+    // Balance total
+    const equity = data.equity || 0;
+    _setText('osBalance', equity.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
+
+    // PnL (vs capital inicial)
+    const pnl = equity - _INITIAL_CAPITAL;
+    const pnlPct = _INITIAL_CAPITAL > 0 ? (pnl / _INITIAL_CAPITAL * 100) : 0;
+    const sign = pnl >= 0 ? '+' : '-';
+    _setText('osPnl', sign + Math.abs(pnl).toFixed(2));
+    _setText('osPnlPct', (pnl >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%');
+
+    // Equity card
+    _setText('eqCapital', '$' + equity.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
+    _setText('eqPnl', sign + '$' + Math.abs(pnl).toFixed(2));
+
+    // Max Drawdown -- no calculable con un solo punto, dejamos "--" por ahora
+    _setText('eqMaxDD', _DASH);
+
+    // Posiciones abiertas
+    _setText('osOpenPos', String(data.positions_count || 0));
+
+    // Campos aun sin endpoint (Frente B pendiente)
+    _setText('osSigProc',     _DASH);
+    _setText('osSigApproved', _DASH);
+    _setText('osSigRejected', _DASH);
+    _setText('cgAvgCorr',     _DASH);
+    _setText('cgReduced',     _DASH);
+    _setText('cgDiscarded',   _DASH);
+
+  } catch (e) {
+    console.error('[sentinel-data] fetchAndRenderKPIs:', e);
+    renderFallbackKPIs();
+  }
+}
+
+function renderFallbackKPIs() {
+  _setText('osBalance',     _DASH);
+  _setText('osPnl',         _DASH);
+  _setText('osPnlPct',      _DASH);
+  _setText('eqCapital',     _DASH);
+  _setText('eqPnl',         _DASH);
+  _setText('eqMaxDD',       _DASH);
+  _setText('osOpenPos',     _DASH);
+  _setText('osSigProc',     _DASH);
+  _setText('osSigApproved', _DASH);
+  _setText('osSigRejected', _DASH);
+  _setText('cgAvgCorr',     _DASH);
+  _setText('cgReduced',     _DASH);
+  _setText('cgDiscarded',   _DASH);
+}
+
+/* Capital card (Excepción 1.2, 2026-05-13).
+ * Diferencia capital total vs efectivamente invertido y muestra rentabilidad
+ * del día sobre el capital deployado (no sobre el equity total, que se diluye
+ * con el cash dormido). Consume el endpoint /api/account/capital que cumple
+ * el formato { data, meta } del manual de buenas prácticas (sección 6.2). */
+
+function _formatUSD(n) {
+  const sign = n >= 0 ? '' : '-';
+  return sign + '$' + Math.abs(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
+function _formatPct(n, includeSign) {
+  const sign = (includeSign && n >= 0) ? '+' : '';
+  return sign + n.toFixed(2) + '%';
+}
+
+async function loadCapitalMetrics() {
+  try {
+    const r = await fetch('/api/account/capital', { credentials: 'same-origin' });
+    if (!r.ok) {
+      console.warn('[sentinel-data] /api/account/capital HTTP', r.status);
+      renderFallbackCapital();
+      return;
+    }
+    const body = await r.json();
+    const d = body && body.data;
+    if (!d) {
+      console.warn('[sentinel-data] /api/account/capital: respuesta sin data');
+      renderFallbackCapital();
+      return;
+    }
+
+    _setText('capInvested', _formatUSD(d.invested) + ' (' + _formatPct(d.invested_pct_of_equity, false) + ')');
+    _setText('capDayPnl',   _formatUSD(d.day_pnl) + ' (' + _formatPct(d.day_pnl_pct_of_invested, true) + ')');
+
+    // Color del PnL según signo: verde si ≥0, rojo si <0. Reusa clases del handoff.
+    const pnlEl = document.getElementById('capDayPnl');
+    if (pnlEl) pnlEl.className = d.day_pnl >= 0 ? 'green' : 'red';
+  } catch (e) {
+    console.error('[sentinel-data] loadCapitalMetrics:', e);
+    renderFallbackCapital();
+  }
+}
+
+function renderFallbackCapital() {
+  _setText('capInvested', _DASH);
+  _setText('capDayPnl',   _DASH);
+}
+
+// Alias para compatibilidad -- reloadFromAPI() llama renderEmptyKPIs()
+const renderEmptyKPIs = fetchAndRenderKPIs;
+
+/* footBuild se popula con metadata.system_version del /api/report al boot.
+ * Un único fetch — no se refresca periódicamente porque la versión no
+ * cambia mientras el bot esté corriendo el mismo deploy. */
+async function fetchAndRenderBuild() {
+  try {
+    const r = await fetch('/api/report?range=today', { credentials: 'same-origin' });
+    if (!r.ok) { _setText('footBuild', _DASH); return; }
+    const data = await r.json();
+    const version = data && data.metadata && data.metadata.system_version;
+    _setText('footBuild', version || _DASH);
+    // Uptime from system_health
+    const uptimeH = data && data.system_health && data.system_health.uptime_hours;
+    if (uptimeH != null) {
+      _setText('footUptime', uptimeH < 1 ? '<1h' : Math.round(uptimeH) + 'h');
+    }
+  } catch (e) {
+    console.debug('[sentinel-data] fetchAndRenderBuild:', e);
+    _setText('footBuild', _DASH);
+  }
+}
+
 /* ============ BOOT ============ */
 setupPersistence();
 setupKillSwitch();
 setupAdminLink();
 setupRotationsBanner();
 setupMarketStatusIndicator();
+
+// Aplicar "--" al markup literal ANTES de la primera carga, asi no parpadean
+// los valores ficticios del bundle durante los ~100-300ms de fetch.
+// El fetch real de KPIs ocurre dentro de reloadFromAPI() via fetchAndRenderKPIs().
+renderFallbackKPIs();
+fetchAndRenderBuild();
 
 // Disparar la primera carga + abrir SSE. No esperamos a DOMContentLoaded —
 // sentinel-app.js corre sincrónico justo después de este archivo y popula

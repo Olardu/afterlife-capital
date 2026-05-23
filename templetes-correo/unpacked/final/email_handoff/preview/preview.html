@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Email Templates — Preview</title>
+<style>
+  body { margin:0; padding:0; background:#030610; font-family: 'Courier New', monospace; color:#d8e6f5; }
+  .top { padding: 20px 24px; border-bottom: 1px solid rgba(0,245,255,0.18); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px; }
+  .brand { font-size: 14px; font-weight: 900; letter-spacing: 3px; }
+  .brand .v { color:#00f5ff; }
+  .controls { display:flex; gap:8px; flex-wrap:wrap; }
+  .controls button { background: transparent; border: 1px solid rgba(0,245,255,0.18); color:#6a7a96; font-family: inherit; font-size: 10px; letter-spacing:2px; padding: 6px 12px; cursor:pointer; }
+  .controls button.active { background:#00f5ff; color:#000; border-color:#00f5ff; }
+  .frames { padding: 24px; display:grid; grid-template-columns: 1fr; gap:24px; }
+  iframe { width:100%; height: 1400px; border: 1px solid rgba(0,245,255,0.18); background:#030610; display:block; }
+  h2 { font-size: 11px; letter-spacing: 3px; color:#00f5ff; margin: 0 0 10px; }
+  .info { font-size: 11px; color:#6a7a96; margin-bottom: 8px; letter-spacing: 1px; }
+</style>
+</head>
+<body>
+  <div class="top">
+    <div class="brand">AFTER<span class="v">LIFE</span> · EMAIL TEMPLATES</div>
+    <div class="controls" id="roleCtrl">
+      <button data-role="ADMIN" class="active">ROL: ADMIN</button>
+      <button data-role="VIEWER">ROL: VIEWER</button>
+    </div>
+  </div>
+  <div class="frames">
+    <div>
+      <h2>// TEMPLATE 1 — BIENVENIDA / WELCOME</h2>
+      <div class="info">templates/welcome.html — variables: {email}, {role}, {admin_permissions_es}, {admin_permissions_en}</div>
+      <iframe id="frameWelcome"></iframe>
+    </div>
+    <div>
+      <h2>// TEMPLATE 2 — ACCESO REVOCADO / ACCESS REVOKED</h2>
+      <div class="info">templates/revoked.html — variables: {email}</div>
+      <iframe id="frameRevoked"></iframe>
+    </div>
+  </div>
+
+<script>
+const ADMIN_ES = `<tr><td style="padding:6px 0;font-family:'Courier New',Courier,monospace;font-size:13px;line-height:1.6;color:#d8e6f5;"><span style="color:#ff00d4;">›</span>&nbsp; <b style="color:#ff00d4;letter-spacing:1px;">[ADMIN]</b> Controlar el sistema (iniciar / detener / ajustar)</td></tr>`;
+const ADMIN_EN = `<tr><td style="padding:6px 0;font-family:'Courier New',Courier,monospace;font-size:13px;line-height:1.6;color:#d8e6f5;"><span style="color:#ff00d4;">›</span>&nbsp; <b style="color:#ff00d4;letter-spacing:1px;">[ADMIN]</b> Control the system (start / stop / adjust)</td></tr>`;
+
+async function loadWelcome(role) {
+  const res = await fetch('../templates/welcome.html');
+  let html = await res.text();
+  html = html.replaceAll('{email}', 'user@example.com');
+  html = html.replaceAll('{role}', role);
+  html = html.replaceAll('{admin_permissions_es}', role === 'ADMIN' ? ADMIN_ES : '');
+  html = html.replaceAll('{admin_permissions_en}', role === 'ADMIN' ? ADMIN_EN : '');
+  document.getElementById('frameWelcome').srcdoc = html;
+}
+
+document.querySelectorAll('#roleCtrl button').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('#roleCtrl button').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    loadWelcome(b.dataset.role);
+  });
+});
+
+loadWelcome('ADMIN');
+
+// for revoked, swap email via querystring trick: rewrite srcdoc instead
+fetch('../templates/revoked.html').then(r => r.text()).then(t => {
+  document.getElementById('frameRevoked').srcdoc = t.replaceAll('{email}', 'user@example.com');
+});
+</script>
+</body>
+</html>

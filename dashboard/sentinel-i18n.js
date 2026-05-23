@@ -11,7 +11,7 @@ const I18N = {
 
     /* sections */
     sec_agents:"// AGENTES DEL SISTEMA",
-    agents_meta:"5 agentes activos",
+    agents_meta:"5 agentes activos", agents_active_label:"agentes activos",
     sec_ops_summary:"// ESTADO DE OPERACIÓN",
     updated_ago:"actualizado hace", min_ago:"min",
     sec_equity:"// CURVA DE EQUITY", equity_24h:"últimas 24h",
@@ -31,6 +31,7 @@ const I18N = {
 
     /* equity */
     eq_capital:"Capital", eq_pnl:"PnL día", eq_max_dd:"Max DD",
+    cap_total:"Capital total", cap_invested:"Invertido", cap_pnl_invested:"PnL s/ invertido",
 
     /* sentinel cards */
     st_win:"WIN", st_sharpe:"SHARPE", st_alloc:"ALLOC",
@@ -59,6 +60,21 @@ const I18N = {
 
     /* signals & sides */
     sig_buy:"COMPRA", sig_sell:"VENTA", sig_hold:"HOLD",
+    sig_watching:"VIGILANDO",
+    /* status de trades */
+    st_filled:"Ejecutada", st_filled_tip:"La orden se completó al precio indicado",
+    st_cancelled:"Cancelada", st_cancelled_tip:"La orden fue cancelada antes de ejecutarse",
+    st_partial:"Parcial", st_partial_tip:"La orden se ejecutó solo parcialmente",
+    st_expired:"Expirada", st_expired_tip:"La orden expiró sin ejecutarse",
+    st_rejected:"Rechazada", st_rejected_tip:"El broker rechazó la orden",
+    st_pending:"Enviada", st_pending_tip:"Orden enviada, esperando confirmación del broker",
+    st_new:"Recibida", st_new_tip:"Orden recibida por el broker",
+    st_accepted:"Aceptada", st_accepted_tip:"Orden aceptada por el broker",
+    st_suspended:"Suspendida", st_suspended_tip:"Orden suspendida temporalmente",
+    st_unknown:"Desconocido", st_unknown_tip:"Estado no reconocido",
+    /* posiciones abiertas */
+    pos_long:"Abierta (compra)", pos_long_tip:"Posición larga: se compró y aún no se ha vendido",
+    pos_short:"Abierta (venta)", pos_short_tip:"Posición corta: se vendió y aún no se ha recomprado",
 
     /* tables */
     th_id:"#", th_sent:"SENTINEL", th_strat:"ESTRATEGIA", th_ticker:"TICKER", th_side:"LADO",
@@ -66,7 +82,7 @@ const I18N = {
     th_signal:"SEÑAL", th_win:"WIN", th_sharpe:"SHARPE", th_alloc:"ALLOC",
     th_pnl:"P&L", th_trades:"TRADES", th_decay:"DECAY", th_slip:"SLIP",
     th_date:"FECHA",
-    dt_tickers:"TICKERS OPERADOS", dt_recent:"ÚLTIMOS 5 TRADES",
+    dt_tickers:"TICKERS ASIGNADOS", dt_recent:"ÚLTIMOS 5 TRADES",
     empty_ops:"Sin operaciones ejecutadas",
 
     /* agents */
@@ -107,7 +123,7 @@ const I18N = {
     r_hour:"Última hora", r_today:"Hoy", r_week:"Última semana", r_month:"Último mes", r_all:"Todo",
 
     /* footer */
-    foot_demo:"Datos de demostración",
+    foot_demo:"Sistema en vivo",
     foot_updated:"Actualizado", foot_uptime:"Uptime", foot_build:"Build",
   },
 
@@ -119,7 +135,7 @@ const I18N = {
     btn_detener:"+ STOP",
     title_tag:"// TRADING DESK",
 
-    sec_agents:"// SYSTEM AGENTS", agents_meta:"5 agents active",
+    sec_agents:"// SYSTEM AGENTS", agents_meta:"5 agents active", agents_active_label:"agents active",
     sec_ops_summary:"// OPERATIONAL STATUS",
     updated_ago:"updated", min_ago:"min ago",
     sec_equity:"// EQUITY CURVE", equity_24h:"last 24h",
@@ -137,6 +153,7 @@ const I18N = {
     os_approved:"approved", os_rejected:"rejected",
 
     eq_capital:"Capital", eq_pnl:"Day PnL", eq_max_dd:"Max DD",
+    cap_total:"Total capital", cap_invested:"Invested", cap_pnl_invested:"PnL on invested",
     st_win:"WIN", st_sharpe:"SHARPE", st_alloc:"ALLOC",
 
     sma_xover:"SMA Crossover — Trend Following",
@@ -160,13 +177,26 @@ const I18N = {
     desc_bb_squeeze:"Detects volatility compression (narrow Bollinger Bands). When bands sit at lowest percentile and price breaks one direction, trades the breakout. No squeeze, no trade.",
 
     sig_buy:"BUY", sig_sell:"SELL", sig_hold:"HOLD",
+    sig_watching:"WATCHING",
+    st_filled:"Filled", st_filled_tip:"Order completed at the listed price",
+    st_cancelled:"Cancelled", st_cancelled_tip:"Order was cancelled before execution",
+    st_partial:"Partial", st_partial_tip:"Order was only partially filled",
+    st_expired:"Expired", st_expired_tip:"Order expired without being filled",
+    st_rejected:"Rejected", st_rejected_tip:"The broker rejected this order",
+    st_pending:"Sent", st_pending_tip:"Order sent, awaiting broker confirmation",
+    st_new:"Received", st_new_tip:"Order received by the broker",
+    st_accepted:"Accepted", st_accepted_tip:"Order accepted by the broker",
+    st_suspended:"Suspended", st_suspended_tip:"Order temporarily suspended",
+    st_unknown:"Unknown", st_unknown_tip:"Unrecognized status",
+    pos_long:"Open (buy)", pos_long_tip:"Long position: bought and not yet sold",
+    pos_short:"Open (sell)", pos_short_tip:"Short position: sold and not yet bought back",
 
     th_id:"#", th_sent:"SENTINEL", th_strat:"STRATEGY", th_ticker:"SYMBOL", th_side:"SIDE",
     th_qty:"QTY", th_px:"PRICE", th_status:"STATUS", th_ts:"TIME",
     th_signal:"SIGNAL", th_win:"WIN", th_sharpe:"SHARPE", th_alloc:"ALLOC",
     th_pnl:"P&L", th_trades:"TRADES", th_decay:"DECAY", th_slip:"SLIP",
     th_date:"DATE",
-    dt_tickers:"TICKERS TRADED", dt_recent:"LAST 5 TRADES",
+    dt_tickers:"ASSIGNED TICKERS", dt_recent:"LAST 5 TRADES",
     empty_ops:"No executed orders",
 
     ag_dispatcher:"DISPATCHER", ag_dispatcher_sub:"Central Orchestrator",
@@ -202,7 +232,7 @@ const I18N = {
     dl_range:"RANGE:", dl_btn:"DOWNLOAD JSON REPORT",
     r_hour:"Last hour", r_today:"Today", r_week:"Last week", r_month:"Last month", r_all:"All",
 
-    foot_demo:"Demo data",
+    foot_demo:"System live",
     foot_updated:"Updated", foot_uptime:"Uptime", foot_build:"Build",
   },
 
@@ -214,7 +244,7 @@ const I18N = {
     btn_detener:"+ 停止",
     title_tag:"// 取引デスク",
 
-    sec_agents:"// システムエージェント", agents_meta:"5エージェント稼働中",
+    sec_agents:"// システムエージェント", agents_meta:"5エージェント稼働中", agents_active_label:"エージェント稼働中",
     sec_ops_summary:"// 運用ステータス",
     updated_ago:"更新", min_ago:"分前",
     sec_equity:"// エクイティカーブ", equity_24h:"24時間",
@@ -232,6 +262,7 @@ const I18N = {
     os_approved:"承認", os_rejected:"却下",
 
     eq_capital:"資本", eq_pnl:"日次損益", eq_max_dd:"最大DD",
+    cap_total:"総資本", cap_invested:"投資中", cap_pnl_invested:"投資損益",
     st_win:"勝率", st_sharpe:"シャープ", st_alloc:"配分",
 
     sma_xover:"SMAクロス — トレンドフォロー",
@@ -255,13 +286,26 @@ const I18N = {
     desc_bb_squeeze:"ボラティリティ圧縮(狭いボリンジャーバンド)を検出。バンドが最低パーセンタイルにあり、価格がブレイクした方向にトレード。圧縮なし=取引なし。",
 
     sig_buy:"買い", sig_sell:"売り", sig_hold:"維持",
+    sig_watching:"監視中",
+    st_filled:"約定済", st_filled_tip:"注文は表示価格で完了しました",
+    st_cancelled:"取消済", st_cancelled_tip:"注文は執行前に取り消されました",
+    st_partial:"一部約定", st_partial_tip:"注文は部分的にのみ約定されました",
+    st_expired:"期限切れ", st_expired_tip:"注文は約定せずに期限切れになりました",
+    st_rejected:"拒否", st_rejected_tip:"ブローカーがこの注文を拒否しました",
+    st_pending:"送信済", st_pending_tip:"注文送信済み、ブローカーの確認を待っています",
+    st_new:"受領済", st_new_tip:"ブローカーが注文を受領しました",
+    st_accepted:"受付済", st_accepted_tip:"ブローカーが注文を受け付けました",
+    st_suspended:"一時停止", st_suspended_tip:"注文が一時的に停止されています",
+    st_unknown:"不明", st_unknown_tip:"認識できない状態です",
+    pos_long:"買建玉", pos_long_tip:"ロングポジション：購入済み、未売却",
+    pos_short:"売建玉", pos_short_tip:"ショートポジション：売却済み、未買戻し",
 
     th_id:"#", th_sent:"SENTINEL", th_strat:"戦略", th_ticker:"銘柄", th_side:"方向",
     th_qty:"数量", th_px:"価格", th_status:"状態", th_ts:"時刻",
     th_signal:"シグナル", th_win:"勝率", th_sharpe:"シャープ", th_alloc:"配分",
     th_pnl:"損益", th_trades:"取引", th_decay:"減衰", th_slip:"スリッページ",
     th_date:"日付",
-    dt_tickers:"取引銘柄", dt_recent:"直近5取引",
+    dt_tickers:"割り当て銘柄", dt_recent:"直近5取引",
     empty_ops:"約定なし",
 
     ag_dispatcher:"DISPATCHER", ag_dispatcher_sub:"中央オーケストレーター",
@@ -297,7 +341,7 @@ const I18N = {
     dl_range:"範囲:", dl_btn:"JSON レポートをダウンロード",
     r_hour:"過去1時間", r_today:"今日", r_week:"先週", r_month:"先月", r_all:"全て",
 
-    foot_demo:"デモデータ",
+    foot_demo:"システム稼働中",
     foot_updated:"更新", foot_uptime:"稼働", foot_build:"ビルド",
   },
 
@@ -309,7 +353,7 @@ const I18N = {
     btn_detener:"+ หยุด",
     title_tag:"// โต๊ะเทรด",
 
-    sec_agents:"// เอเจนต์ระบบ", agents_meta:"5 เอเจนต์ทำงาน",
+    sec_agents:"// เอเจนต์ระบบ", agents_meta:"5 เอเจนต์ทำงาน", agents_active_label:"เอเจนต์ทำงาน",
     sec_ops_summary:"// สถานะการทำงาน",
     updated_ago:"อัปเดตเมื่อ", min_ago:"นาทีที่แล้ว",
     sec_equity:"// เส้นโค้งทุน", equity_24h:"24ชม.ล่าสุด",
@@ -327,6 +371,7 @@ const I18N = {
     os_approved:"อนุมัติ", os_rejected:"ปฏิเสธ",
 
     eq_capital:"ทุน", eq_pnl:"PnL วัน", eq_max_dd:"DD สูงสุด",
+    cap_total:"ทุนทั้งหมด", cap_invested:"ลงทุนแล้ว", cap_pnl_invested:"PnL ต่อทุนลงทุน",
     st_win:"ชนะ", st_sharpe:"SHARPE", st_alloc:"จัดสรร",
 
     sma_xover:"SMA Crossover — ตามเทรนด์",
@@ -350,13 +395,26 @@ const I18N = {
     desc_bb_squeeze:"ตรวจจับการบีบของความผันผวน (Bollinger Bands แคบ). เมื่อแถบอยู่ percentile ต่ำสุดและราคาทะลุ = เทรด breakout. ไม่บีบ = ไม่เทรด",
 
     sig_buy:"ซื้อ", sig_sell:"ขาย", sig_hold:"ถือ",
+    sig_watching:"เฝ้าดู",
+    st_filled:"สำเร็จ", st_filled_tip:"คำสั่งเสร็จสมบูรณ์ตามราคาที่แสดง",
+    st_cancelled:"ยกเลิก", st_cancelled_tip:"คำสั่งถูกยกเลิกก่อนดำเนินการ",
+    st_partial:"บางส่วน", st_partial_tip:"คำสั่งดำเนินการเพียงบางส่วน",
+    st_expired:"หมดอายุ", st_expired_tip:"คำสั่งหมดอายุโดยไม่ได้ดำเนินการ",
+    st_rejected:"ถูกปฏิเสธ", st_rejected_tip:"โบรกเกอร์ปฏิเสธคำสั่งนี้",
+    st_pending:"ส่งแล้ว", st_pending_tip:"ส่งคำสั่งแล้ว รอการยืนยันจากโบรกเกอร์",
+    st_new:"รับแล้ว", st_new_tip:"โบรกเกอร์ได้รับคำสั่งแล้ว",
+    st_accepted:"ยอมรับ", st_accepted_tip:"โบรกเกอร์ยอมรับคำสั่งแล้ว",
+    st_suspended:"ระงับ", st_suspended_tip:"คำสั่งถูกระงับชั่วคราว",
+    st_unknown:"ไม่ทราบ", st_unknown_tip:"สถานะที่ไม่รู้จัก",
+    pos_long:"เปิด (ซื้อ)", pos_long_tip:"สถานะซื้อ: ซื้อแล้วยังไม่ได้ขาย",
+    pos_short:"เปิด (ขาย)", pos_short_tip:"สถานะขาย: ขายแล้วยังไม่ได้ซื้อคืน",
 
     th_id:"#", th_sent:"SENTINEL", th_strat:"กลยุทธ์", th_ticker:"สัญลักษณ์", th_side:"ฝั่ง",
     th_qty:"จำนวน", th_px:"ราคา", th_status:"สถานะ", th_ts:"เวลา",
     th_signal:"สัญญาณ", th_win:"ชนะ", th_sharpe:"SHARPE", th_alloc:"จัดสรร",
     th_pnl:"P&L", th_trades:"เทรด", th_decay:"เสื่อม", th_slip:"สลิป",
     th_date:"วันที่",
-    dt_tickers:"สัญลักษณ์ที่เทรด", dt_recent:"5 เทรดล่าสุด",
+    dt_tickers:"สัญลักษณ์ที่กำหนด", dt_recent:"5 เทรดล่าสุด",
     empty_ops:"ไม่มีคำสั่ง",
 
     ag_dispatcher:"DISPATCHER", ag_dispatcher_sub:"ผู้จัดการกลาง",
@@ -392,7 +450,7 @@ const I18N = {
     dl_range:"ช่วง:", dl_btn:"ดาวน์โหลดรายงาน JSON",
     r_hour:"ชั่วโมงล่าสุด", r_today:"วันนี้", r_week:"สัปดาห์ล่าสุด", r_month:"เดือนล่าสุด", r_all:"ทั้งหมด",
 
-    foot_demo:"ข้อมูลตัวอย่าง",
+    foot_demo:"ระบบทำงาน",
     foot_updated:"อัปเดต", foot_uptime:"เวลาทำงาน", foot_build:"Build",
   }
 };

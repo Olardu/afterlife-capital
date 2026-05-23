@@ -129,6 +129,10 @@ class Dispatcher:
         Calcula la asignación de capital (%) por Sentinel usando Half-Kelly
         ponderado por Sharpe ratio.
 
+        Los scores vienen per-ticker desde performance_scores. Esta función
+        los agrega a nivel Sentinel usando promedio ponderado por total_trades:
+            sentinel_sharpe = Σ(sharpe_i × trades_i) / Σ(trades_i)
+
         Sentinels sin historial reciben MIN_CAPITAL_PER_SENTINEL.
         La suma total se normaliza para no exceder 100%.
 
@@ -145,13 +149,43 @@ class Dispatcher:
             logger.info("Sin performance scores disponibles. Allocation vacía.")
             return {}
 
+        # --- Paso 1: Agregar per-ticker → per-sentinel (promedio ponderado) ---
+        # Conversión explícita float()/int(): asyncpg devuelve NUMERIC como
+        # decimal.Decimal y INTEGER como int, pero ambos se mezclan con los
+        # acumuladores float que inicializamos abajo. Sin esta conversión el
+        # `+=` lanza TypeError("unsupported operand type(s) for +=: 'float'
+        # and 'decimal.Decimal'"). Cierra el #H-4 en este punto y queda como
+        # extensión de la Excepción 1 del OBSERVATION_PERIOD.md.
+        sentinel_agg: dict[str, dict] = {}  # sid → {weighted_sharpe_sum, total_trades}
+        for score in scores:
+            sid    = str(score["sentinel_id"])
+            sharpe = max(float(score["sharpe_ratio"] or 0.0), 0.0)
+            trades = int(score["total_trades"] or 0)
+
+            if sid not in sentinel_agg:
+                sentinel_agg[sid] = {"weighted_sharpe_sum": 0.0, "total_trades": 0}
+
+            sentinel_agg[sid]["weighted_sharpe_sum"] += sharpe * trades
+            sentinel_agg[sid]["total_trades"]        += trades
+
+        # Calcular Sharpe agregado por sentinel
+        sentinel_sharpes: dict[str, float] = {}
+        for sid, agg in sentinel_agg.items():
+            if agg["total_trades"] > 0:
+                sentinel_sharpes[sid] = agg["weighted_sharpe_sum"] / agg["total_trades"]
+            else:
+                sentinel_sharpes[sid] = 0.0
+
+        logger.debug(
+            f"Sharpe agregado por sentinel: "
+            f"{ {k: f'{v:.4f}' for k, v in sentinel_sharpes.items()} }"
+        )
+
+        # --- Paso 2: Half-Kelly allocation con Sharpes agregados ---
+        total_sharpe = sum(sentinel_sharpes.values())
         allocation: dict[str, float] = {}
-        sharpe_values = [max(s["sharpe_ratio"] or 0.0, 0.0) for s in scores]
-        total_sharpe  = sum(sharpe_values)
 
-        for score, sharpe in zip(scores, sharpe_values):
-            sid = str(score["sentinel_id"])
-
+        for sid, sharpe in sentinel_sharpes.items():
             if total_sharpe == 0 or sharpe == 0:
                 base = MIN_CAPITAL_PER_SENTINEL
             else:
