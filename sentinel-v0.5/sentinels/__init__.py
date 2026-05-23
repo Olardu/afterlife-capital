@@ -1,7 +1,7 @@
 # sentinels/__init__.py
 # Módulo base para los 10 Sentinels de Sentinel v0.5.
 # Define la clase abstracta BaseSentinel y los 9 Sentinels concretos:
-# S-1 SMA Crossover, S-2 RSI Short, S-3 Bollinger Bounce, S-4 MACD+Volume,
+# S-1 SMA Crossover, S-2 RSI Fast Reversion, S-3 Bollinger Bounce, S-4 MACD+Volume,
 # S-5 ORB, S-6 EMA Triple, S-7 VWAP Reversion, S-8 RSI Divergence,
 # S-9 Bollinger Squeeze. (S-10 RegimeClassifier vive en regime_classifier.py.)
 #
@@ -267,7 +267,7 @@ class SentinelSMACrossover(BaseSentinel):
 
 
 # =============================================================================
-# S-2: RSI SHORT — Mean Reversion
+# S-2: RSI FAST REVERSION — Mean Reversion
 # =============================================================================
 
 class SentinelRSIShort(BaseSentinel):
@@ -288,7 +288,7 @@ class SentinelRSIShort(BaseSentinel):
         super().__init__(
             sentinel_id   = sentinel_id,
             owner_id      = owner_id,
-            name          = "S-2 RSI Short",
+            name          = "S-2 RSI Fast Reversion",
             tickers       = _default_tickers(tickers),
             strategy_type = "rsi_short",
         )
