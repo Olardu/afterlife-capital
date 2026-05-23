@@ -3,7 +3,20 @@
 # Nodo raíz del grafo LangGraph. Coordina The Ear, CorrelationGuard,
 # RegimeClassifier e Historian para tomar la decisión final de operar.
 # Todas las llamadas al SDK de Alpaca (síncrono) se envuelven en asyncio.to_thread.
+#
+# Índice (secciones buscables por marcador "§ N"):
+#   § 1 — Imports y configuración
+#   § 2 — Inicialización (Dispatcher.__init__)
+#   § 3 — Sincronización con Alpaca
+#   § 4 — Distribución de capital (allocate_capital, apply_regime_adjustment)
+#   § 5 — Pipeline de señal (process_signal, _apply_fill_to_cache)
+#   § 6 — Ejecución de órdenes
+#   § 7 — Kill switch
+#   § 8 — Ciclo principal (run_cycle)
 
+# ════════════════════════════════════════════════════════════
+# § 1 — Imports y configuración
+# ════════════════════════════════════════════════════════════
 import asyncio
 import logging
 import math
@@ -44,6 +57,9 @@ _LIMIT_STRATEGIES = {
 }
 
 
+# ════════════════════════════════════════════════════════════
+# § 2 — Inicialización
+# ════════════════════════════════════════════════════════════
 class Dispatcher:
     def __init__(
         self,
@@ -63,9 +79,9 @@ class Dispatcher:
         # Estructura: {ticker: {ticker, qty, sentinel_id, side}}
         self.open_positions: dict[str, dict] = {}
 
-    # -------------------------------------------------------------------------
-    # Sincronización con Alpaca
-    # -------------------------------------------------------------------------
+    # ════════════════════════════════════════════════════════
+    # § 3 — Sincronización con Alpaca
+    # ════════════════════════════════════════════════════════
 
     async def sync_positions_from_alpaca(self):
         """
@@ -120,9 +136,9 @@ class Dispatcher:
             for p in positions
         }
 
-    # -------------------------------------------------------------------------
-    # Distribución de capital
-    # -------------------------------------------------------------------------
+    # ════════════════════════════════════════════════════════
+    # § 4 — Distribución de capital
+    # ════════════════════════════════════════════════════════
 
     async def allocate_capital(self) -> dict[str, float]:
         """
@@ -226,9 +242,9 @@ class Dispatcher:
 
         return {sid: pct * multiplier for sid, pct in allocation.items()}
 
-    # -------------------------------------------------------------------------
-    # Pipeline de señal
-    # -------------------------------------------------------------------------
+    # ════════════════════════════════════════════════════════
+    # § 5 — Pipeline de señal
+    # ════════════════════════════════════════════════════════
 
     async def process_signal(
         self,
@@ -448,9 +464,9 @@ class Dispatcher:
         else:
             self.open_positions[ticker] = position
 
-    # -------------------------------------------------------------------------
-    # Ejecución de órdenes
-    # -------------------------------------------------------------------------
+    # ════════════════════════════════════════════════════════
+    # § 6 — Ejecución de órdenes
+    # ════════════════════════════════════════════════════════
 
     @staticmethod
     def _is_limit_strategy(strategy_type: str) -> bool:
@@ -619,9 +635,9 @@ class Dispatcher:
         account = client.get_account()
         return float(account.equity)
 
-    # -------------------------------------------------------------------------
-    # Kill switch
-    # -------------------------------------------------------------------------
+    # ════════════════════════════════════════════════════════
+    # § 7 — Kill switch
+    # ════════════════════════════════════════════════════════
 
     async def activate_kill_switch(self, confirmation: str):
         """
@@ -668,9 +684,9 @@ class Dispatcher:
         client.close_all_positions(cancel_orders=True)
         logger.info("Todas las órdenes canceladas y posiciones liquidadas.")
 
-    # -------------------------------------------------------------------------
-    # Ciclo principal
-    # -------------------------------------------------------------------------
+    # ════════════════════════════════════════════════════════
+    # § 8 — Ciclo principal
+    # ════════════════════════════════════════════════════════
 
     async def run_cycle(self, pending_signals: list[dict] = None):
         """
