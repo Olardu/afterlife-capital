@@ -1,9 +1,12 @@
 # Manual de Buenas Prácticas v2.0
 
 **Autor:** Roman Alejandro  
-**Versión:** 2.4  
+**Versión:** 2.5  
 **Fecha:** 24 de mayo de 2026  
 **Alcance:** Universal — aplica a todos los proyectos, lenguajes y frameworks.
+
+**Cambios v2.4 → v2.5 (24-may-2026 — Validación técnica post-edit, derivada del incidente Code post-`d73568f`):**
+- Ampliación 14: nuevo bloque **"Verificación técnica post-edit (gate OBLIGATORIO antes de DONE)"** al inicio del checklist. Incluye `py_compile` + `pytest` + `git diff --stat` + preferencia `Edit` sobre `Write` + manejo de truncado silencioso del tool. Cierra el gap del 24-may madrugada (4 .py truncados, Code reportó "DONE" sin validar).
 
 **Cambios v2.3 → v2.4 (24-may-2026 — Seguridad, 4 mejoras propuestas por Code en sesión 23-may):**
 - Ampliación 7.1: prevención de exposición de secretos (ignorar backups de secretos + pre-commit gitleaks/detect-secrets).
@@ -1015,45 +1018,77 @@ Cada proyecto **documenta su layout en `PROJECT_MAP.md`**. Si el layout difiere 
 
 ## 14. Checklist de Revisión
 
-Antes de dar por terminado un cambio significativo, recorrer este checklist:
+Antes de dar por terminado un cambio significativo, recorrer este checklist.
 
-**Diseño:**
+### 14.0 Verificación técnica post-edit (gate OBLIGATORIO antes de DONE)
+
+**Esta sección es bloqueante.** Backup pre-edit catalogado protege contra perder código viejo. **NO protege contra reportar "DONE" con código nuevo roto** — esa es responsabilidad del checklist post-edit que sigue. Aplicar siempre antes de cualquier `[CODE DONE]`, "trabajo terminado", commit o push:
+
+**1. Compilación / parsing del lenguaje:**
+- Python: `python -m py_compile <archivos modificados>` → exit 0, sin `SyntaxError`.
+- JavaScript: `node --check <archivo>` → exit 0.
+- TypeScript/otros: equivalente del proyecto. Si el lenguaje no tiene check rápido (Bash, SQL), validar manualmente con `tail -20` que el archivo no quedó truncado.
+
+**2. Tests automatizados:**
+- Suite completa del proyecto debe pasar con el número esperado (ej. `pytest sentinel-v0.5/tests/ -q` → `77/77`).
+- Si suite falla o el número difiere de lo esperado → investigar antes de DONE.
+
+**3. Verificación de magnitud del cambio:**
+- `git diff --stat <archivos>` debe reportar líneas eliminadas/agregadas coherentes con lo prometido en la tarea.
+- Eliminación masiva inesperada (ej. −100, −350 líneas en un fix puntual) es señal de **truncado o refactor no intencional** → revisar línea por línea antes de DONE.
+
+**4. Para archivos no-código (`.md`, `.json`, `.yaml`):**
+- Después de un Edit/Write extenso, verificar con `grep -c "<frase única del contenido nuevo>" <archivo>`. Si retorna 0 → el cambio no se aplicó (el tool falló silenciosamente). Reintentar.
+
+**5. Si cualquiera de los pasos anteriores falla:**
+- Revertir con `git checkout HEAD -- <archivo>` o restaurar desde `.bak` catalogado.
+- Reportar `[CODE BLOQ]` (o `[COWORK BLOQ]`) con el error específico.
+- **NUNCA** reportar `[CODE DONE]` o `[COWORK DONE]` si el checklist técnico no pasa.
+
+**6. Prevención (elección de tool):**
+- **Preferir `Edit` sobre `Write`** para cambios incrementales. `Edit` falla con error visible si el `old_string` no matchea; `Write` puede truncar silenciosamente al hit buffer/pipe limit.
+- **Para reemplazos extensos**: dividir en N `Edit` quirúrgicos. Si imprescindible un `Write`, verificar inmediatamente con `wc -l <archivo>` + `tail -5 <archivo>` (detección de truncado) + `py_compile`.
+
+**Precedente:** incidente 2026-05-24 madrugada en Sentinel. Code completó limpio el commit `d73568f` (#GR-3, suite 77/77). Post-commit intentó más edits y 4 archivos del bot quedaron truncados (`historian.py` cortado a media palabra en `except asyncpg.Pos`, más `main.py` / `email_service.py` / `config.py` con strings/parens sin cerrar). Code reportó "acabó" sin correr `py_compile` ni `pytest`. Detección a posteriori por Cowork al inspeccionar working tree. Si Roman arrancaba el bot el lunes pre-apertura sin detectar, hubiera explotado al import. Rescue via `git show HEAD + cp` (bypass de índice corrupto por bug paralelo). El backup pre-edit existía y estaba bien hecho — eso protegió el código viejo. Lo que faltó fue este gate.
+
+### 14.1 Diseño:
+
 - [ ] ¿Cumple SOLID (§3)? Especialmente SRP — una sola responsabilidad por unidad.
 - [ ] Si toca dinero/equity/posiciones, ¿usa `Decimal` everywhere (no `float`)?
 - [ ] Si agrega un endpoint nuevo, ¿sigue el formato estándar de §6.2 (`{ data, meta }` o `{ error, codigo, detalle, status }`)?
 
-**Código:**
+### 14.2 Código:
 - [ ] Nombres descriptivos (§4.1). Booleanos con prefijo `es_/tiene_/puede_`. Funciones con verbo.
 - [ ] Funciones ≤30 líneas, ≤4 parámetros (§4.2).
 - [ ] Sin magic numbers (§4.5).
 - [ ] Errores específicos con logging y propagación adecuada (§4.6).
 - [ ] Sin código muerto, sin imports sin usar (§4.4).
 
-**Persistencia y seguridad:**
+### 14.3 Persistencia y seguridad:
 - [ ] Queries parametrizadas, sin concatenación de strings (§7.4).
 - [ ] Inputs validados en servidor (§7.2).
 - [ ] `.env`, `client_secret_*`, `*.dump`, backups in-place excluidos del repo (§7.1 + `.gitignore`).
 - [ ] Si es repo público, **audit de archivos sensibles** antes de push (PII, dumps DB, inventarios, code-outputs, ZIPs binarios sin auditar).
 
-**Tests:**
+### 14.4 Tests:
 - [ ] Lógica de negocio crítica testeada (§8.1-8.2).
 - [ ] **Si toca path financiero crítico, cobertura objetivo 100% (§8.6).**
 - [ ] Edge cases cubiertos (inputs vacíos, ATR=0, qty=0, error de API externa).
 - [ ] Tests TDD: rojo → fix → verde demostrado.
 
-**Documentación:**
+### 14.5 Documentación:
 - [ ] `CLAUDE.md` del proyecto actualizado (§9.1).
 - [ ] `CHANGELOG.md` con entrada nueva (§9.3).
 - [ ] `PROJECT_MAP.md` actualizado si se agregaron/eliminaron archivos (§9.2).
 - [ ] Docstrings en funciones públicas (§9.4).
 
-**Control de cambios:**
+### 14.6 Control de cambios:
 - [ ] Backup pre-edit catalogado en `backups/YYYY-MM-DD/` si los cambios son significativos (§10.1).
 - [ ] Commit atómico con mensaje formato `tipo: descripción` en español (§10.2).
 - [ ] **Cadencia respetada:** no acumular ≥48 hs sin commitear (§10.2).
 - [ ] Line endings consistentes con `.gitattributes` del proyecto (§10.3).
 
-**Si el proyecto está en período de validación (§10.4):**
+### 14.7 Si el proyecto está en período de validación (§10.4):
 - [ ] El cambio cae en "PERMITIDO" del documento del proyecto.
 - [ ] Si es excepción, está documentada con justificación + marca de datos + decisión sobre contador.
 
@@ -1120,4 +1155,4 @@ Agendar como ítem de Fase 2 (auditoría) cuando el proyecto entre a esa fase. N
 
 ---
 
-*Manual de Buenas Prácticas — fin del documento. v2.4, 24 de mayo de 2026.*
+*Manual de Buenas Prácticas — fin del documento. v2.5, 24 de mayo de 2026.*
