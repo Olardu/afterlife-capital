@@ -199,6 +199,37 @@ QUERIES = [
         SELECT user_id, email, role, created_at
         FROM users WHERE email='***REMOVED-EMAIL***'
     """, ()),
+
+    # § 6 — CorrelationGuard (post-migración 013 / EXP-003). Vacías hasta que el
+    # bot corra con el código nuevo + migración aplicada. El runner las tolera
+    # (per-query try/except) si las columnas aún no existen.
+    ("q6_1_correlation_guard_summary", """
+        SELECT COUNT(*) AS senales_evaluadas,
+               COUNT(*) FILTER (WHERE reduction_factor = 1.0) AS pasaron_intactas,
+               COUNT(*) FILTER (WHERE reduction_factor < 1.0 AND reduction_factor > 0) AS reducidas,
+               COUNT(*) FILTER (WHERE reduction_factor = 0.0) AS descartadas,
+               ROUND(AVG(avg_correlation_at_decision)::numeric, 4) AS correlacion_promedio,
+               ROUND(MAX(avg_correlation_at_decision)::numeric, 4) AS correlacion_max
+        FROM signals
+        WHERE created_at >= $1::timestamp AND created_at <= $2::timestamp
+              AND avg_correlation_at_decision IS NOT NULL
+    """, (T0, T1)),
+
+    ("q6_2_correlation_guard_distribution", """
+        SELECT CASE
+                   WHEN reduction_factor = 1.0  THEN 'intacta'
+                   WHEN reduction_factor >= 0.75 THEN 'reducida_leve_>=0.75'
+                   WHEN reduction_factor >= 0.5  THEN 'reducida_media_0.5-0.75'
+                   WHEN reduction_factor > 0     THEN 'reducida_fuerte_<0.5'
+                   ELSE 'descartada_0.0'
+               END AS nivel,
+               COUNT(*) AS n_senales,
+               ROUND(AVG(avg_correlation_at_decision)::numeric, 4) AS avg_corr
+        FROM signals
+        WHERE created_at >= $1::timestamp AND created_at <= $2::timestamp
+              AND avg_correlation_at_decision IS NOT NULL
+        GROUP BY 1 ORDER BY n_senales DESC
+    """, (T0, T1)),
 ]
 
 

@@ -298,6 +298,10 @@ class Historian:
         ticker: str,
         signal_type: str,
         price_at_signal: Decimal,
+        avg_correlation_at_decision: Optional[Decimal] = None,
+        original_qty: Optional[Decimal] = None,
+        adjusted_qty: Optional[Decimal] = None,
+        reduction_factor: Optional[Decimal] = None,
     ) -> UUID:
         """
         Inserta una señal en la tabla signals.
@@ -309,14 +313,31 @@ class Historian:
         # (acepta callers que aún pasen float durante la migración gradual).
         price_at_signal = Decimal(str(price_at_signal))
 
+        # Métricas de CorrelationGuard (#TECHDEBT-NEW-2 / EXP-003) → Decimal para
+        # columnas NUMERIC. Aceptan None (callers viejos / caso edge sin guard).
+        if avg_correlation_at_decision is not None:
+            avg_correlation_at_decision = Decimal(str(avg_correlation_at_decision))
+        if original_qty is not None:
+            original_qty = Decimal(str(original_qty))
+        if adjusted_qty is not None:
+            adjusted_qty = Decimal(str(adjusted_qty))
+        if reduction_factor is not None:
+            reduction_factor = Decimal(str(reduction_factor))
+
         sql = """
-            INSERT INTO signals (sentinel_id, owner_id, ticker, signal_type, price_at_signal)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO signals (
+                sentinel_id, owner_id, ticker, signal_type, price_at_signal,
+                avg_correlation_at_decision, original_qty, adjusted_qty, reduction_factor
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING signal_id
         """
         try:
             async with self.pool.acquire() as conn:
-                row = await conn.fetchrow(sql, sentinel_id, owner_id, ticker, signal_type, price_at_signal)
+                row = await conn.fetchrow(
+                    sql, sentinel_id, owner_id, ticker, signal_type, price_at_signal,
+                    avg_correlation_at_decision, original_qty, adjusted_qty, reduction_factor,
+                )
             signal_id = row["signal_id"]
             logger.info(f"Signal registrado: {signal_id} | {ticker} {signal_type} @ {price_at_signal}")
             return signal_id

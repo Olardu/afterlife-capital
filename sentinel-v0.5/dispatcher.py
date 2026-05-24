@@ -432,13 +432,37 @@ class Dispatcher:
             )
         except Exception as e:
             logger.error(f"Error en CorrelationGuard: {e}. Aprobando con qty original.")
-            guard_result = {"approved": True, "adjusted_qty": qty, "avg_correlation": 0.0, "reason": "approved"}
+            guard_result = {"approved": True, "original_qty": qty, "adjusted_qty": qty, "avg_correlation": 0.0, "reason": "approved"}
 
         if not guard_result["approved"]:
             logger.info(f"Señal {ticker} descartada por CorrelationGuard: {guard_result['reason']}.")
+            # EXP-003 / #TECHDEBT-NEW-2: persistir la señal descartada para poder
+            # auditar el risk manager (cuántas descartó y con qué correlación).
+            try:
+                await self.historian.record_signal(
+                    sentinel_id=sentinel_id, owner_id=owner_id, ticker=ticker,
+                    signal_type=signal_type, price_at_signal=price,
+                    avg_correlation_at_decision=guard_result.get("avg_correlation"),
+                    original_qty=guard_result.get("original_qty", qty),
+                    adjusted_qty=guard_result.get("adjusted_qty", Decimal("0")),
+                    reduction_factor=Decimal("0"),
+                )
+            except Exception as e:
+                logger.error(f"Error al persistir señal descartada {ticker}: {e}")
             return {**base_result, "reason": guard_result["reason"]}
 
         final_qty = guard_result["adjusted_qty"]
+
+        # Métricas de CorrelationGuard para auditar el risk manager (EXP-003).
+        # reduction_factor reconstruido desde qty (evaluate_signal no lo retorna):
+        # adjusted/original → 1.0 intacta, <1.0 reducida, 0.0 descartada.
+        cg_original  = guard_result.get("original_qty", qty)
+        cg_adjusted  = guard_result.get("adjusted_qty", final_qty)
+        cg_avg_corr  = guard_result.get("avg_correlation")
+        cg_reduction = (
+            Decimal(str(cg_adjusted)) / Decimal(str(cg_original))
+            if Decimal(str(cg_original)) > 0 else Decimal("1.0")
+        )
 
         # 6. Ejecutar orden en Alpaca
         # v0.5 es long-only. Short selling se habilita explícitamente cuando se
@@ -476,6 +500,10 @@ class Dispatcher:
                 ticker          = ticker,
                 signal_type     = signal_type,
                 price_at_signal = price,
+                avg_correlation_at_decision = cg_avg_corr,
+                original_qty                = cg_original,
+                adjusted_qty                = cg_adjusted,
+                reduction_factor            = cg_reduction,
             )
             slippage = (
                 order_result["filled_price"] - price
