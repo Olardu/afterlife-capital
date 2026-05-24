@@ -40,7 +40,27 @@ _SHARPE_ANNUALIZATION_FACTOR = math.sqrt(_TRADING_DAYS_PER_YEAR * _BARS_PER_TRAD
 _OWNER_EMAIL = "***REMOVED-EMAIL***"
 
 
+# =============================================================================
+# Índice de secciones (§) — buscables con "§ N":
+#   § 1  — Imports y configuración (arriba de este bloque)
+#   § 2  — Conexión y schema (__init__, connect, close)
+#   § 3  — Signals y trades (record_signal/trade, update_trade_status)
+#   § 4  — Performance y decay (calculate_performance, evaluate_decay)
+#   § 5  — Sentinels y tickers (get_active_sentinels, get_sentinel_tickers)
+#   § 6  — Helpers VIX / idle / drawdown (get_avg_vix, get_last_trade_timestamp, get_ticker_added_at)
+#   § 7  — Scores e historia de trades (get_sentinel_scores, get_trade_history)
+#   § 8  — Macro events (record_macro_event)
+#   § 9  — Usuarios (get_user_by_email, list_users, add_user, remove_user)
+#   § 10 — System flags (get_system_flag, set_system_flag)
+#   § 11 — API keys (list/get/upsert/delete)
+#   § 12 — Warning status (get_sentinels_with_warning, update_warning_status)
+#   § 13 — Universe Selector: candidatos y rotaciones (pending_candidates, rotation_decisions, failed_tickers)
+#   § 14 — Macro context (get_recent_macro_events, get_recent_macro_context)
+# =============================================================================
+
+
 class Historian:
+    # ═══════════════════════════ § 2 — Conexión y schema ═══════════════════════════
     def __init__(self, database_url: str):
         self.database_url = database_url
         self.pool: Optional[asyncpg.Pool] = None
@@ -246,6 +266,7 @@ class Historian:
             await self.pool.close()
             logger.info("Pool PostgreSQL cerrado.")
 
+    # ═══════════════════════════ § 3 — Signals y trades ═══════════════════════════
     async def record_signal(
         self,
         sentinel_id: UUID,
@@ -401,6 +422,7 @@ class Historian:
             logger.error(f"Error al actualizar trade {id_label}: {e}")
             raise
 
+    # ═══════════════════════════ § 4 — Performance y decay ═══════════════════════════
     async def calculate_performance(self, sentinel_id: UUID, ticker: str) -> dict:
         """
         Calcula métricas de performance para el par (sentinel_id, ticker)
@@ -543,6 +565,7 @@ class Historian:
             logger.error(f"Error al registrar performance_scores ({sentinel_id}, {ticker}): {e}")
             raise
 
+    # ═══════════════════════════ § 5 — Sentinels y tickers ═══════════════════════════
     async def get_active_sentinels(self, owner_id: UUID) -> list[dict]:
         """
         Retorna los Sentinels activos del owner con sus tickers asignados.
@@ -602,6 +625,7 @@ class Historian:
 
     # -- Helpers del trigger idle_timeout (#UNIVERSE-IDLE) --------------------
 
+    # ═══════════════════════════ § 6 — Helpers VIX / idle / drawdown ═══════════════════════════
     async def get_avg_vix(self, days: int) -> Optional[float]:
         """
         Promedio de macro_events.vix_level en los últimos `days` días. Usado por
@@ -661,6 +685,7 @@ class Historian:
             logger.error(f"Error al obtener assigned_at ({sentinel_id}/{ticker}): {e}")
             return None
 
+    # ═══════════════════════════ § 7 — Scores e historia de trades ═══════════════════════════
     async def get_sentinel_scores(self, owner_id: UUID) -> list[dict]:
         """
         Retorna performance_scores de todos los Sentinels del owner,
@@ -739,6 +764,7 @@ class Historian:
             logger.error(f"Error al obtener historial ({sentinel_id}, ticker={ticker}): {e}")
             raise
 
+    # ═══════════════════════════ § 8 — Macro events ═══════════════════════════
     async def record_macro_event(
         self,
         risk_score: float,
@@ -788,6 +814,7 @@ class Historian:
             logger.error(f"Error al registrar macro event: {e}")
             raise
 
+    # ═══════════════════════════ § 9 — Usuarios ═══════════════════════════
     async def get_user_by_email(self, email: str) -> Optional[dict]:
         """
         Busca un usuario por email. Usado por el callback OAuth para validar
@@ -910,6 +937,7 @@ class Historian:
             logger.error(f"Error al eliminar usuario {user_id}: {e}")
             raise
 
+    # ═══════════════════════════ § 10 — System flags ═══════════════════════════
     async def get_system_flag(self, key: str) -> Optional[str]:
         """
         Lee un flag de system_state. Retorna el value o None si la key no existe.
@@ -957,6 +985,7 @@ class Historian:
     # automática es trabajo de una sesión futura.
     # =========================================================================
 
+    # ═══════════════════════════ § 11 — API keys ═══════════════════════════
     async def list_api_keys(self) -> list[dict]:
         """
         Lista las API keys gestionadas con su valor enmascarado
@@ -1131,6 +1160,7 @@ class Historian:
     # gestión de candidatos, ejecución y rollback de rotaciones.
     # =========================================================================
 
+    # ═══════════════════════════ § 12 — Warning status ═══════════════════════════
     async def get_sentinels_with_warning(self, owner_id: UUID) -> list[dict]:
         """
         Retorna las filas de performance_scores que cruzaron el WARNING
@@ -1203,6 +1233,7 @@ class Historian:
             raise
         return in_warning
 
+    # ═══════════════════════════ § 13 — Universe Selector: candidatos y rotaciones ═══════════════════════════
     async def get_pending_candidate(self, sentinel_id: UUID) -> Optional[dict]:
         """
         Retorna el candidato pendiente activo (status='watching') del
@@ -1647,6 +1678,7 @@ class Historian:
             logger.error(f"Error al listar failed_tickers de {sentinel_id}: {e}")
             raise
 
+    # ═══════════════════════════ § 14 — Macro context ═══════════════════════════
     async def get_recent_macro_events(self, limit: int = 10) -> list[dict]:
         """
         Lista los últimos N macro_events ordenados DESC por created_at,
