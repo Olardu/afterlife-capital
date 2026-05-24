@@ -2,17 +2,24 @@
 
 Sistema de trading algorítmico multi-agente. 9 estrategias autónomas (Sentinels) coordinadas por un Dispatcher, con protecciones macro, gestión de capital Half-Kelly y persistencia en PostgreSQL. Operación en paper trading hasta validar.
 
-## Estado al 2026-05-25 madrugada — 7 commits LOCALES (modelo NO-push), `origin/main`=`0242eb2`, suite 106/106
+## Estado al 2026-05-25 — T-O COMPLETA. 10 commits LOCALES (modelo NO-push), `origin/main`=`0242eb2`, suite 115/115
 
-Sesión T-K→T-O con Cowork. **Modelo desde LOG 04:45: commits LOCALES, sin push** hasta un bundle ordenado por Roman. 7 commits locales sobre `origin/main`=`0242eb2`.
+Sesión T-K→T-O con Cowork. **Modelo desde LOG 04:45: commits LOCALES, sin push** hasta un bundle ordenado por Roman. 10 commits locales sobre `origin/main`=`0242eb2` (HEAD `ce3480d`).
 
 - **T-K EXP-005 Modo Observador Fractional** (`09dd71b`+`ad33843`): tabla `signals_shadow_fractional` (**migración 015 aplicada a DB**), flag `SHADOW_FRACTIONAL_ENABLED` (default ON), bloque shadow al final de `process_signal` (calcula qué operaría fractional vs `floor()` real, INSERT aislado, NO afecta la ejecución), `historian.record_shadow_fractional`. T-J (fractional real) ARCHIVADO: Alpaca no acepta notional+bracket.
 - **T-L**: marcadores § + índice interno en `main.py`, `sentinels/__init__.py`, `universe_selector.py` (los otros 4 archivos >500 LOC ya los tenían).
 - **T-M**: hardening XSS en `dashboard/sentinel-app.js` (escapeHtml en `s.id`/`s.name`/`s.quoteSrc`).
 - **T-N**: `.pre-commit-config.yaml` + `.github/workflows/ci.yml` + `ruff.toml` (lint de correctness F+E9, **NO black** por la alineación manual de `=`) + `docs/coverage_audit_2026-05-25.md` (cobertura total **36%**) + `CONTRIBUTING.md`.
-- **T-O parcial**: #TD-5 (`the_ear` `pct_change`→`None`; el circuit breaker distingue sin-datos de 0% real) + #TD-6 (flag `news_disabled` expuesto en `evaluate()`) + `tests/test_the_ear.py` (7 casos). Suite **106/106**, the_ear 16%→29%.
+- **T-O COMPLETA** (4 sub-objetivos):
+  - #TD-5 (`37ec6dd`): `the_ear` `pct_change`→`None`; el circuit breaker distingue sin-datos de 0% real.
+  - #TD-6 (`37ec6dd`): flag `news_disabled` expuesto en `evaluate()`; follow-up: `the_ear_news_disabled` en `/api/status` (commit #ME-3).
+  - #OP-2 (`93067d6`): heartbeat externo healthchecks.io. `config.HEARTBEAT_URL` (flag-gated, default off) + `main._send_heartbeat()` async no-bloqueante al final de cada ciclo (`import aiohttp`). Fallo de red → warning, no rompe el bot. `tests/test_heartbeat.py` (3). Nota README.
+  - #ME-3 (`ce3480d`): `historian.get_signals_breakdown_today()` → `{filled, cancelled, pending, no_trade}` de las señales de HOY (conteo en `_bucket_signal_rows`, función pura). `/api/status` expone `signals_breakdown_today`. `scripts/queries_signals_breakdown.sql`. `tests/test_signals_breakdown.py` (6).
+  - Suite **115/115** (era 106). the_ear 16%→29%.
 
-**Pendiente:** terminar T-O — #OP-2 heartbeat (healthchecks.io) + #ME-3 trades fallidos (query + `/api/status`). **Migraciones DB aplicadas: 013, 014, 015.** Martes 26-may restart `api.py` con env: `SHADOW_FRACTIONAL_ENABLED=true` + `ATR_SIZING_ENABLED=true` + `PORTFOLIO_DD_LIMITS_ENABLED=true` + `DAILY_REPORT_ENABLED=true`.
+**Pendiente:** **T-P — cobertura ≥95% módulos críticos** (EN COLA, BLOQUEADA hasta `[COWORK VALIDACIÓN T-O + OK avanzar a T-P]` en `teamwork/LOG.md`). **Migraciones DB aplicadas: 013, 014, 015.**
+
+**Precondición Roman #OP-2:** crear check en healthchecks.io + `HEARTBEAT_URL=https://hc-ping.com/<UUID>` en `.env` + restart `main.py` (sin la URL el ping no hace nada). **Martes 26-may** restart `api.py` con env: `SHADOW_FRACTIONAL_ENABLED=true` + `ATR_SIZING_ENABLED=true` + `PORTFOLIO_DD_LIMITS_ENABLED=true` + `DAILY_REPORT_ENABLED=true`.
 
 ## Stack
 
