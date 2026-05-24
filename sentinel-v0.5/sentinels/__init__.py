@@ -8,6 +8,20 @@
 # Cada Sentinel opera múltiples tickers en paralelo (relación 1:N en DB:
 # tabla sentinel_tickers). La protección contra señales duplicadas y los
 # estados intra-día (ORB, VWAP) se mantienen por ticker.
+#
+# Índice de secciones (§) — buscables con "§ N":
+#   § 1  — Clase base abstracta (BaseSentinel)
+#   § 2  — Helpers de indicadores (_rsi, _ema, _atr, _default_tickers)
+#   § 3  — S-1: SMA Crossover
+#   § 4  — S-2: RSI Fast Reversion
+#   § 5  — S-3: Bollinger Bounce
+#   § 6  — S-4: MACD + Volume
+#   § 7  — S-5: Opening Range Breakout
+#   § 8  — S-6: EMA Triple
+#   § 9  — S-7: VWAP Mean Reversion
+#   § 10 — S-8: RSI Divergence
+#   § 11 — S-9: Bollinger Squeeze Breakout
+#   § 12 — Registro de Sentinels (SENTINEL_REGISTRY)
 
 import asyncio
 import logging
@@ -29,7 +43,7 @@ _FETCH_DAYS    = 10   # 10 días calendario → ~120-150 barras de 15min en día
 
 
 # =============================================================================
-# CLASE BASE ABSTRACTA
+# § 1 — CLASE BASE ABSTRACTA
 # =============================================================================
 
 class BaseSentinel(ABC):
@@ -174,7 +188,7 @@ class BaseSentinel(ABC):
 
 
 # =============================================================================
-# HELPERS DE INDICADORES
+# § 2 — HELPERS DE INDICADORES
 # Cálculos manuales sin ta-lib — solo pandas.
 # =============================================================================
 
@@ -232,7 +246,7 @@ def _default_tickers(tickers: Optional[list[str]]) -> list[str]:
 
 
 # =============================================================================
-# S-1: SMA CROSSOVER — Trend Following
+# § 3 — S-1: SMA CROSSOVER — Trend Following
 # =============================================================================
 
 class SentinelSMACrossover(BaseSentinel):
@@ -300,7 +314,7 @@ class SentinelSMACrossover(BaseSentinel):
 
 
 # =============================================================================
-# S-2: RSI FAST REVERSION — Mean Reversion
+# § 4 — S-2: RSI FAST REVERSION — Mean Reversion
 # =============================================================================
 
 class SentinelRSIShort(BaseSentinel):
@@ -361,7 +375,7 @@ class SentinelRSIShort(BaseSentinel):
 
 
 # =============================================================================
-# S-3: BOLLINGER BOUNCE — Mean Reversion
+# § 5 — S-3: BOLLINGER BOUNCE — Mean Reversion
 # =============================================================================
 
 class SentinelBollingerBounce(BaseSentinel):
@@ -421,7 +435,7 @@ class SentinelBollingerBounce(BaseSentinel):
 
 
 # =============================================================================
-# S-4: MACD + VOLUME — Trend Following con confirmación
+# § 6 — S-4: MACD + VOLUME — Trend Following con confirmación
 # =============================================================================
 
 class SentinelMACDVolume(BaseSentinel):
@@ -498,7 +512,7 @@ class SentinelMACDVolume(BaseSentinel):
 
 
 # =============================================================================
-# S-5: OPENING RANGE BREAKOUT — Momentum intradía
+# § 7 — S-5: OPENING RANGE BREAKOUT — Momentum intradía
 # =============================================================================
 
 class SentinelORB(BaseSentinel):
@@ -578,7 +592,7 @@ class SentinelORB(BaseSentinel):
 
 
 # =============================================================================
-# S-6: EMA TRIPLE — Trend Following
+# § 8 — S-6: EMA TRIPLE — Trend Following
 # =============================================================================
 
 class SentinelEMATriple(BaseSentinel):
@@ -636,7 +650,7 @@ class SentinelEMATriple(BaseSentinel):
 
 
 # =============================================================================
-# S-7: VWAP MEAN REVERSION — Intraday
+# § 9 — S-7: VWAP MEAN REVERSION — Intraday
 # =============================================================================
 
 class SentinelVWAPReversion(BaseSentinel):
@@ -708,7 +722,7 @@ class SentinelVWAPReversion(BaseSentinel):
 
 
 # =============================================================================
-# S-8: RSI DIVERGENCE — Reversal
+# § 10 — S-8: RSI DIVERGENCE — Reversal
 # =============================================================================
 
 def _find_swings(values, side: str, k: int = 3) -> list[int]:
@@ -817,7 +831,7 @@ class SentinelRSIDivergence(BaseSentinel):
 
 
 # =============================================================================
-# S-9: BOLLINGER SQUEEZE BREAKOUT — Volatility Breakout
+# § 11 — S-9: BOLLINGER SQUEEZE BREAKOUT — Volatility Breakout
 # =============================================================================
 
 class SentinelBollingerSqueeze(BaseSentinel):
@@ -892,7 +906,7 @@ class SentinelBollingerSqueeze(BaseSentinel):
 
 
 # =============================================================================
-# REGISTRO DE SENTINELS
+# § 12 — REGISTRO DE SENTINELS
 # =============================================================================
 
 SENTINEL_REGISTRY: dict[str, type[BaseSentinel]] = {

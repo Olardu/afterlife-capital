@@ -4,6 +4,13 @@
 # el ciclo principal de trading en paper mode con Alpaca IEX.
 #
 # ORDEN CRÍTICO: load_dotenv() corre ANTES de cualquier import de config.
+#
+# Índice de secciones (§) — buscables con "§ N":
+#   § 1 — Logging
+#   § 2 — Helpers de horario
+#   § 3 — Inicialización
+#   § 4 — Ciclo principal
+#   § 5 — Entry point (pollers de background + main)
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -39,7 +46,7 @@ from the_ear import TheEar
 
 
 # =============================================================================
-# LOGGING
+# § 1 — LOGGING
 # =============================================================================
 
 def _setup_logging():
@@ -71,7 +78,7 @@ logger = logging.getLogger("sentinel.main")
 
 
 # =============================================================================
-# HELPERS DE HORARIO
+# § 2 — HELPERS DE HORARIO
 # =============================================================================
 
 def _is_market_open() -> bool:
@@ -93,7 +100,7 @@ def _seconds_to_next_candle() -> float:
 
 
 # =============================================================================
-# INICIALIZACIÓN
+# § 3 — INICIALIZACIÓN
 # =============================================================================
 
 async def _get_owner_id(historian: Historian) -> uuid.UUID:
@@ -280,7 +287,7 @@ async def initialize() -> dict:
 
 
 # =============================================================================
-# CICLO PRINCIPAL
+# § 4 — CICLO PRINCIPAL
 # =============================================================================
 
 async def main_loop(system: dict):
@@ -363,7 +370,7 @@ async def main_loop(system: dict):
 
 
 # =============================================================================
-# ENTRY POINT
+# § 5 — ENTRY POINT (pollers de background + main)
 # =============================================================================
 
 def _ear_task_done(task: asyncio.Task):

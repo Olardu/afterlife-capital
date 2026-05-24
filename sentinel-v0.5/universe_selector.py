@@ -16,6 +16,12 @@
 #
 # Errores en este módulo NUNCA crashean el bot — todos los flujos críticos
 # están aislados con try/except. main.py lo llama bajo timeout adicional.
+#
+# Índice de secciones (§) — buscables con "§ N":
+#   § 1 — Imports y configuración (arriba de este bloque)
+#   § 2 — Prompts (system/user) + helpers de formato
+#   § 3 — Filtro técnico de elegibilidad (defensa post-Claude)
+#   § 4 — Universe Selector (clase UniverseSelector)
 
 import asyncio
 import json
@@ -89,7 +95,7 @@ _IDLE_PENDING_TTL_DAYS = 14
 
 
 # =============================================================================
-# PROMPTS
+# § 2 — PROMPTS
 # =============================================================================
 
 SYSTEM_PROMPT = """Eres un analista cuantitativo experto especializado en selección de activos para estrategias algorítmicas de trading retail. Tu rol es proponer activos óptimos para una estrategia específica, balanceando dos objetivos:
@@ -320,7 +326,7 @@ def _format_pending_watchlist(pending: list[dict]) -> str:
 
 
 # =============================================================================
-# FILTRO TÉCNICO DE ELEGIBILIDAD (defensa post-Claude, #UNIVERSE-FILTER)
+# § 3 — FILTRO TÉCNICO DE ELEGIBILIDAD (defensa post-Claude, #UNIVERSE-FILTER)
 # =============================================================================
 
 async def _filter_candidate_eligibility(ticker: str, client) -> dict:
@@ -418,7 +424,7 @@ Propón el mejor ticker de reemplazo siguiendo el schema. Considera explícitame
 
 
 # =============================================================================
-# UNIVERSE SELECTOR
+# § 4 — UNIVERSE SELECTOR
 # =============================================================================
 
 class UniverseSelector:
