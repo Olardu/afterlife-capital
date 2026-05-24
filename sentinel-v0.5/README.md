@@ -64,6 +64,22 @@ sentinel-v0.5/
 - Parking Brake: sin nuevas órdenes después de las 15:45 ET
 - Paper trading con Alpaca IEX — sin dinero real hasta validar
 
+## Heartbeat / monitoreo (#OP-2)
+
+El loop principal pinga un check externo (healthchecks.io) al final de cada ciclo
+de 15 min. Si el bot se cae o se cuelga, healthchecks.io deja de recibir pings y
+alerta por email/SMS. Es best-effort: un fallo de red en el ping se loggea como
+warning y **no** interrumpe el trading.
+
+Configuración (opcional, flag-gated — vacío = deshabilitado):
+
+1. Crear una cuenta gratuita en https://healthchecks.io/
+2. Crear un check para "Sentinel bot main loop" con período esperado ~15 min
+   (+ grace) y configurar la alerta por email.
+3. Copiar la URL de ping (formato `https://hc-ping.com/<UUID>`).
+4. Agregar al `.env`: `HEARTBEAT_URL=https://hc-ping.com/<UUID>`
+5. Reiniciar `main.py`. El bot empieza a pinguear una vez por ciclo.
+
 ## Versionado
 
 | Versión | Estado | Descripción |

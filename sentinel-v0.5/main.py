@@ -22,10 +22,13 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from zoneinfo import ZoneInfo
 
+import aiohttp
+
 from config import (
     BASE_TICKER,
     CANDLE_INTERVAL,
     DATABASE_URL,
+    HEARTBEAT_URL,
     LOG_LEVEL,
     MARKET_CLOSE,
     MARKET_OPEN,
@@ -97,6 +100,23 @@ def _seconds_to_next_candle() -> float:
     now  = datetime.now(tz=ZoneInfo(TIMEZONE))
     wait = (15 - now.minute % 15) * 60 - now.second
     return max(float(wait), 1.0)
+
+
+async def _send_heartbeat() -> None:
+    """
+    Ping no-bloqueante a healthchecks.io (#OP-2): señala "el loop completó un
+    ciclo más". Si el bot se cae, healthchecks.io deja de recibir pings y alerta.
+
+    Flag-gated por HEARTBEAT_URL: vacío = no hace nada. Cualquier fallo de red se
+    loggea como warning y NO interrumpe el ciclo de trading (best-effort puro).
+    """
+    if not HEARTBEAT_URL:
+        return
+    try:
+        async with aiohttp.ClientSession() as session:
+            await asyncio.wait_for(session.get(HEARTBEAT_URL), timeout=5)
+    except Exception as e:
+        logger.warning(f"Heartbeat ping falló (no afecta el bot): {e}")
 
 
 # =============================================================================
@@ -362,6 +382,10 @@ async def main_loop(system: dict):
                 )
             except Exception as e:
                 logger.exception(f"Error en Universe Selection (no fatal): {e}")
+
+        # 3.6. Heartbeat externo (#OP-2) — best-effort, no bloquea ni rompe el
+        # ciclo. Señala a healthchecks.io que el loop sigue vivo.
+        await _send_heartbeat()
 
         # 4. Dormir hasta el próximo múltiplo de 15 minutos
         wait = _seconds_to_next_candle()

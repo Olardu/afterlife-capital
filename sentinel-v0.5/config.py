@@ -178,6 +178,17 @@ UNIVERSE_SELECTION_CANDIDATE_TTL_DAYS     = int(os.environ.get(
 DAILY_REPORT_ENABLED = os.environ.get("DAILY_REPORT_ENABLED", "true").lower() == "true"
 
 # =============================================================================
+# OBSERVABILIDAD / OPS (#OP-2)
+# Heartbeat externo (healthchecks.io). main.py pinga esta URL al final de cada
+# ciclo del loop principal; si el bot se cae, healthchecks.io alerta por email.
+# Flag-gated: vacío = deshabilitado (no se hace ningún ping). Roman crea el check
+# en https://healthchecks.io/ y pega la URL de ping (https://hc-ping.com/<UUID>)
+# en .env como HEARTBEAT_URL. Ver README sección "Heartbeat / monitoreo".
+# =============================================================================
+
+HEARTBEAT_URL = os.environ.get("HEARTBEAT_URL", "")
+
+# =============================================================================
 # REGIME CLASSIFIER (S-10)
 # Meta-agente que clasifica cada sesión antes de que el mercado abra.
 # Entrenado sobre 25 años de datos SPY con Random Forest.
