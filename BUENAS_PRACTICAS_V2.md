@@ -1,9 +1,15 @@
 # Manual de Buenas Prácticas v2.0
 
 **Autor:** Roman Alejandro  
-**Versión:** 2.3  
-**Fecha:** 23 de mayo de 2026  
+**Versión:** 2.4  
+**Fecha:** 24 de mayo de 2026  
 **Alcance:** Universal — aplica a todos los proyectos, lenguajes y frameworks.
+
+**Cambios v2.3 → v2.4 (24-may-2026 — Seguridad, 4 mejoras propuestas por Code en sesión 23-may):**
+- Ampliación 7.1: prevención de exposición de secretos (ignorar backups de secretos + pre-commit gitleaks/detect-secrets).
+- Nueva subsección 7.4.1: PII en exports/dumps — no commitear dumps de DB, CSVs, inventarios con datos de usuarios.
+- Nueva sección 7.6: Visibilidad del repo — confirmar público/privado antes del primer push + doble-check de sensibles por commit.
+- Nueva sección 7.7: Procedimiento ante exposición de secretos (rotar si pusheado, purgar si local, documentar incidente).
 
 **Cambios v2.2 → v2.3 (23-may-2026):**
 - Nueva sección 8.6: Piso de testing para paths financieros críticos (gate pre-live).
@@ -577,6 +583,7 @@ La pregunta no es "específicos siempre" ni "generales siempre" — es balance e
 - Usar `.env.example` con valores placeholder como documentación.
 - En producción, usar variables de entorno del sistema o un gestor de secretos.
 - Rotar keys periódicamente. Si una key se expone, revocarla inmediatamente.
+- **Prevención, no solo "no commitees":** además de `.env*` en `.gitignore`, ignorar TODO backup de secretos (`*.env.bak*`, `*.env.*.backup`, dumps de DB con datos sensibles, archivos de inventario con PII). Configurar `gitleaks`/`detect-secrets` como pre-commit hook (ver §15.2) para que la prevención no dependa del criterio sesión a sesión. Casi-exposición real del 23-may en Sentinel: un `.env.bak` con credenciales reales casi se commitea a un repo público; se cazó por auditoría manual — un hook lo habría rechazado automáticamente.
 
 ### 7.2 Validación de entrada
 
@@ -619,11 +626,33 @@ def enviar_mensaje(id):
 - Encriptar datos sensibles en reposo cuando aplique.
 - Backups automáticos de la base de datos.
 
+#### 7.4.1 PII en exports y dumps
+
+- **No commitear data exports con PII.** Incluye: dumps de DB (`*.dump`, `*.sql.gz`), CSVs/TXTs con datos de usuarios reales, inventarios de tablas con emails/UUIDs/timestamps personales, exports de logs no anonimizados.
+- Estos artefactos pertenecen a backups locales o a storage privado (S3 encriptado, Drive privado), **nunca al repo** — menos aún si es público.
+- Caso Sentinel: el `inventory_*.txt` del 28-abr tenía emails/UUIDs de viewers y el `.dump` era la DB entera; se excluyeron por `.gitignore`, pero la regla debe ser explícita.
+
 ### 7.5 Dependencias
 
 - Mantener las dependencias actualizadas — las versiones viejas tienen vulnerabilidades conocidas.
 - Usar versiones fijas en producción (`==`) y rangos en desarrollo (`>=`).
 - Revisar periódicamente vulnerabilidades con herramientas como `pip audit` o `npm audit`.
+
+### 7.6 Visibilidad del repositorio
+
+- Antes del **primer push** a un repo nuevo, **confirmar su visibilidad** (público vs privado) vía `curl -sI <repo-url>` o equivalente.
+- En repos **PÚBLICOS**, todos los commits son inspectables por cualquiera para siempre, incluso si después se borran (clones/forks cacheados). No hay "deshacer" real.
+- **Doble-check de archivos sensibles antes de CADA push** en repos públicos: secretos, PII, dumps, inventarios, y backups en disco que el `.gitignore` no cubra explícitamente.
+- Mantener una whitelist mental de patrones sensibles: `*.env*`, `*.dump`, `inventory_*`, `client_secret_*`, `*.pem`, `*.key`, y cualquier dato con UUIDs/emails de usuarios reales.
+
+### 7.7 Procedimiento ante exposición de secretos
+
+1. **¿Se pusheó a remote?** SÍ → **rotar las credenciales INMEDIATAMENTE** (no esperar al cleanup). El secret ya está en el historial de Git y en posibles forks/clones; el cleanup posterior es solo daño-control.
+2. **NO se pusheó** → purgar del staging (`git reset`), del working tree, del filesystem (incluyendo la papelera si el SO la usa), y del `.git/objects/` si entró a un commit local (`git filter-repo` / BFG).
+3. Agregar el patrón al `.gitignore` para que no reaparezca.
+4. **Documentar el incidente:** qué se expuso, cuándo, por cuánto tiempo, qué se rotó, y qué prevención forward se aplicó.
+
+Caso real Sentinel (abril 2026): credenciales OAuth de Code expuestas en Drive — rotar fue obligatorio, el cleanup vino después.
 
 ---
 
@@ -1091,4 +1120,4 @@ Agendar como ítem de Fase 2 (auditoría) cuando el proyecto entre a esa fase. N
 
 ---
 
-*Manual de Buenas Prácticas — fin del documento. v2.3, 23 de mayo de 2026.*
+*Manual de Buenas Prácticas — fin del documento. v2.4, 24 de mayo de 2026.*
