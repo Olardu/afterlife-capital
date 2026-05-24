@@ -23,12 +23,12 @@ from config import (
 logger = logging.getLogger("sentinel.historian")
 
 
-# Annualization factor para Sharpe sobre barras de 15 minutos.
-# Equity market: 252 días hábiles × 26 barras/día (6.5h × 4 barras/hora) = 6552
-# bars/year. El factor escala el Sharpe per-period a Sharpe anual estándar,
-# que es la escala asumida por SHARPE_MINIMUM = 0.5 en config.py.
-# Sin esto, el threshold se aplicaba contra Sharpe per-period y rechazaba
-# estrategias razonables como decay (#TECHDEBT promovido).
+# ⚠️ DEPRECADO en el cálculo (fix #TECHDEBT-NEW-1 / B.2, 2026-05-24): este factor
+# YA NO se aplica al Sharpe. Asumía returns por barra de 15min, pero
+# calculate_performance usa returns por TRADE pareado → anualizar inflaba el
+# Sharpe a valores imposibles (93.9, -120.4). Se conserva DEFINIDO como referencia
+# histórica y para tests de regresión. El Sharpe ahora es per-trade puro y
+# SHARPE_MINIMUM se recalibró a esa escala en config.py (0.5 → 0.05).
 _BARS_PER_TRADING_DAY = 26
 _TRADING_DAYS_PER_YEAR = 252
 _SHARPE_ANNUALIZATION_FACTOR = math.sqrt(_TRADING_DAYS_PER_YEAR * _BARS_PER_TRADING_DAY)
@@ -501,9 +501,11 @@ class Historian:
             mean_r   = sum(returns) / total_trades
             variance = sum((r - mean_r) ** 2 for r in returns) / (total_trades - 1)
             std_r    = math.sqrt(variance) if variance > 0 else 0.0
-            # Annualizar: per-period × sqrt(periods/year). Asume returns iid
-            # — aproximación estándar, suficiente para gating de decay.
-            sharpe_ratio = (mean_r / std_r) * _SHARPE_ANNUALIZATION_FACTOR if std_r > 0 else 0.0
+            # Sharpe per-trade PURO (fix #TECHDEBT-NEW-1 / B.2, 2026-05-24): NO anualizar.
+            # Los `returns` son por trade pareado BUY→SELL, NO por barra fija de 15min,
+            # así que multiplicar por sqrt(252*26)≈80.94 inflaba el Sharpe a valores
+            # imposibles (93.9, -120.4) que distorsionaban dispatcher.allocate_capital.
+            sharpe_ratio = (mean_r / std_r) if std_r > 0 else 0.0
 
         logger.debug(
             f"Performance ({sentinel_id}, {ticker}): "
