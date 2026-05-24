@@ -889,21 +889,31 @@ class Dispatcher:
 
     async def _get_drawdown_equities(self) -> Optional[dict]:
         """
-        Obtiene el equity de referencia para drawdown (#GR-3):
-        {current, day_open, week_ago, peak}.
-
-        PENDIENTE DE DISEÑO (BLOQ @COWORK): la fuente del equity histórico
-        (Alpaca portfolio_history vs persistencia en DB) y cómo se persiste el
-        peak para que sobreviva reinicios y cubra todo el historial. Hasta
-        resolverlo retorna None → con el flag ON, fail-safe (no pausa por falta
-        de datos). La lógica de umbrales (_evaluate_drawdown_levels) ya está
-        completa y testeada; solo falta cablear esta fuente.
+        Equity de referencia para drawdown (#GR-3): {current, day_open, week_ago, peak}.
+        `current` es el equity en vivo de Alpaca; `day_open`/`week_ago`/`peak` salen
+        de la tabla `daily_equity_snapshots` (fuente persistente, opción B). Retorna
+        None si no se puede obtener el equity actual (Alpaca caído) → fail-safe.
         """
-        logger.warning(
-            "#GR-3 _get_drawdown_equities: fuente de equity histórico pendiente "
-            "de diseño (BLOQ @COWORK). Drawdown no evaluado este ciclo."
-        )
-        return None
+        try:
+            current = await asyncio.wait_for(
+                asyncio.to_thread(self._get_account_equity), timeout=15.0,
+            )
+        except Exception as e:
+            logger.error(f"drawdown: no se pudo obtener equity actual: {e}")
+            return None
+
+        try:
+            refs = await self.historian.get_drawdown_equities(self.owner_id)
+        except Exception as e:
+            logger.error(f"drawdown: get_drawdown_equities falló: {e}")
+            refs = {"day_open": None, "week_ago": None, "peak": None}
+
+        return {
+            "current":  current,
+            "day_open": refs.get("day_open"),
+            "week_ago": refs.get("week_ago"),
+            "peak":     refs.get("peak"),
+        }
 
     # ════════════════════════════════════════════════════════
     # § 7 — Kill switch

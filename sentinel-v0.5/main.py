@@ -477,6 +477,59 @@ def _reconcile_task_done(task: asyncio.Task):
         logger.error(f"reconciliation_poller terminó con excepción: {exc!r}", exc_info=exc)
 
 
+_EQUITY_SNAPSHOT_POLL_INTERVAL = 1800  # segundos (30 min)
+
+
+async def _daily_equity_snapshot_poller(
+    historian: Historian,
+    dispatcher: Dispatcher,
+    owner_id: uuid.UUID,
+    interval_sec: int = _EQUITY_SNAPSHOT_POLL_INTERVAL,
+):
+    """
+    Registra el snapshot EOD de equity una vez por día hábil, tras las 16:05 ET
+    (cierre de mercado + margen para los EOD updates de Alpaca). Es la fuente
+    persistente para los drawdown limits del portafolio (#GR-3): peak histórico
+    que sobrevive reinicios y migración paper→live.
+
+    Chequea cada `interval_sec`; si ya pasó 16:05 ET y no hay snapshot de hoy, lo
+    registra (idempotente). Resiliente: errores se loggean y se reintenta.
+    """
+    logger.info(
+        f"Daily equity snapshot poller iniciado (cada {interval_sec}s, EOD 16:05 ET)."
+    )
+    while True:
+        await asyncio.sleep(interval_sec)
+        try:
+            now_et = datetime.now(tz=ZoneInfo(TIMEZONE))
+            if (now_et.hour, now_et.minute) < (16, 5):
+                continue  # mercado aún no cerró / EOD no listo
+            if await historian.has_equity_snapshot_today(owner_id):
+                continue  # ya registrado hoy
+            equity = await asyncio.wait_for(
+                asyncio.to_thread(dispatcher._get_account_equity), timeout=15.0,
+            )
+            await historian.record_daily_equity_snapshot(owner_id, equity)
+            logger.info(f"Daily equity snapshot EOD registrado: equity={equity}")
+        except asyncio.CancelledError:
+            logger.info("Daily equity snapshot poller cancelado.")
+            raise
+        except Exception as e:
+            logger.error(f"Daily equity snapshot falló: {e}", exc_info=True)
+
+
+def _equity_snapshot_task_done(task: asyncio.Task):
+    """Callback para detectar fallas silenciosas del equity snapshot poller."""
+    if task.cancelled():
+        logger.info("daily_equity_snapshot_poller cancelado limpiamente.")
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error(
+            f"daily_equity_snapshot_poller terminó con excepción: {exc!r}", exc_info=exc
+        )
+
+
 async def main():
     """Inicializa el sistema, arranca The Ear en background y entra al main loop."""
     system = await initialize()
@@ -504,6 +557,16 @@ async def main():
     reconcile_task.add_done_callback(_reconcile_task_done)
     logger.info("Reconciliation poller iniciado en background.")
 
+    # Daily equity snapshot poller — fuente persistente de drawdown EOD (#GR-3)
+    equity_snapshot_task = asyncio.create_task(
+        _daily_equity_snapshot_poller(
+            system["historian"], system["dispatcher"], system["owner_id"],
+        ),
+        name="daily_equity_snapshot_poller",
+    )
+    equity_snapshot_task.add_done_callback(_equity_snapshot_task_done)
+    logger.info("Daily equity snapshot poller iniciado en background.")
+
     try:
         await main_loop(system)
     finally:
@@ -522,6 +585,12 @@ async def main():
         reconcile_task.cancel()
         try:
             await reconcile_task
+        except asyncio.CancelledError:
+            pass
+
+        equity_snapshot_task.cancel()
+        try:
+            await equity_snapshot_task
         except asyncio.CancelledError:
             pass
 

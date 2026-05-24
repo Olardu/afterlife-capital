@@ -245,6 +245,30 @@ class Historian:
                 "ADD COLUMN IF NOT EXISTS warning_detected_at TIMESTAMP"
             )
 
+            # =================================================================
+            # DRAWDOWN LIMITS (#GR-3) — migración 011: daily_equity_snapshots.
+            # Fuente persistente del equity histórico (open/close/peak por día)
+            # para los límites de drawdown del portafolio. El peak sobrevive
+            # reinicios y la migración paper→live. Idempotente.
+            # =================================================================
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS daily_equity_snapshots (
+                    snapshot_id   UUID           DEFAULT gen_random_uuid() PRIMARY KEY,
+                    owner_id      UUID           NOT NULL REFERENCES users(user_id),
+                    snapshot_date DATE           NOT NULL,
+                    equity_open   NUMERIC(20, 4) NOT NULL,
+                    equity_close  NUMERIC(20, 4) NOT NULL,
+                    peak_to_date  NUMERIC(20, 4) NOT NULL,
+                    created_at    TIMESTAMP      NOT NULL DEFAULT NOW(),
+                    updated_at    TIMESTAMP      NOT NULL DEFAULT NOW(),
+                    UNIQUE (owner_id, snapshot_date)
+                )
+            """)
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_daily_equity_snapshots_owner_date "
+                "ON daily_equity_snapshots (owner_id, snapshot_date DESC)"
+            )
+
             # Asegurar email + role=ADMIN del owner (#H-1). La columna `email`
             # ya existe en schema.sql desde la creación de la DB (multi-tenant
             # base). Este UPDATE solo corre cuando el email persistido no
@@ -684,6 +708,88 @@ class Historian:
         except asyncpg.PostgresError as e:
             logger.error(f"Error al obtener assigned_at ({sentinel_id}/{ticker}): {e}")
             return None
+
+    async def record_daily_equity_snapshot(self, owner_id: UUID, equity: Decimal) -> None:
+        """
+        Registra (o actualiza) el snapshot de equity del día actual para el owner
+        (#GR-3, fuente persistente de drawdown). En el primer registro del día fija
+        equity_open = equity_close = equity; registros posteriores del mismo día
+        actualizan equity_close y suben el peak_to_date (max running histórico).
+        Idempotente por (owner_id, snapshot_date). Llamado por el poller EOD.
+        """
+        sql = """
+            INSERT INTO daily_equity_snapshots
+                (owner_id, snapshot_date, equity_open, equity_close, peak_to_date)
+            VALUES (
+                $1, CURRENT_DATE, $2, $2,
+                GREATEST($2, COALESCE(
+                    (SELECT MAX(peak_to_date) FROM daily_equity_snapshots WHERE owner_id = $1),
+                    $2
+                ))
+            )
+            ON CONFLICT (owner_id, snapshot_date) DO UPDATE SET
+                equity_close = EXCLUDED.equity_close,
+                peak_to_date = GREATEST(daily_equity_snapshots.peak_to_date, EXCLUDED.peak_to_date),
+                updated_at   = NOW()
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute(sql, owner_id, equity)
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al registrar daily_equity_snapshot ({owner_id}): {e}")
+            raise
+
+    async def has_equity_snapshot_today(self, owner_id: UUID) -> bool:
+        """True si ya hay snapshot de equity para hoy (evita re-registro del poller EOD)."""
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchval(
+                    "SELECT 1 FROM daily_equity_snapshots "
+                    "WHERE owner_id = $1 AND snapshot_date = CURRENT_DATE",
+                    owner_id,
+                )
+            return row is not None
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al chequear snapshot de hoy ({owner_id}): {e}")
+            return False
+
+    async def get_drawdown_equities(self, owner_id: UUID) -> dict:
+        """
+        Equity de referencia para los drawdown limits (#GR-3):
+            - day_open: equity_open del snapshot de HOY; si aún no hay, el
+                        equity_close del último snapshot (proxy del open de hoy).
+            - week_ago: equity_close ~5 días hábiles atrás (5ta fila anterior a hoy).
+            - peak:     MAX(peak_to_date) histórico.
+        Valores None si no hay datos suficientes (el caller hace fail-safe).
+        Returns {day_open, week_ago, peak} (Decimal | None).
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                peak = await conn.fetchval(
+                    "SELECT MAX(peak_to_date) FROM daily_equity_snapshots WHERE owner_id = $1",
+                    owner_id,
+                )
+                day_open = await conn.fetchval(
+                    "SELECT equity_open FROM daily_equity_snapshots "
+                    "WHERE owner_id = $1 AND snapshot_date = CURRENT_DATE",
+                    owner_id,
+                )
+                if day_open is None:
+                    day_open = await conn.fetchval(
+                        "SELECT equity_close FROM daily_equity_snapshots "
+                        "WHERE owner_id = $1 ORDER BY snapshot_date DESC LIMIT 1",
+                        owner_id,
+                    )
+                week_ago = await conn.fetchval(
+                    "SELECT equity_close FROM daily_equity_snapshots "
+                    "WHERE owner_id = $1 AND snapshot_date < CURRENT_DATE "
+                    "ORDER BY snapshot_date DESC OFFSET 4 LIMIT 1",
+                    owner_id,
+                )
+            return {"day_open": day_open, "week_ago": week_ago, "peak": peak}
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al obtener drawdown equities ({owner_id}): {e}")
+            return {"day_open": None, "week_ago": None, "peak": None}
 
     # ═══════════════════════════ § 7 — Scores e historia de trades ═══════════════════════════
     async def get_sentinel_scores(self, owner_id: UUID) -> list[dict]:
