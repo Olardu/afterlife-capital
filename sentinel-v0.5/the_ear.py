@@ -82,6 +82,9 @@ class TheEar:
         self.parking_brake_active: bool = False
         self._last_vix_change: float | None = None
         self._last_spy_change: float | None = None
+        # #TD-6: True si falta la API key de noticias (The Ear queda "sordo" a
+        # noticias → risk_score se basa solo en VIX/SPY). Se expone en evaluate().
+        self.news_disabled: bool = not NEWS_API_KEY
         # evaluate() es llamado en paralelo por start_polling() (task background)
         # y por Dispatcher.run_cycle() (task principal). Sin lock, ambos mutan
         # el estado compartido y duplican filas en macro_events. (#H-2)
@@ -219,15 +222,24 @@ class TheEar:
             logger.warning(f"Error al consultar precios Alpaca para circuit breaker: {e}")
             return self.circuit_breaker_active
 
+        # #TD-5: None = sin datos para ese símbolo → no evaluar ese factor. Antes
+        # 0.0 enmascaraba "sin datos" como "mercado quieto" y el breaker no saltaba.
+        vix_str = f"{vix_change:.2f}%" if vix_change is not None else "N/D"
+        spy_str = f"{spy_change:.2f}%" if spy_change is not None else "N/D"
+        if vix_change is None or spy_change is None:
+            logger.warning(
+                f"Circuit breaker con datos incompletos — VIXY={vix_str} SPY={spy_str}. "
+                f"No se evalúa el factor faltante."
+            )
+
         triggered = (
-            vix_change >= VIX_CIRCUIT_BREAKER_THRESHOLD
-            or spy_change <= SPY_CIRCUIT_BREAKER_THRESHOLD
+            (vix_change is not None and vix_change >= VIX_CIRCUIT_BREAKER_THRESHOLD)
+            or (spy_change is not None and spy_change <= SPY_CIRCUIT_BREAKER_THRESHOLD)
         )
 
         if triggered and not self.circuit_breaker_active:
             logger.warning(
-                f"CIRCUIT BREAKER ACTIVADO — "
-                f"VIXY cambio={vix_change:.2f}% | SPY cambio={spy_change:.2f}%"
+                f"CIRCUIT BREAKER ACTIVADO — VIXY cambio={vix_str} | SPY cambio={spy_str}"
             )
         elif not triggered and self.circuit_breaker_active:
             logger.info("Circuit breaker desactivado — condiciones normalizadas.")
@@ -235,13 +247,15 @@ class TheEar:
         self.circuit_breaker_active = triggered
         return triggered
 
-    def _fetch_price_changes(self) -> tuple[float, float]:
+    def _fetch_price_changes(self) -> tuple[float | None, float | None]:
         """
         Descarga las últimas 2 barras de 15 minutos para VIXY y SPY usando
         alpaca-py StockHistoricalDataClient (síncrono, corre en executor).
 
         Returns:
-            Tupla (vix_change_pct, spy_change_pct).
+            Tupla (vix_change_pct, spy_change_pct). Cada elemento es None si no hay
+            datos calculables para ese símbolo (#TD-5) — el caller distingue None
+            (sin datos, no evaluar ese factor) de 0.0 (datos OK, 0% real).
         """
         from alpaca.data.historical import StockHistoricalDataClient
         from alpaca.data.requests import StockBarsRequest
@@ -265,15 +279,19 @@ class TheEar:
         )
         bars = client.get_stock_bars(request).df
 
-        def pct_change(symbol: str) -> float:
+        def pct_change(symbol: str) -> float | None:
+            # #TD-5: None = sin datos calculables (símbolo ausente, <2 barras, o
+            # precio previo 0). Distinto de 0.0 = datos OK con movimiento real cero.
             if symbol not in bars.index.get_level_values(0):
-                return 0.0
+                return None
             symbol_bars = bars.loc[symbol].tail(2)
             if len(symbol_bars) < 2:
-                return 0.0
+                return None
             prev  = float(symbol_bars.iloc[0]["close"])
             close = float(symbol_bars.iloc[1]["close"])
-            return ((close - prev) / prev) * 100 if prev != 0 else 0.0
+            if prev == 0:
+                return None
+            return ((close - prev) / prev) * 100
 
         return pct_change(VIX_PROXY_TICKER), pct_change(SPY_TICKER)
 
@@ -353,6 +371,7 @@ class TheEar:
                 "circuit_breaker": circuit_breaker,
                 "parking_brake":   parking_brake,
                 "can_trade":       can_trade,
+                "news_disabled":   self.news_disabled,   # #TD-6
             }
 
     async def start_polling(self):
