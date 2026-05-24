@@ -80,6 +80,14 @@ RR_RATIO_TAKE_PROFIT       = Decimal("2.0")     # take-profit a 2× el riesgo (R
 MAX_POSITION_PCT_OF_EQUITY = Decimal("0.15")    # cap por posición individual (15%)
 MIN_POSITION_USD           = Decimal("25")      # piso $ para que los fees no dominen
 
+# --- #GR-3 — Drawdown limits del portafolio. FLAG-GATED, default OFF. ---
+# Con PORTFOLIO_DD_LIMITS_ENABLED=False el dispatcher no evalúa drawdown (igual
+# patrón que ATR_SIZING). Roman lo activa en .env cuando decida.
+PORTFOLIO_DD_LIMITS_ENABLED = os.environ.get("PORTFOLIO_DD_LIMITS_ENABLED", "false").lower() == "true"
+MAX_DAILY_DRAWDOWN_PCT      = Decimal("0.05")   # 5% intradía vs equity al open → pausa entradas hasta el cierre
+MAX_WEEKLY_DRAWDOWN_PCT     = Decimal("0.10")   # 10% en 5 días hábiles → kill switch
+MAX_CUMULATIVE_DRAWDOWN_PCT = Decimal("0.15")   # 15% vs peak histórico → pausa indefinida (intervención manual)
+
 # =============================================================================
 # CORRELATION GUARD
 # Corre antes de cada orden. Si la correlación rolling entre la señal entrante

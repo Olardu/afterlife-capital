@@ -33,7 +33,10 @@ from config import (
     KELLY_FRACTION,
     MAX_ALLOCATION_TOTAL,
     MAX_CAPITAL_PER_SENTINEL,
+    MAX_CUMULATIVE_DRAWDOWN_PCT,
+    MAX_DAILY_DRAWDOWN_PCT,
     MAX_POSITION_PCT_OF_EQUITY,
+    MAX_WEEKLY_DRAWDOWN_PCT,
     MIN_CAPITAL_PER_SENTINEL,
     MIN_POSITION_USD,
     RISK_PER_TRADE,
@@ -830,6 +833,78 @@ class Dispatcher:
         account = client.get_account()
         return Decimal(str(account.equity))
 
+    # ---------------------------------------------------------------------
+    # Drawdown limits del portafolio (#GR-3)
+    # ---------------------------------------------------------------------
+    @staticmethod
+    def _evaluate_drawdown_levels(
+        current: Decimal,
+        day_open: Optional[Decimal],
+        week_ago: Optional[Decimal],
+        peak: Optional[Decimal],
+    ) -> dict:
+        """
+        Evalúa los 3 límites de drawdown (#GR-3) sobre el equity actual y devuelve
+        el nivel MÁS GRAVE superado: cumulative (vs peak) > weekly (5 días) >
+        daily (vs open). Referencias None/<=0 o equity al alza se tratan como
+        drawdown 0 (no crashea con peak o serie histórica vacía).
+
+        Returns {should_pause: bool, level: str|None, reason: str}.
+        """
+        def _dd(ref: Optional[Decimal]) -> Decimal:
+            if ref is None or ref <= 0 or current >= ref:
+                return Decimal("0")
+            return (ref - current) / ref
+
+        dd_cum  = _dd(peak)
+        dd_week = _dd(week_ago)
+        dd_day  = _dd(day_open)
+
+        if dd_cum > MAX_CUMULATIVE_DRAWDOWN_PCT:
+            return {"should_pause": True, "level": "cumulative",
+                    "reason": f"cumulative_drawdown {dd_cum:.2%} > {MAX_CUMULATIVE_DRAWDOWN_PCT:.0%} (vs peak)"}
+        if dd_week > MAX_WEEKLY_DRAWDOWN_PCT:
+            return {"should_pause": True, "level": "weekly",
+                    "reason": f"weekly_drawdown {dd_week:.2%} > {MAX_WEEKLY_DRAWDOWN_PCT:.0%} (5 dias habiles)"}
+        if dd_day > MAX_DAILY_DRAWDOWN_PCT:
+            return {"should_pause": True, "level": "daily",
+                    "reason": f"daily_drawdown {dd_day:.2%} > {MAX_DAILY_DRAWDOWN_PCT:.0%} (vs open)"}
+        return {"should_pause": False, "level": None, "reason": "within_limits"}
+
+    async def _check_portfolio_drawdown(self) -> dict:
+        """
+        Evalúa los límites de drawdown del portafolio (#GR-3). Flag-gated: con
+        PORTFOLIO_DD_LIMITS_ENABLED=False (default) no evalúa. El flag se lee en
+        runtime (config.*) para respetar .env y ser patcheable en tests.
+
+        Returns {should_pause, level, reason}.
+        """
+        if not config.PORTFOLIO_DD_LIMITS_ENABLED:
+            return {"should_pause": False, "level": None, "reason": "dd_limits_disabled"}
+        equities = await self._get_drawdown_equities()
+        if equities is None:
+            # Fail-safe: sin equity de referencia no se pausa (se reintenta).
+            return {"should_pause": False, "level": None, "reason": "dd_equities_unavailable"}
+        return self._evaluate_drawdown_levels(**equities)
+
+    async def _get_drawdown_equities(self) -> Optional[dict]:
+        """
+        Obtiene el equity de referencia para drawdown (#GR-3):
+        {current, day_open, week_ago, peak}.
+
+        PENDIENTE DE DISEÑO (BLOQ @COWORK): la fuente del equity histórico
+        (Alpaca portfolio_history vs persistencia en DB) y cómo se persiste el
+        peak para que sobreviva reinicios y cubra todo el historial. Hasta
+        resolverlo retorna None → con el flag ON, fail-safe (no pausa por falta
+        de datos). La lógica de umbrales (_evaluate_drawdown_levels) ya está
+        completa y testeada; solo falta cablear esta fuente.
+        """
+        logger.warning(
+            "#GR-3 _get_drawdown_equities: fuente de equity histórico pendiente "
+            "de diseño (BLOQ @COWORK). Drawdown no evaluado este ciclo."
+        )
+        return None
+
     # ════════════════════════════════════════════════════════
     # § 7 — Kill switch
     # ════════════════════════════════════════════════════════
@@ -899,6 +974,19 @@ class Dispatcher:
         """
         if self.kill_switch_active:
             logger.warning("run_cycle omitido — kill switch activo.")
+            return
+
+        # #GR-3 (flag-gated): límites de drawdown del portafolio. Si se supera un
+        # umbral se omite el ciclo (no se abren nuevas posiciones). El nivel
+        # 'cumulative' además dispara el kill switch (requiere intervención manual).
+        dd = await self._check_portfolio_drawdown()
+        if dd["should_pause"]:
+            logger.warning(f"run_cycle omitido por drawdown ({dd['level']}): {dd['reason']}")
+            if dd["level"] == "cumulative":
+                try:
+                    await self.activate_kill_switch(_KILL_SWITCH_PASSPHRASE)
+                except Exception as e:
+                    logger.error(f"Error al activar kill switch por DD acumulado: {e}")
             return
 
         # 1. Sincronizar posiciones
