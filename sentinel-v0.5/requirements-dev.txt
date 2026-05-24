@@ -2,3 +2,4 @@
 # Instalar: pip install -r requirements-dev.txt   (además de requirements.txt)
 # Separadas de prod per BUENAS_PRACTICAS_V2 §7.5 (#FASE2-NEW).
 pytest==9.0.3
+pytest-cov==7.1.0
