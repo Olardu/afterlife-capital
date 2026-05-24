@@ -11,7 +11,7 @@ BEGIN;
 
 CREATE TABLE IF NOT EXISTS signals_shadow_fractional (
     id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    signal_id                   UUID REFERENCES signals(id) ON DELETE CASCADE,
+    signal_id                   UUID REFERENCES signals(signal_id) ON DELETE CASCADE,
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     ticker                      VARCHAR(20) NOT NULL,
     sentinel_id                 UUID NOT NULL,
