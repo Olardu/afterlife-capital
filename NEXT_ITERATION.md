@@ -564,15 +564,36 @@ Acciones manuales:
 
 ### Fase 2 — Auditoría de calidad de código (días 4-7)
 
-**Aplicar `BUENAS_PRACTICAS.md v2.1` y `PROTOCOL_SESSION.md` al codebase completo:**
+**Aplicar `BUENAS_PRACTICAS_V2.md v2.3` y `PROTOCOL_SESSION.md` al codebase completo:**
 
 - Convertir TODO el sistema a las convenciones del manual (naming, estructura, comentarios, tests).
-- Cubrir backlog #H pendiente: **#H-4 float→Decimal en cálculos financieros** (cerrado parcialmente en `dispatcher.allocate_capital`, pero hay otros sitios: `correlation_guard`, `historian.calculate_performance`, etc.).
-- Cerrar **#H-5b cache desactualizado en open_positions tras SELL** (descubierto 2026-05-10, documentado en `backups/2026-05-10/audit_sentinels_long_short.md`).
+- Cubrir backlog #H pendiente: **#H-4 float→Decimal en cálculos financieros** (cerrado parcialmente en `dispatcher.allocate_capital`, pero hay otros sitios: `correlation_guard`, `historian.calculate_performance`, etc. — ver `outputs/decimales_en_finanzas_profesionales.md` de Cowork con la guía completa).
+- ~~Cerrar **#H-5b cache desactualizado en open_positions tras SELL**~~ ✅ **CERRADO 2026-05-23** (commit `6a427c5` — refactor a helper `_apply_fill_to_cache` + TDD 4 casos. Fix definitivo aplicado tras confirmar que el bug era crónico: 45 warnings "Posiciones fantasma" en 5 días según snapshot del 23-may).
 - Hardening dashboard: XSS innerHTML, race SSE, defensa Chart.js (item del backlog operativo del CLAUDE.md).
 - Mejorar `_rsi()` a Wilder smoothing real (S-2, S-8).
 - Reconciliación post-restart de limit orders (#H-6b).
 - Test coverage: agregar tests unitarios para `dispatcher.allocate_capital`, `historian.evaluate_decay`, `universe_selector.evaluate_all_sentinels`. Cobertura objetivo mínima 70% sobre módulos core.
+
+**Items nuevos derivados de la sesión 23-may (Cowork + Code):**
+
+- **#FASE2-NEW-1 — Implementación de §15 (Automatización + Enforcement).** La sección §15 del manual v2.3 es spec; implementarla en este repo es trabajo aparte:
+  - Setup pre-commit (`.pre-commit-config.yaml`) con: `gitleaks`/`detect-secrets`, `check-added-large-files`, `check-merge-conflict`, `end-of-file-fixer`, `trailing-whitespace`, `ruff` (Python), `black --check`, `pytest --collect-only`.
+  - Setup CI (GitHub Actions): suite de tests completa, audit de archivos sensibles en PRs, lint completo, gate de cobertura ≥ piso definido en módulos críticos.
+  - Decidir stack (`ruff` vs `flake8 + isort`, `gitleaks` vs `detect-secrets`, `pytest-cov` para cobertura).
+  - Estimación: 2-3 sesiones de ingeniería. Cierra el gap exacto que casi nos cuesta exponer `.env.bak` con secretos en sesión 23-may.
+
+- **#FASE2-NEW-2 — Normalizar `requirements.txt` a versiones exactas (==).** Observación de Code en LOG 20:20: el archivo hoy mezcla `>=` (resto) con `==` (quantstats nuevo). §7.5 del manual pide `==` para producción. Pinear todas las deps con versión exacta. Documentar política de actualización (cuándo se actualiza una versión y quién valida).
+
+- **#FASE2-NEW-3 — Agregar marcadores `§` + índice interno a archivos >500 LOC.** Observación de Code en LOG 20:20: `api.py` (1860 LOC), `historian.py` (1650 LOC), `email_service.py` (1432 LOC), `dispatcher.py` (~717 LOC). §2.2 del manual requiere para archivos >500 líneas: justificación documentada de por qué no se ha separado + secciones con separadores `# § N — Título` + índice interno al inicio. Aplicar a los 4 archivos. **Hacer esto ANTES de cualquier refactor** — habilita Edit seguro y navegación sin truncado.
+
+- **#FASE2-NEW-4 — Cobertura ≥95% en módulos críticos (§8.6 del manual v2.3).** Definir paths críticos = `dispatcher` (sizing, allocate_capital, process_signal, callbacks de fills, `_apply_fill_to_cache`), `historian` (calculate_performance, evaluate_decay, get_sentinel_scores), `the_ear` (evaluate, circuit_breaker), `correlation_guard` (correlation calc), `universe_selector` (evaluate_all_sentinels). Tests TDD para cada uno. Configurar `pytest-cov` con fail-under=95 en esos módulos.
+
+- **#FASE2-NEW-5 — Gate pre-live (§8.6).** Antes de transición a fase live (Fase 5), validar checklist:
+  - [ ] Test unitario para cada función crítica (definidas en #FASE2-NEW-4).
+  - [ ] Test rojo→verde demostrado para cada bug financiero (TDD).
+  - [ ] Test de regresión por cada bug previo (#H-4, #H-5b, #H-6b, etc.).
+  - [ ] Cobertura ≥95% confirmada por CI sobre módulos críticos.
+  - **Sin checklist completo, NO se promueve a live.**
 
 **Code review externo (opcional pero recomendado):**
 - Una IA independiente (Plan documentado en memoria: `project_audit_ia_independiente.md` — 3 perfiles distintos para auditoría desde código / matemáticas / investigación).
@@ -615,3 +636,5 @@ Acciones manuales:
 ---
 
 *Cada idea se evalúa en la sesión de cierre del 27 de mayo. Priorizar por impacto vs esfuerzo.*
+
+*Actualización 2026-05-23: período cerrado anticipadamente (ver `OBSERVATION_PERIOD.md` sección "Cierre del período"). Nuevos items #FASE2-NEW-1 a #FASE2-NEW-5 agregados a Fase 2 con base en hallazgos de la sesión Cowork↔Code del 23-may. Manual actualizado a v2.3. #H-5b cerrado.*

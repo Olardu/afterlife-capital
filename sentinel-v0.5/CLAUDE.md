@@ -68,6 +68,16 @@ Requiere PostgreSQL servicio activo y `.env` con credenciales.
 
 ## Estado al 2026-05-23 — Cierre anticipado del período de observación
 
+### Fase 2 en curso (sesión nocturna 23-may, camino a v0.6 martes 26-may)
+
+Coordinación vía `teamwork/LOG.md` (protocolo Cowork↔Code). Avanzado y **pusheado** a `origin/main`: `6a427c5` #H-5b (cache pop tras SELL) + quantstats · `a022de0` #H-4 Decimal correlation_guard · `917cad8` #H-4 Decimal historian · `5fa7125` §-markers dispatcher · `0ed87e4` #H-4 Decimal dispatcher · `3672a82` #H-6b auto-reconcile (poller 5 min en main.py) + #H-4 reconciler. **#H-4 y #H-6b cerrados.** Suite TDD **27/27** en `tests/`.
+
+**Local sin pushear (espera PUSH-OK Cowork):** `5417066` (rename S-2 display→"RSI Fast Reversion", `requirements.txt` `==`, `requirements-dev.txt`).
+
+Pendientes: DB `UPDATE sentinels SET name='S-2 RSI Fast Reversion' WHERE strategy_type='rsi_short'` (Roman) · 56 PENDING_NEW backlog (auto-limpia al arrancar main.py) · siguen lista negra Universe Selector + #GR-4 + #GR-1/#GR-2.
+
+Convención: TDD test-first, backup pre-edit, Decimal en montos (§8.6), commit local + PUSH-OK.
+
 ### Sesión del 2026-05-23 (Roma + Code, HANDOFF #2)
 
 El período de observación protegida (28-abr → 27-may) se **cerró anticipadamente el 2026-05-23**, 4 días antes de lo previsto. Decisión de Roman, documentada en `OBSERVATION_PERIOD.md` (sección "Cierre del período"). Motivo: durante las 4 semanas el sistema nunca operó en su forma de diseño (Dispatcher roto hasta 07-may, sizing trivial `qty=1` todo el período, bug #H-5b reaparecido 2 veces). Acumular más días sub-óptimos no aporta señal. El balance del período se lee como **versión sub-óptima del diseño**, no como evaluación del diseño final.
