@@ -18,6 +18,8 @@ from config import (
     PERFORMANCE_DECAY_THRESHOLD,
     SHARPE_MINIMUM,
     WARMUP_TRADES_REQUIRED,
+    PROFIT_FACTOR_MINIMUM,
+    RTD_MINIMUM,
 )
 
 logger = logging.getLogger("sentinel.historian")
@@ -528,11 +530,40 @@ class Historian:
             # imposibles (93.9, -120.4) que distorsionaban dispatcher.allocate_capital.
             sharpe_ratio = (mean_r / std_r) if std_r > 0 else 0.0
 
+        # Profit factor + return-to-drawdown (EXP-002 / Rec 6): más informativas
+        # que win_rate/sharpe para distinguir estrategias rentables de las que
+        # pierden. inf cuando no hay pérdidas (PF) o no hay drawdown (RTD).
+        gross_profit = sum(r for r in returns if r > 0)
+        gross_loss   = sum(r for r in returns if r < 0)   # ≤ 0
+        if gross_loss != 0:
+            profit_factor = gross_profit / abs(gross_loss)
+        else:
+            profit_factor = math.inf if gross_profit > 0 else 0.0
+
+        # Max drawdown sobre la curva de equity acumulada (returns aditivos).
+        cum = peak = max_dd = 0.0
+        for r in returns:
+            cum   += r
+            peak   = max(peak, cum)
+            max_dd = max(max_dd, peak - cum)
+        total_return = cum
+        if max_dd > 0:
+            return_to_drawdown_ratio = total_return / max_dd
+        else:
+            return_to_drawdown_ratio = math.inf if total_return > 0 else 0.0
+
         logger.debug(
-            f"Performance ({sentinel_id}, {ticker}): "
-            f"win_rate={win_rate:.4f} sharpe={sharpe_ratio:.4f} trades={total_trades}"
+            f"Performance ({sentinel_id}, {ticker}): win_rate={win_rate:.4f} "
+            f"sharpe={sharpe_ratio:.4f} pf={profit_factor:.4f} "
+            f"rtd={return_to_drawdown_ratio:.4f} trades={total_trades}"
         )
-        return {"win_rate": win_rate, "sharpe_ratio": sharpe_ratio, "total_trades": total_trades}
+        return {
+            "win_rate": win_rate,
+            "sharpe_ratio": sharpe_ratio,
+            "total_trades": total_trades,
+            "profit_factor": profit_factor,
+            "return_to_drawdown_ratio": return_to_drawdown_ratio,
+        }
 
     # Mínimo de round trips para escribir scores parciales (sin evaluar decay).
     # Con 2+ trades hay suficientes datos para un Sharpe y win_rate indicativos
@@ -573,10 +604,20 @@ class Historian:
 
         win_rate     = metrics["win_rate"]
         sharpe_ratio = metrics["sharpe_ratio"]
+        profit_factor            = metrics["profit_factor"]
+        return_to_drawdown_ratio = metrics["return_to_drawdown_ratio"]
 
         # Solo evaluar decay si alcanzó warmup completo
         if total_trades >= WARMUP_TRADES_REQUIRED:
-            decay = win_rate < PERFORMANCE_DECAY_THRESHOLD or sharpe_ratio < SHARPE_MINIMUM
+            # Decay multifactor (EXP-002 / Rec 6, Opción C): PF y RTD son las
+            # métricas más informativas; WR y Sharpe individualmente dan falsos
+            # positivos (estrategia rentable que se mata) y falsos negativos
+            # (estrategia perdedora que no se detecta). Un par entra en decay si
+            # falla WR+PF o Sharpe+RTD, SALVO que PF y RTD fuertes lo rescaten.
+            pf_wr_fail        = profit_factor < 1.0 and win_rate < PERFORMANCE_DECAY_THRESHOLD
+            sharpe_rtd_fail   = sharpe_ratio < SHARPE_MINIMUM and return_to_drawdown_ratio < RTD_MINIMUM
+            rescued_by_pf_rtd = profit_factor >= PROFIT_FACTOR_MINIMUM and return_to_drawdown_ratio >= RTD_MINIMUM
+            decay = (pf_wr_fail or sharpe_rtd_fail) and not rescued_by_pf_rtd
         else:
             # Scores parciales: escribir métricas pero no juzgar decay
             decay = False
@@ -586,22 +627,30 @@ class Historian:
                 f"Escribiendo scores sin evaluar decay."
             )
 
+        # inf no es persistible en NUMERIC → NULL (la lógica de decay sí usó el inf).
+        pf_db  = profit_factor if math.isfinite(profit_factor) else None
+        rtd_db = return_to_drawdown_ratio if math.isfinite(return_to_drawdown_ratio) else None
+
         upsert_sql = """
             INSERT INTO performance_scores
-                (sentinel_id, ticker, sharpe_ratio, win_rate, total_trades, performance_decay)
-            VALUES ($1, $2, $3, $4, $5, $6)
+                (sentinel_id, ticker, sharpe_ratio, win_rate, total_trades, performance_decay,
+                 profit_factor, return_to_drawdown_ratio)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             ON CONFLICT (sentinel_id, ticker) DO UPDATE SET
-                sharpe_ratio      = EXCLUDED.sharpe_ratio,
-                win_rate          = EXCLUDED.win_rate,
-                total_trades      = EXCLUDED.total_trades,
-                performance_decay = EXCLUDED.performance_decay,
-                calculated_at     = NOW()
+                sharpe_ratio             = EXCLUDED.sharpe_ratio,
+                win_rate                 = EXCLUDED.win_rate,
+                total_trades             = EXCLUDED.total_trades,
+                performance_decay        = EXCLUDED.performance_decay,
+                profit_factor            = EXCLUDED.profit_factor,
+                return_to_drawdown_ratio = EXCLUDED.return_to_drawdown_ratio,
+                calculated_at            = NOW()
         """
         try:
             async with self.pool.acquire() as conn:
                 await conn.execute(
                     upsert_sql,
                     sentinel_id, ticker, sharpe_ratio, win_rate, total_trades, decay,
+                    pf_db, rtd_db,
                 )
             logger.info(
                 f"Decay evaluado ({sentinel_id}, {ticker}): "

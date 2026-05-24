@@ -121,6 +121,8 @@ RISK_SCORE_VETO_THRESHOLD      = 0.7     # risk_score sobre este valor bloquea o
 PERFORMANCE_DECAY_THRESHOLD = 0.4    # win_rate mínimo antes de marcar decay
 SHARPE_MINIMUM              = 0.05   # Sharpe per-trade mínimo (B.2: recalibrado de 0.5 anualizado; equiv. exacto 0.5/80.94≈0.006, a 0.05 conservador)
 WARMUP_TRADES_REQUIRED      = 10     # trades mínimos antes de evaluar decay
+PROFIT_FACTOR_MINIMUM       = 1.3    # gross_profit/abs(gross_loss) para "rescatar" del decay (EXP-002 / Rec 6)
+RTD_MINIMUM                 = 1.0    # return-to-drawdown mínimo para "rescatar" del decay (EXP-002 / Rec 6)
 
 # Aliases explícitos para Universe Selector (#UNIVERSE-SELECTION). Mantienen
 # coherencia entre el Historian (que usa los nombres genéricos) y el selector
