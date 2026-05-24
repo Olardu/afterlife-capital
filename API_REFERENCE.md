@@ -417,6 +417,48 @@ Balance, equity, posiciones abiertas y P&L no realizado. Consulta directa a la A
 
 ---
 
+### `GET /api/account/capital`
+
+Capital total vs capital efectivamente invertido + rentabilidad del día sobre el capital deployado (no sobre el equity total, que diluye con el cash dormido). Formato `{ data, meta }` (BUENAS_PRACTICAS_V2 §6.2). Introducido como Excepción 1.2 del período de observación (2026-05-13).
+
+**Auth:** Sesión requerida
+**Parámetros:** Ninguno
+**Response 200:**
+```json
+{
+  "data": {
+    "equity": 100143.45,
+    "last_equity": 100089.92,
+    "long_market_value": 2578.46,
+    "short_market_value": 0.0,
+    "invested": 2578.46,
+    "invested_pct_of_equity": 2.57,
+    "day_pnl": 53.53,
+    "day_pnl_pct_of_equity": 0.0535,
+    "day_pnl_pct_of_invested": 2.0759
+  },
+  "meta": {
+    "source": "alpaca",
+    "as_of": "2026-05-23T20:00:00+00:00",
+    "definitions": { "invested": "...", "day_pnl_pct_of_invested": "..." }
+  }
+}
+```
+
+| Campo (`data`) | Tipo | Descripción |
+|-------|------|-------------|
+| equity | float | Equity total |
+| last_equity | float | Equity al cierre del día previo |
+| invested | float | `abs(long_mv) + abs(short_mv)` — capital expuesto al mercado |
+| invested_pct_of_equity | float | % del equity efectivamente invertido |
+| day_pnl | float | `equity − last_equity` |
+| day_pnl_pct_of_equity | float | Rentabilidad del día sobre el equity total |
+| day_pnl_pct_of_invested | float | Rentabilidad del día sobre el capital REALMENTE invertido |
+
+**Nota:** llamada en tiempo real a Alpaca; 500 si Alpaca está caído.
+
+---
+
 ### `GET /api/account/portfolio-history`
 
 Curva de equity histórica para el dashboard. Consulta directa a la REST API de Alpaca.
@@ -643,6 +685,20 @@ Reporte diario consolidado al cierre del mercado. Combina trades, equity, posici
 - `pnl_by_sentinel` es una aproximación basada en trades FILLED (BUY = costo, SELL = ingreso)
 - El scheduler automático envía este reporte por email a las 16:30 ET (L-V) a todos los usuarios activos
 - Si no hay trades, posiciones, eventos o rotaciones, los arrays correspondientes vienen vacíos
+
+---
+
+### `POST /api/report/daily/send-now`
+
+Dispara manualmente el envío del reporte diario por email a todos los usuarios activos. Útil para pruebas o reenvíos. (El scheduler automático 16:30 ET L-V está hoy desactivado vía `DAILY_REPORT_ENABLED=false`; este endpoint manual sigue activo.)
+
+**Auth:** Sesión requerida (ADMIN)
+**Parámetros (query):** `dt` (opcional) — fecha `YYYY-MM-DD`; default: hoy ET.
+**Response 200:**
+```json
+{ "status": "ok", "sent": 6, "total_users": 6, "failed": [], "report_date": "2026-05-23" }
+```
+**Response 400:** fecha inválida (formato ≠ `YYYY-MM-DD`).
 
 ---
 

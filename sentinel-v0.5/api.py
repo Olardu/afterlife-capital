@@ -368,6 +368,19 @@ def _http_500(operation: str, exc: Exception):
 # limpia la sesión.
 # =============================================================================
 
+# =============================================================================
+# Índice de secciones (§) — buscables con "§ N":
+#   § 1 — Imports y configuración (arriba de este bloque)
+#   § 2 — Auth Google OAuth (/auth/*)
+#   § 3 — Endpoints core (status, sentinels, trades, macro, market-status, performance)
+#   § 4 — Cuenta Alpaca (equity, capital, portfolio-history)
+#   § 5 — Reporte (/api/report, daily, send-now)
+#   § 6 — Control operativo / Kill switch (system/state, halt, resume)
+#   § 7 — Administración (panel, users, api-keys, rotations, candidates)
+#   § 8 — SSE streaming + frontend estático
+# =============================================================================
+
+# ═══════════════════════════ § 2 — Auth Google OAuth ═══════════════════════════
 @app.get("/auth/login")
 async def auth_login(request: Request):
     return await oauth.google.authorize_redirect(request, OAUTH_REDIRECT_URI)
@@ -420,6 +433,7 @@ async def auth_me(request: Request):
 # ENDPOINTS REST
 # =============================================================================
 
+# ═══════════════════════════ § 3 — Endpoints core ═══════════════════════════
 @app.get("/api/status")
 async def api_status():
     try:
@@ -676,6 +690,7 @@ async def api_performance():
         _http_500("/api/performance", e)
 
 
+# ═══════════════════════════ § 4 — Cuenta Alpaca ═══════════════════════════
 @app.get("/api/account/equity")
 async def api_account_equity():
     """
@@ -889,6 +904,7 @@ async def api_portfolio_history(period: str = Query("1D", regex="^(4H|8H|1D|1W|1
         _http_500("/api/account/portfolio-history", e)
 
 
+# ═══════════════════════════ § 5 — Reporte ═══════════════════════════
 @app.get("/api/report")
 async def api_report(range: str = Query("today", regex="^(today|last_week|last_month|all)$")):
     """
@@ -1510,6 +1526,7 @@ async def _daily_report_loop():
 # Auth: GET state requiere sesión; POST halt/resume requieren role=ADMIN.
 # =============================================================================
 
+# ═══════════════════════════ § 6 — Control operativo / Kill switch ═══════════════════════════
 @app.get("/api/system/state")
 async def api_system_state():
     try:
@@ -1562,6 +1579,7 @@ async def api_system_resume():
 # background — fire-and-forget, no bloquea la respuesta si Resend falla.
 # =============================================================================
 
+# ═══════════════════════════ § 7 — Administración ═══════════════════════════
 @app.get("/admin")
 async def admin_page():
     admin_file = DASHBOARD_DIR / "admin.html"
@@ -1903,6 +1921,7 @@ async def _build_sse_payload() -> dict:
     }
 
 
+# ═══════════════════════════ § 8 — SSE streaming + frontend estático ═══════════════════════════
 @app.get("/api/sse")
 async def api_sse():
     async def event_generator():
