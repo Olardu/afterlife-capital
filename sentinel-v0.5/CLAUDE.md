@@ -66,6 +66,23 @@ python main.py
 
 Requiere PostgreSQL servicio activo y `.env` con credenciales.
 
+## Estado al 2026-05-24 noche — Fase 2/3 robustez (`origin/main` `de4f029`, suite 95/95)
+
+Sesión de robustez post-incidente del Write truncado. Cambios de código relevantes (todos pusheados):
+
+- **Sharpe bug corregido (#TECHDEBT-NEW-1, `67164a5`):** `historian.calculate_performance` ya NO anualiza con `sqrt(252×26)≈80.94`. El Sharpe es **per-trade puro** (`mean/std`). Los valores de `performance_scores.sharpe_ratio` previos al fix (93.9, -120.4) eran artefacto del bug y distorsionaban `dispatcher.allocate_capital`. `SHARPE_MINIMUM` recalibrado 0.5→0.05 en `config.py`. `_SHARPE_ANNUALIZATION_FACTOR` queda definido pero DEPRECADO en el cálculo.
+- **CorrelationGuard persistido (#TECHDEBT-NEW-2 / EXP-003, `2bf79ec`):** migración **013** agrega `avg_correlation_at_decision`, `original_qty`, `adjusted_qty`, `reduction_factor` a `signals`. `record_signal` acepta los 4 (default None, backward compat). `dispatcher.process_signal` persiste el output del guard, **incluidas las señales descartadas** por correlación (antes el `return` pre-`record_signal` las perdía).
+- **Decay multifactor (#FASE2-NEW-5 / EXP-002, `de4f029`):** `calculate_performance` retorna `profit_factor` + `return_to_drawdown_ratio` (`inf` en edge cases gross_loss=0 / max_dd=0). `evaluate_decay` usa lógica combinada Opción C. Migración **014** agrega ambas columnas a `performance_scores`. Nuevos thresholds `PROFIT_FACTOR_MINIMUM=1.3`, `RTD_MINIMUM=1.0`. (OBS: el `rescued_by_pf_rtd` de la Opción C es matemáticamente redundante — pendiente de revisión por Cowork.)
+- **Dashboard XSS hardening (`ac55d40`):** `escapeHtml()` en `dashboard/sentinel-app.js` (5 sitios con datos API/DB) + fix raíz en `tickerSpan` (`dashboard/sentinel-data.js`).
+
+**Migraciones DB local:** 013 + 014 APLICADAS. **Suite: 95/95** (era 77 al inicio del día).
+
+**Scripts ops nuevos en `scripts/`:** `validate-workspace.ps1` (gate anti-truncado — correr antes de cada commit), `clean-git-locks.ps1` (recovery de `.git/index.lock` huérfano), `run_balance_queries.py` + `generate_quantstats_report.py` (balance del período de observación). Migraciones `db/013` + `db/014`.
+
+**Bug `.git/index.lock` recurrente:** resuelto con Windows Defender exclusion del repo (era el escaneo real-time sobre `.git/`).
+
+**Pendiente:** **T-J Fractional trading** (`qty`→`notional`, refactor del dispatcher). Operacional Roman: `UPDATE sentinels SET name='S-2 RSI Fast Reversion' WHERE strategy_type='rsi_short'` en pgAdmin; restart `api.py` martes 26-may con flags `ATR_SIZING_ENABLED` + `PORTFOLIO_DD_LIMITS_ENABLED` ON.
+
 ## Estado al 2026-05-23 — Cierre anticipado del período de observación
 
 ### Fase 2 en curso (sesión nocturna 23-may, camino a v0.6 martes 26-may)
