@@ -27,6 +27,7 @@ from config import (
     ALPACA_API_KEY,
     ALPACA_SECRET_KEY,
     KELLY_FRACTION,
+    MAX_ALLOCATION_TOTAL,
     MAX_CAPITAL_PER_SENTINEL,
     MIN_CAPITAL_PER_SENTINEL,
 )
@@ -214,14 +215,30 @@ class Dispatcher:
             clamped        = max(MIN_CAPITAL_PER_SENTINEL, min(MAX_CAPITAL_PER_SENTINEL, kelly_adjusted))
             allocation[sid] = clamped
 
-        # Normalizar si la suma supera 100%
-        total = sum(allocation.values())
-        if total > 100.0:
-            factor = 100.0 / total
-            allocation = {sid: pct * factor for sid, pct in allocation.items()}
-            logger.debug(f"Allocation normalizada (factor={factor:.4f}).")
+        # Cap de allocation total (#GR-4): reserva mínima de cash.
+        allocation = self._cap_allocation(allocation)
 
         logger.info(f"Capital asignado: { {k: f'{v:.1f}%' for k, v in allocation.items()} }")
+        return allocation
+
+    @staticmethod
+    def _cap_allocation(allocation: dict[str, float]) -> dict[str, float]:
+        """
+        Escala las allocations por Sentinel para que su suma no exceda
+        MAX_ALLOCATION_TOTAL (#GR-4), garantizando una reserva mínima de cash
+        de (100 - MAX_ALLOCATION_TOTAL)% para fees, slippage, gaps de apertura
+        y oportunidades asimétricas. Si la suma ya está bajo el cap, devuelve
+        las allocations sin cambios (proporción preservada al escalar).
+        """
+        total = sum(allocation.values())
+        if total > MAX_ALLOCATION_TOTAL:
+            factor = MAX_ALLOCATION_TOTAL / total
+            allocation = {sid: pct * factor for sid, pct in allocation.items()}
+            logger.info(
+                f"Allocation escalada al cap MAX_ALLOCATION_TOTAL={MAX_ALLOCATION_TOTAL}% "
+                f"(factor={factor:.4f}). Reserva mínima de cash: "
+                f"{100 - MAX_ALLOCATION_TOTAL}%."
+            )
         return allocation
 
     # -------------------------------------------------------------------------

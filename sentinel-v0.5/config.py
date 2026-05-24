@@ -62,6 +62,9 @@ _CRITICAL_CREDENTIALS = {
 MAX_CAPITAL_PER_SENTINEL = 25.0   # % máximo asignable a un solo Sentinel
 MIN_CAPITAL_PER_SENTINEL = 5.0    # % mínimo — por debajo de esto el Sentinel se pausa
 KELLY_FRACTION           = 0.5    # Half-Kelly
+MAX_ALLOCATION_TOTAL     = 85     # % del equity. La suma de allocations por Sentinel no
+                                  # excede esto: garantiza 15% en cash para fees, slippage,
+                                  # gaps de apertura y oportunidades asimétricas. #GR-4.
 
 # =============================================================================
 # CORRELATION GUARD
