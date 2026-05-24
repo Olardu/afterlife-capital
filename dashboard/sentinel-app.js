@@ -5,6 +5,26 @@ const t = k => (I18N[STATE.lang]||I18N.es)[k] || k;
 const fmt = n => n>=1000 ? n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : n.toFixed(2);
 const fmt0 = n => n>=1000 ? n.toLocaleString('en-US') : n.toFixed(0);
 
+/* ============ SECURITY ============ */
+/**
+ * Escapa caracteres HTML para prevenir XSS al interpolar datos no-confiables
+ * (API responses, DB rows, logs externos) dentro de template literals que
+ * usan innerHTML. Datos hardcoded (i18n keys, constantes AGENTS/NEWS/SENTINELS,
+ * valores numéricos calculados) NO necesitan escape — quedan sin tocar.
+ *
+ * Política BUENAS_PRACTICAS_V2 §7: validar/sanitizar inputs en bordes.
+ * Este es el borde DOM ← API/DB.
+ */
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /* ============ I18N APPLY ============ */
 function applyI18n(){
   document.documentElement.lang = STATE.lang;
@@ -247,7 +267,7 @@ function renderSentGrid(){
     const sharpeC = s.sharpe>=1?'green':s.sharpe>=0?'':'red';
     return `<div class="sent-card" data-detail="${s.id}">
       <div class="top">
-        <div><span class="name">${s.name}</span> <span class="sid">${s.id}</span></div>
+        <div><span class="name">${escapeHtml(s.name)}</span> <span class="sid">${s.id}</span></div>
         <span class="sig ${sigCls}">${sigTxt}</span>
       </div>
       <div class="strat">${t(s.stratKey)}</div>
@@ -377,7 +397,7 @@ function renderDetail(){
     const recentRows = recent.length ? recent.map(tr => {
       const sideCls = tr.side==='BUY'?'sig-buy':'sig-sell';
       const sideTxt = tr.side==='BUY'?t('sig_buy'):t('sig_sell');
-      return `<tr><td>${tr.ts}</td><td>${tickerSpan(tr.ticker)}</td><td class="${sideCls}">${sideTxt}</td><td style="text-align:center">${tr.qty}</td><td style="text-align:right">${fmt(tr.px)}</td><td style="text-align:center" class="${statusInfo(tr.status).cls}"><span class="tip-trigger" data-tip="${statusInfo(tr.status).tip}">${statusInfo(tr.status).text}</span></td></tr>`;
+      return `<tr><td>${escapeHtml(tr.ts)}</td><td>${tickerSpan(tr.ticker)}</td><td class="${sideCls}">${sideTxt}</td><td style="text-align:center">${escapeHtml(tr.qty)}</td><td style="text-align:right">${fmt(tr.px)}</td><td style="text-align:center" class="${statusInfo(tr.status).cls}"><span class="tip-trigger" data-tip="${statusInfo(tr.status).tip}">${statusInfo(tr.status).text}</span></td></tr>`;
     }).join('') : `<tr><td colspan="6" class="empty">${t('empty_ops')}</td></tr>`;
 
     return `<div class="detail-block ${open?'open':''}" id="detail-${s.id}">
@@ -387,7 +407,7 @@ function renderDetail(){
         <span class="chev">▶</span>
       </div>
       <div class="detail-body">
-        <div class="detail-quote">"${getQuote(s)}"<span class="src">— ${s.quoteSrc}</span></div>
+        <div class="detail-quote">"${escapeHtml(getQuote(s))}"<span class="src">— ${s.quoteSrc}</span></div>
         <div class="detail-desc">${t('desc_'+s.stratKey)}</div>
         <div class="dt-subhead">${t('dt_tickers')}</div>
         <div class="tbl-wrap"><table class="tbl tbl-fixed"><colgroup><col style="width:14%"><col style="width:22%"><col style="width:28%"><col style="width:18%"><col style="width:18%"></colgroup><thead><tr>
@@ -420,7 +440,7 @@ function renderOps(){
   body.innerHTML = STATE.trades.map(tr => {
     const sideCls = tr.side==='BUY'?'sig-buy':'sig-sell';
     const sideTxt = tr.side==='BUY'?t('sig_buy'):t('sig_sell');
-    return `<tr><td>#${tr.id}</td><td style="color:var(--cyan)">${tr.sentName||tr.sent}</td><td>${tickerSpan(tr.ticker)}</td><td class="${sideCls}">${sideTxt}</td><td style="text-align:center">${tr.qty}</td><td style="text-align:right">${fmt(tr.px)}</td><td style="text-align:center" class="${statusInfo(tr.status).cls}"><span class="tip-trigger" data-tip="${statusInfo(tr.status).tip}">${statusInfo(tr.status).text}</span></td><td>${tr.ts}</td></tr>`;
+    return `<tr><td>#${escapeHtml(tr.id)}</td><td style="color:var(--cyan)">${escapeHtml(tr.sentName||tr.sent)}</td><td>${tickerSpan(tr.ticker)}</td><td class="${sideCls}">${sideTxt}</td><td style="text-align:center">${escapeHtml(tr.qty)}</td><td style="text-align:right">${fmt(tr.px)}</td><td style="text-align:center" class="${statusInfo(tr.status).cls}"><span class="tip-trigger" data-tip="${statusInfo(tr.status).tip}">${statusInfo(tr.status).text}</span></td><td>${escapeHtml(tr.ts)}</td></tr>`;
   }).join('');
   $('#opsCount').textContent = STATE.trades.length + ' trades';
 }
@@ -472,7 +492,7 @@ function renderHistorian(){
     if (apiRow.decay_status === true)       decay = `<span style="color:var(--red)">YES</span>`;
     else if (apiRow.decay_status === false) decay = `<span style="color:var(--green)">NO</span>`;
     else                                    decay = '—';
-    return `<tr><td><span style="color:var(--cyan);font-weight:700">${s.name}</span></td><td style="text-align:center">${s.win > 0 ? (s.win*100).toFixed(0)+'%' : '--'}</td><td style="text-align:center">${s.sharpe > 0 ? s.sharpe.toFixed(2) : '--'}</td><td style="text-align:center">${totalTrades}</td><td style="text-align:center">${slip}</td><td style="text-align:center">${decay}</td></tr>`;
+    return `<tr><td><span style="color:var(--cyan);font-weight:700">${s.name}</span></td><td style="text-align:center">${s.win > 0 ? (s.win*100).toFixed(0)+'%' : '--'}</td><td style="text-align:center">${s.sharpe > 0 ? s.sharpe.toFixed(2) : '--'}</td><td style="text-align:center">${escapeHtml(totalTrades)}</td><td style="text-align:center">${slip}</td><td style="text-align:center">${decay}</td></tr>`;
   }).join('');
 }
 
@@ -508,12 +528,12 @@ function renderLogs(){
   const body = $('#terminalBody'); if (!body) return;
   body.innerHTML = STATE.logs.map((l,i) => {
     const cls = l.lvl==='WARN'?'warn':l.lvl==='ERROR'?'err':'';
-    const msg = l.msg
+    const msg = escapeHtml(l.msg)
       .replace(/SIGNAL BUY/g,  '<span class="sig-buy">SIGNAL BUY</span>')
       .replace(/SIGNAL SELL/g, '<span class="sig-sell">SIGNAL SELL</span>')
       .replace(/SIGNAL HOLD/g, '<span class="sig-hold">SIGNAL HOLD</span>');
     const newCls = (i===STATE.logs.length-1 && l.isNew) ? ' new' : '';
-    return `<div class="log-line${newCls}"><span class="ts">${l.ts}</span><span class="lvl ${cls}">[${l.lvl}]</span><span class="msg">${msg}</span></div>`;
+    return `<div class="log-line${newCls}"><span class="ts">${escapeHtml(l.ts)}</span><span class="lvl ${cls}">[${escapeHtml(l.lvl)}]</span><span class="msg">${msg}</span></div>`;
   }).join('');
   body.scrollTop = body.scrollHeight;
   $('#logCount').textContent = STATE.logs.length + ' lines';

@@ -262,9 +262,10 @@ const TICKER_NAMES = {
  * Funciona con hover (desktop) y touch/tap (móvil).
  */
 function tickerSpan(sym) {
+  const safeSym = escapeHtml(sym);
   const name = TICKER_NAMES[sym] || '';
-  if (!name) return `<span class="ticker-sym">${sym}</span>`;
-  return `<span class="ticker-sym" data-tip="${name}">${sym}</span>`;
+  if (!name) return `<span class="ticker-sym">${safeSym}</span>`;
+  return `<span class="ticker-sym" data-tip="${escapeHtml(name)}">${safeSym}</span>`;
 }
 
 /* Universal tooltip — floating div positioned via JS, no overflow issues.

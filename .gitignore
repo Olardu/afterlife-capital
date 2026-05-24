@@ -59,6 +59,23 @@ backups/**/sentinel-v0.5_CLAUDE.md.bak*
 # general: cualquier backup de código .py (supera la lista per-file frágil)
 backups/**/*.py.*
 
+# === Backups con sufijos de rescue/triage (sesión 24-may incidente Code) ===
+backups/**/*.corrupted_*
+backups/**/*.uncommitted_*
+backups/**/*_pre_rotation
+backups/**/*_pre_revert
+
+# === Backups de archivos de configuración del proyecto ===
+backups/**/requirements.txt.*
+backups/**/requirements-dev.txt.*
+backups/**/.env.example.*
+backups/**/BUENAS_PRACTICAS_V2.md.*
+backups/**/API_REFERENCE.md.*
+backups/**/LOG.md.*
+
+# === Backups de scripts PowerShell del proyecto ===
+backups/**/*.ps1.*
+
 # === Code outputs (logs de sesiones de Claude Code) ===
 code-outputs/
 
