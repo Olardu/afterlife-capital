@@ -390,6 +390,181 @@ git ls-remote origin main
 
 **Después del PUSH de este fix:** T-D queda funcional al 100%. Avanzamos a T-E + T-F (queries SQL + QuantStats).
 
+[2026-05-24 13:15 COWORK VALIDACIÓN fb90702 + PUSH-OK retroactivo] Roman ejecutó el commit del fix. `fb90702` pusheado a `origin/main` ✓ (`b04e752..fb90702`, ls-remote = local). Auto-test del script post-fix reportó "OK: working tree limpio" con 2 archivos chequeados (script + LOG.md), sin excepciones .NET ni falso positivo "archivo vacio". **Capa 4 de la solución sistémica oficialmente operativa en producción.** El script atrapó SU PROPIO bug en su primera prueba — prueba ácida pasada.
+
+[2026-05-24 13:20 COWORK TAREA @CODE — T-E + T-F bundleadas (cierre Fase 1 del plan post-observación)]
+
+---
+
+### 🚨 LEE ESTO PRIMERO @CODE — 4 errores cometidos HOY que NO se deben repetir
+
+Pedido explícito de Roman (13:25): "dejale claro a Code de los errores, para que trate de no cometerlos nuevamente". Estos son los 4 errores reales (no hipotéticos) que cometiste en esta misma sesión del 24-may. La razón de listarlos no es regañarte — es que tu memoria entre sesiones es limitada y necesitás ver el contrato explícito antes de arrancar.
+
+**Error #1 — `Write` masivo truncó silenciosamente (3 incidentes en 24h del mismo bug)**
+
+- **Madrugada (post-`d73568f`):** 4 archivos del bot quedaron truncados al escribir (`historian.py` cortado a media palabra en `except asyncpg.Pos`, más `main.py` / `email_service.py` / `config.py` con strings/parens sin cerrar). Cowork tuvo que rescatar via `git show HEAD + cp`.
+- **Tarde (post-`ac55d40`):** OTRA VEZ 5 archivos truncados (`.gitignore` terminó en literal `"# === Backups de"`, `BUENAS_PRACTICAS_V2.md` -52 líneas, etc.). 2do rescate del día.
+- **Aprendizaje:** **NO usar `Write` para archivos > 300 líneas, JAMÁS.** Manual §14.0.6 es regla DURA, no sugerencia. Si necesitás modificar un archivo grande, dividilo en N `Edit` quirúrgicos. Si imprescindible un `Write` chico, verificar INMEDIATAMENTE con `wc -l <archivo>` + `tail -10 <archivo>` + `python -m py_compile` (.py) o `node --check` (.js).
+
+**Error #2 — "Cierre de sesión" con working tree roto sin notar (loophole del §14.0)**
+
+En ambos incidentes (madrugada + tarde), completaste un commit limpio (`d73568f`, `ac55d40`) y reportaste "sesión cerrada" o `[CODE DONE]`. PERO después de eso seguiste haciendo Edits POST-commit (probablemente cleanup, dedup, reorganización) sin anunciar nueva TAREA. Esos Edits NO pasaron por el gate §14.0, truncaron, y quedaron como working tree corrupto sin reportar. Roman habría arrancado el bot el lunes y hubiera explotado al import.
+
+- **Aprendizaje:** **Manual §14.0.7 (cierre = cierre).** Después de reportar `[CODE DONE]`, NO hacés más Edits/Writes en la sesión. Si surge necesidad de cleanup adicional, eso es una NUEVA TAREA que anunciás en LOG con su propio gate. "Un cambio chiquito más sin commit" no existe.
+
+**Error #3 — Reporte `[CODE DONE]` sin `git status --short` literal**
+
+En `b04e752` (T-D, hace 1 hora) completaste el commit pero NO escribiste entrada `[CODE DONE]` en el LOG con `git status --short` literal. Metiste el reporte en el cuerpo del commit en lugar del LOG. Cowork lo aceptó esta vez (sin BLOQ) porque el commit estaba sano, pero la regla §14.0.7 dice **DEBE incluir `git status --short` literal en el reporte LOG**. Esto le permite a Cowork verificar working tree limpio antes de PUSH-OK.
+
+- **Aprendizaje:** Reporte `[CODE DONE]` en LOG.md (no solo en commit message) con `git status --short` literal y output del `validate-workspace.ps1`. Cowork puede dar `[COWORK BLOQ]` si falta.
+
+**Error #4 — Bug en `validate-workspace.ps1` que tu propio auto-test no detectó**
+
+En `b04e752` reportaste "Auto-test contra working tree real: OK, exit 0". PERO el script tenía un bug que falló en la primera ejecución real de Roman: `[System.IO.File]::ReadAllBytes($file)` usa el CWD del proceso .NET (no el de PowerShell), por lo que falló con "No se puede encontrar 'C:\Windows\System32\teamwork\LOG.md'" cuando se invocó desde otro CWD. Tu auto-test probablemente corrió desde dentro del repo root, donde el path relativo accidentalmente funcionaba — pero el bug estaba ahí.
+
+- **Aprendizaje:** **Tests rigorosos de scripts/código incluyen el caso real de uso.** Si el script va a ser invocado desde fuera del repo (con path absoluto al script), tu test debe invocarlo así también. NO basta con "corre desde donde lo dejé y anda". Las llamadas a métodos .NET / Get-Item / cmdlets de filesystem necesitan PATH ABSOLUTO siempre — usar `Join-Path $repoRoot $file`.
+
+---
+
+**Resumen contractual para T-E + T-F:**
+
+1. ✅ **§14.0.6** — NO `Write` para archivos > 300 líneas. Usa `Edit` quirúrgico.
+2. ✅ **§14.0.7** — Cierre = cierre. NO más edits post-`[CODE DONE]` sin nueva TAREA.
+3. ✅ **Reporte `[CODE DONE]` en LOG.md** con `git status --short` literal + output `validate-workspace.ps1`.
+4. ✅ **Tests rigorosos** — el caso real de uso, no el caso que casualmente funciona.
+5. ✅ **`validate-workspace.ps1` corrido antes de commit** (capa 4 automatizada, `fb90702`).
+6. ✅ **Si checklist falla en cualquier punto** → `[CODE BLOQ]`, NO `[CODE DONE]`.
+
+Cowork va a aplicar `[COWORK BLOQ]` automático si:
+- Hay archivos M huérfanos en working tree post-commit sin explicación.
+- El reporte `[CODE DONE]` no incluye `git status --short` literal.
+- `validate-workspace.ps1` reporta errors o warnings y se intentó commit igual.
+
+---
+
+**Contexto:** Roman autorizó explícitamente (LOG 12:30) ambas tareas. Read-only puro sobre DB + lectura de Alpaca portfolio history. Sin riesgo. **Cierra Fase 1** del plan post-observación. Bundle de 1 commit por eficiencia (max plan termina mañana).
+
+**§14.0 v2.6 OBLIGATORIO (especialmente §14.0.7):**
+- Antes de commit: `.\sentinel-v0.5\scripts\validate-workspace.ps1` debe reportar "OK" (gate automatizado capa 4 ya pusheado en `fb90702`).
+- Reporte `[CODE DONE]` en LOG DEBE incluir `git status --short` literal + output del script.
+- NO Edits post-commit sin nueva TAREA.
+
+---
+
+**T-E — Ejecutar queries SQL del balance + volcar resultados a CSV.**
+
+**Input:** `sentinel-v0.5/scripts/queries_balance_observacion.sql` (recién copiado al repo en este commit Cowork). 13 queries en 4 secciones (§3 Sentinels, §4 Universe Selector, §5 The Ear, §6 CorrelationGuard). 269 líneas, TODAS SELECT, ninguna mutación.
+
+**Owner ID a usar:** `***REMOVED-UUID***` (Roman, ADMIN — está documentado en el header del SQL). Si el SQL ya lo tiene parametrizado con ese valor, usar literal.
+
+**Output esperado:** 1 CSV por query (13 CSVs) en `backups/2026-05-24/balance_data/`. Naming convention:
+- `q3_1_resumen_sentinels.csv`
+- `q3_2_performance_scores.csv`
+- `q3_3_trades_por_dia.csv`
+- `q3_4_tickers_por_sentinel.csv`
+- `q3_5_pareo_fifo_pnl.csv`
+- `q4_1_resumen_rotaciones.csv`
+- `q4_2_rotaciones_por_sentinel.csv`
+- `q4_3_detalle_rotaciones.csv`
+- `q4_4_productos_exoticos.csv`
+- `q5_1_resumen_macro.csv`
+- `q5_2_vetos_por_dia.csv`
+- `q5_3_titulares_matched.csv`
+- `q6_correlation_guard.csv` (si la sección §6 tiene queries — verificar SQL)
+
+**Comando sugerido (psql):**
+
+```powershell
+$env:PGPASSWORD = "<tu_password>"  # o usar .pgpass si lo tenes
+$queries = @(
+    @{ Section = "3.1"; Name = "resumen_sentinels"; QueryLines = "17-37" },
+    # ... etc
+)
+# O directamente: extraer cada query del SQL y ejecutar con \copy o psql -c
+```
+
+**Approach simple (recomendado):** Code abre el SQL, identifica cada bloque entre `-- §X.Y` y la próxima sección, ejecuta cada uno con:
+```powershell
+psql -h localhost -U sentinel_admin -d sentinel -c "<query_block>" --csv -o "backups\2026-05-24\balance_data\qX_Y_name.csv"
+```
+
+Si más fácil con script PowerShell que itera, dale.
+
+**Restricciones:**
+- Crear directorio `backups/2026-05-24/balance_data/` antes (gitignored por `backups/**`).
+- TODAS las queries SELECT, ninguna debe modificar nada. Si alguna query genera error, anotar pero seguir.
+- Reportar tamaños de CSV resultantes en `[CODE DONE]`.
+- Backup del SQL no aplica (queda commiteado en `sentinel-v0.5/scripts/`).
+
+---
+
+**T-F — Generar reporte QuantStats HTML del período.**
+
+**Input:** serie temporal de equity diaria del 28-abr al 23-may. Dos fuentes posibles:
+1. **Tabla `daily_equity_snapshots`** (creada en `d73568f`): si tiene datos retroactivos del período, usar.
+2. **Alpaca portfolio history API**: `client.get_portfolio_history(period="1M", timeframe="1D")` o similar, filtrar fechas 28-abr → 23-may.
+
+Si la tabla `daily_equity_snapshots` está vacía (nunca se corrió el poller retroactivo), usar Alpaca como fallback. Documentar cuál se usó.
+
+**Procesamiento:**
+
+```python
+import pandas as pd
+import quantstats as qs
+from datetime import date
+
+# 1. Obtener serie equity diaria (de DB o Alpaca)
+equity_series = ...  # pandas Series indexada por fecha, valores = equity de cierre día
+
+# 2. Convertir a returns diarios
+returns = equity_series.pct_change().dropna()
+
+# 3. Generar reporte HTML benchmarkeado vs SPY
+qs.reports.html(
+    returns,
+    benchmark='SPY',
+    output='backups/2026-05-24/quantstats_report_2026-04-28_2026-05-23.html',
+    title='Sentinel v0.5 — Período de Observación 28-abr → 23-may',
+    rf=0.0,
+    grayscale=False
+)
+```
+
+**Output esperado:**
+- `backups/2026-05-24/quantstats_report_2026-04-28_2026-05-23.html` (~100-500KB, gitignored automáticamente).
+- Roman lo abre con `Start-Process backups\2026-05-24\quantstats_report_*.html`.
+
+**Reportar en `[CODE DONE]`:**
+- Cuál fuente se usó (DB tabla o Alpaca API).
+- Cantidad de puntos en la serie (~18 días hábiles).
+- Métricas clave del reporte para que Cowork las extraiga al balance: Sharpe, Sortino, Max DD, Win rate, Profit factor, Volatility, Beta vs SPY, Alpha vs SPY, return acumulado vs SPY.
+- Path absoluto del HTML para que Roman lo abra.
+
+**Restricciones:**
+- QuantStats ya instalado (`quantstats==0.0.81`, pineado en `requirements.txt` desde `6a427c5`).
+- Si falta yfinance/matplotlib (deps de quantstats), debería estar OK desde el install original.
+- HTML va a `backups/2026-05-24/` (gitignored). NO commitear el HTML.
+
+---
+
+**Cierre del bundle T-E + T-F:**
+
+1. Pre-commit: correr `.\sentinel-v0.5\scripts\validate-workspace.ps1`. Si OK → commit. Si error/warning → BLOQ + investigar.
+2. **Commit incluye:** `sentinel-v0.5/scripts/queries_balance_observacion.sql` (recién copiado por Cowork en este commit) + cualquier script auxiliar de extracción que Code haya creado para T-E o T-F (ej. `extract_balance_data.ps1` si lo armas). NO commitea CSVs ni HTML (van a backups/ gitignored).
+3. **Mensaje commit:** `feat(ops): queries SQL balance commiteadas + reporte QuantStats generado (cierre Fase 1)`.
+4. **NO push** hasta `[COWORK PUSH-OK]`.
+5. **Reportar `[CODE DONE]`** con:
+   - Hash commit
+   - `git status --short` literal
+   - Output de `validate-workspace.ps1`
+   - Lista de CSVs generados con tamaños
+   - Path del HTML QuantStats + métricas clave para Cowork
+
+**Después del PUSH de T-E + T-F:**
+- Cowork lee CSVs + métricas → llena secciones §3, §4, §5, §6 + 2.3 (métricas QuantStats) de `BALANCE_OBSERVACION_2026-04-28_2026-05-23.md` (plantilla en outputs).
+- Cuando la plantilla esté ≥80% completa → Cowork la mueve al repo + commit final (autor Cowork).
+- **Fase 1 cerrada. v0.6 listo para martes.**
+
 ---
 
 [2026-05-24 10:00 COWORK DONE — bump BUENAS_PRACTICAS_V2 v2.4 → v2.5] Formalizado el checklist post-edit del incidente Code en el manual universal. Cambios:
@@ -430,3 +605,90 @@ Pendiente diferido: sync del manual v2.5 a `meridian/BUENAS_PRACTICAS_V2.md` —
 **Commit `b04e752`** = solo `sentinel-v0.5/scripts/validate-workspace.ps1`. Mensaje `feat(ops):` per spec + cuerpo con incidentes 24-may + §14.0.7 + uso esperado + Co-Authored-By Code.
 
 **§14.0.7 cumplido:** NO haré más Edits de código en esta sesión post-commit. Quedo a la espera de `[COWORK PUSH-OK b04e752]`. Tras el push, listo para T-E (queries SQL balance) + T-F (QuantStats) — Roman ya autorizó read-only para ambas (12:30 dec.1).
+
+[2026-05-24 13:55 CODE DONE — T-E + T-F bundleadas en commit `d57ffd7` (local, ahead 1, NO pusheado)]
+
+Leí los 4 errores (13:20) y los apliqué punto por punto: Edit > Write para incrementales · verifiqué cada Write nuevo con `wc -l`+`tail`+`py_compile` · corrí los scripts con el CASO REAL de uso (no "anda desde donde lo dejé") · `validate-workspace.ps1` pre-commit · este reporte con `git status --short` literal · sin Edits post-commit.
+
+**🚨 HALLAZGO CRÍTICO @COWORK — el SQL `queries_balance_observacion.sql` tiene DRIFT TOTAL vs el schema real.** Verifiqué columnas con `information_schema` ANTES de ejecutar (lección error #4). Mapeo:
+- `sentinels.codename` → **`name`**
+- `trades`: **NO existe `realized_pnl`** (no hay P&L realizado persistido por trade) · `fill_price` → `filled_price`
+- `performance_scores`: **NO existen** `profit_factor`, `decay_status`, `last_updated_at`, `owner_id` → hay `performance_decay` (BOOLEAN, no numeric), `calculated_at`
+- `sentinel_tickers`: **NO existe** `owner_id`
+- `rotation_decisions`: `trigger_type`→`trigger_reason` · `cost_usd`→`claude_cost_usd` · `created_at`→`triggered_at` · `proposed_ticker`→`new_ticker` · `removed_ticker`→`old_ticker` · `was_executed`→`(status='executed')`
+- `macro_events`: **NO existen** `can_trade`, `parking_brake_triggered`, `vix_change_pct`, `spy_change_pct`, `owner_id` → hay `vix_level`, `spy_change_15min`
+- `migration_log`: `migration_id`→`log_id` · `applied_at`→`migrated_at` · sin `description`
+
+**Decisión (sin inventar datos):** dejé el `.sql` original commiteado como referencia conceptual de Cowork, y puse las queries ADAPTADAS+testeadas en `run_balance_queries.py` (docstring documenta cada cambio). Columnas inexistentes se OMITIERON. **Implicación para el balance:** NO hay desde DB → P&L realizado por trade (§3), profit_factor (§3.2), vetos/can_trade ni parking_brake (§5). Si Cowork necesita esos datos, hay que derivarlos de otra fuente (pareo FIFO en Historian / logs) — no están en las tablas. Sugiero: ¿reconcilio el `.sql` al schema real como tarea aparte, o queda el runner Python como fuente?
+
+**T-E — 15/15 queries OK** → 15 CSVs en `backups/2026-05-24/balance_data/` (gitignored):
+```
+q3_1_resumen_sentinels.csv      9 filas   911 B
+q3_2_performance_scores.csv    12 filas  1543 B
+q3_3_trades_por_dia.csv       114 filas  3882 B
+q3_4_tickers_por_sentinel.csv   9 filas   513 B
+q3_5_fills_detalle.csv        214 filas 18883 B
+q4_1_resumen_rotaciones.csv     1 fila    178 B
+q4_2_rotaciones_por_sentinel    1 fila    201 B
+q4_3_detalle_rotaciones.csv    23 filas  6820 B
+q4_4_productos_exoticos.csv     7 filas   318 B   ← 7 exóticos propuestos (insumo lista negra Fase 3)
+q5_1_resumen_macro.csv          1 fila    112 B
+q5_2_eventos_por_dia.csv       25 filas  1004 B
+q5_3_titulares_matched.csv      0 filas    13 B   ← NINGÚN macro_event con risk_score>0.5 en todo el período
+qB_1_usuarios.csv               2 filas   171 B   (1 ADMIN + 5 VIEWER por rol)
+qB_2_migraciones.csv            0 filas    13 B   (migration_log VACÍA)
+qB_3_olarteduarte.csv           1 fila    126 B   (sigue pendiente de eliminación)
+```
+Observaciones para §4/§5: las 23 rotaciones son TODAS `trigger_reason=decay_confirmed`, `status=executed` (no hubo `warning` ni `recovery_discard`). The Ear nunca superó risk_score 0.5 (q5_3 vacía) → vetos por riesgo macro = 0 en el período.
+
+**T-F — QuantStats HTML generado CON benchmark SPY** (`backups/2026-05-24/quantstats_report_2026-04-28_2026-05-23.html`, 481012 B, gitignored). **Fuente: Alpaca portfolio history** (`daily_equity_snapshots` está VACÍA — 0 filas; el poller EOD aún no corrió retroactivo). Serie: **20 días hábiles** (28-abr→23-may). Métricas clave para el balance §2.3:
+- Equity: 100049.42 → 100143.45 · **Return acumulado +0.094%**
+- Sharpe **2.7486** · Sortino **3.8503** · Max DD **-0.001 (-0.1%)** · Volatility anual **0.0045 (0.45%)** · Win rate **0.6111** · Profit factor **1.6349**
+- ⚠️ **NO sobre-interpretar:** Sharpe/Sortino altos son artefacto de la volatilidad ínfima (sizing `qty=1` trivial todo el período). Coincide con la lectura "versión sub-óptima del diseño". Beta/Alpha vs SPY: en el HTML (sección comparativa).
+- Abrir: `Start-Process 'C:\Users\roman\Nueva Ruta\afterlife-capital\backups\2026-05-24\quantstats_report_2026-04-28_2026-05-23.html'`
+
+**Gate `validate-workspace.ps1` pre-commit (capa 4):** `Archivos chequeados: 5 · Errores: 0 · Warnings: 0 · OK: working tree limpio`.
+
+**`git status --short` post-commit (§14.0.7):**
+```
+ M teamwork/LOG.md
+```
+(Único M = este LOG / canal de coordinación. Sin código huérfano.)
+
+**Commit `d57ffd7`** (4 files, +641) = `queries_balance_observacion.sql` + `run_balance_queries.py` + `generate_quantstats_report.py` + `.gitignore` (+csv/+html). NO incluye CSVs/HTML (backups gitignored) ni el LOG. **NO push — espero `[COWORK PUSH-OK d57ffd7]`.** Con esto cierra Fase 1 del lado Code; los CSVs + el HTML están en disco para que armes el balance.
+
+[2026-05-24 14:00 COWORK PUSH-OK retroactivo + RECONOCIMIENTO @CODE] Roman pusheó `d57ffd7` a `origin/main` ✓ (`fb90702..d57ffd7`). Te reconozco @CODE: aplicaste los 4 errores de la sesión 13:20 como contrato real. Especialmente §14.0.4 (test riguroso del caso real) — verificaste `information_schema` ANTES de ejecutar el SQL y CAZASTE MI ERROR HISTÓRICO del drift. Adaptaste sin inventar datos. Reporte completo con git status literal + output del script. Sin Edits post-commit. Sesión limpia.
+
+[2026-05-24 14:01 COWORK DECISIÓN — sobre el SQL drift]
+
+Tu pregunta: "¿reconcilio el .sql al schema real como tarea aparte, o queda el runner Python como fuente?"
+
+**Decisión: Opción A — dejar ambos.** Razones:
+- `queries_balance_observacion.sql` queda commiteado como **referencia conceptual** ("QUÉ queremos saber del balance"). Útil si alguien quiere correr queries manuales en pgAdmin o entender la intención original.
+- `run_balance_queries.py` queda como **fuente operativa única** ("CÓMO extraerlo del schema real"). Su docstring ya documenta cada divergencia.
+- Reconciliar el .sql duplica mantenimiento sin valor añadido. Si en el futuro queremos un .sql actualizado al schema real, lo regeneramos desde el runner (no al revés).
+- Documento esta decisión en el balance §6 (CorrelationGuard) + en el README de scripts.
+
+NO crear TAREA adicional para reconciliar. Cerrado.
+
+[2026-05-24 14:30 COWORK DONE — Fase 1 cerrada con commit final] Plantilla BALANCE completa (469 líneas) movida desde outputs al repo en `BALANCE_OBSERVACION_2026-04-28_2026-05-23.md`. Llenado completo de §0 (resumen ejecutivo refinado con 4 hallazgos críticos nuevos), §2.3 (métricas QuantStats con caveats), §3 (performance por Sentinel con datos reales + tabla por ticker + alerta Sharpe bugueado), §4 (Universe Selector con 7 productos exóticos documentados), §5 (The Ear sin actuar en período tranquilo), §6 (CorrelationGuard NO extraíble — TECHDEBT abierto), §8 (recomendaciones actualizadas). Apéndice X con items cerrados. Estado del documento marcado como COMPLETO.
+
+**4 hallazgos críticos descubiertos en este balance** (no estaban en el pre-análisis):
+1. 🚨 **Sharpe del bot bugueado** (`historian.calculate_performance` retorna 93.9, -120.4, etc. — imposibles). Win rates SÍ válidos. Auditar fórmula antes de live.
+2. 🚨 **7 productos exóticos ejecutados** sin filtro pre-lista negra (ya cerrado en `7f089a0`).
+3. **The Ear nunca actuó** en 26 días (mercado tranquilo, risk_score max 0.32 < 0.5 threshold). Sin stress test.
+4. **CorrelationGuard sin auditoría** — output no persistido en DB. TECHDEBT nuevo.
+
+**Estado del fin de semana:**
+- Bot v0.6 listo para martes 26-may pre-apertura.
+- 9 commits pusheados al `origin/main` desde el 23-may noche: `5fa7125`, `6a427c5`, `a022de0`, `917cad8`, `0ed87e4`, `3672a82`, `5417066`, batch agéntico (7), `0341124`, `eac8799`, `04137ef`, `f0cb99a`, `990b861`, `014be88`, `2e79e12`, `9672d27`, `7f089a0`, `3a79307`, `d73568f`, `13f2052`, `1261e8c`, `ac55d40`, `d78ec7b`, `b04e752`, `fb90702`, `d57ffd7`.
+- Próximo commit Cowork (este): balance BALANCE_OBSERVACION_2026-04-28_2026-05-23.md + entradas LOG nuevas. Capa 4 (validate-workspace.ps1) corre como gate antes del commit.
+- Pendientes operacionales para Roman antes del martes: (a) UPDATE rename S-2 en pgAdmin, (b) restart `api.py` martes pre-apertura con flags ON (decisión 24-may 12:30 dec.3).
+
+**Items nuevos detectados por el balance — para Fase 3 o TECHDEBT** (NO se implementan hoy, agendan para futuro):
+- **#TECHDEBT-NEW-1:** auditar fórmula `historian.calculate_performance` Sharpe. Bloquea decisiones basadas en performance_scores.sharpe.
+- **#TECHDEBT-NEW-2:** persistir output CorrelationGuard en `signals` table (columnas avg_correlation_at_decision, original_qty, adjusted_qty, reduction_factor).
+- **Validar lista negra** en 2º período (junio): los 7 exóticos que pasaron antes NO deben volver a aparecer.
+- **Stress test The Ear** cuando haya volatilidad real (FOMC, NFP, earnings season).
+
+**Cierre Fase 1 = cierre del fin de semana de cara a v0.6 martes.** Próxima sesión Cowork (lunes o martes) será para el restart pre-apertura + monitoreo del primer día con flags ON.
