@@ -512,24 +512,47 @@ class Dispatcher:
         qty: Decimal,
         strategy_type: str = "",
         limit_price: Decimal = None,
+        take_profit_price: Optional[Decimal] = None,
+        stop_loss_price: Optional[Decimal] = None,
     ) -> dict:
         """
         Envía una orden a Alpaca con Smart Routing:
             mean_reversion / pairs → Limit Order al precio de señal
             Cualquier otra estrategia → Market Order
 
+        Si se pasan `take_profit_price` y `stop_loss_price` (ambos), envía una
+        BRACKET order de mercado con TP/SL automáticos (#GR-1) — el bracket
+        anula el routing limit. Sin ellos, comportamiento de siempre.
+
         Limit Orders: espera 60s y verifica si se ejecutó. Si no está FILLED,
         cancela y retorna status CANCELLED.
 
         Returns:
             {order_id, filled_price, status}
+
+        Raises:
+            ValueError si se pasa solo uno de take_profit_price / stop_loss_price
+            (un bracket es "ambos o ninguno").
         """
+        # Bracket es "ambos o ninguno" (#GR-1): un solo precio es ambiguo.
+        if (take_profit_price is None) != (stop_loss_price is None):
+            raise ValueError(
+                "Bracket order requiere take_profit_price y stop_loss_price juntos "
+                f"(o ninguno). Recibido: tp={take_profit_price}, sl={stop_loss_price}."
+            )
+
         # Montos monetarios → Decimal (#H-4). Conversión defensiva (callers float ok).
         qty = Decimal(str(qty))
         if limit_price is not None:
             limit_price = Decimal(str(limit_price))
 
-        is_limit = self._is_limit_strategy(strategy_type) and limit_price is not None
+        # El bracket usa orden de mercado, así que anula el routing limit.
+        is_bracket = take_profit_price is not None and stop_loss_price is not None
+        is_limit = (
+            not is_bracket
+            and self._is_limit_strategy(strategy_type)
+            and limit_price is not None
+        )
 
         original_qty = qty
         qty = int(math.floor(qty))
@@ -542,7 +565,8 @@ class Dispatcher:
         try:
             submit_result = await asyncio.wait_for(
                 asyncio.to_thread(
-                    self._submit_order_sync, ticker, side, qty, strategy_type, limit_price
+                    self._submit_order_sync, ticker, side, qty, strategy_type, limit_price,
+                    take_profit_price, stop_loss_price,
                 ),
                 timeout=15.0,
             )
@@ -599,6 +623,8 @@ class Dispatcher:
         qty: Decimal,
         strategy_type: str,
         limit_price: Decimal,
+        take_profit_price: Optional[Decimal] = None,
+        stop_loss_price: Optional[Decimal] = None,
     ) -> dict:
         """Construye y envía la orden. Ejecutado en thread separado."""
         # Montos monetarios → Decimal (#H-4). Conversión defensiva.
@@ -607,14 +633,40 @@ class Dispatcher:
             limit_price = Decimal(str(limit_price))
 
         from alpaca.trading.client import TradingClient
-        from alpaca.trading.enums import OrderSide, TimeInForce
-        from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
+        from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
+        from alpaca.trading.requests import (
+            LimitOrderRequest,
+            MarketOrderRequest,
+            StopLossRequest,
+            TakeProfitRequest,
+        )
 
         client      = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
         order_side  = OrderSide.BUY if side == "BUY" else OrderSide.SELL
-        use_limit   = self._is_limit_strategy(strategy_type) and limit_price is not None
+        is_bracket  = take_profit_price is not None and stop_loss_price is not None
+        use_limit   = (
+            not is_bracket
+            and self._is_limit_strategy(strategy_type)
+            and limit_price is not None
+        )
 
-        if use_limit:
+        if is_bracket:
+            # Bracket: entrada de mercado + TP (limit) y SL (stop) automáticos.
+            # Precios a 2 decimales con banker's rounding, serializados a string
+            # (evita problemas de serialización de Decimal en el SDK).
+            tp = Decimal(str(take_profit_price)).quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN)
+            sl = Decimal(str(stop_loss_price)).quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN)
+            order_data = MarketOrderRequest(
+                symbol        = ticker,
+                qty           = str(qty),
+                side          = order_side,
+                time_in_force = TimeInForce.DAY,
+                order_class   = OrderClass.BRACKET,
+                take_profit   = TakeProfitRequest(limit_price=str(tp)),
+                stop_loss     = StopLossRequest(stop_price=str(sl)),
+            )
+            order_type = "BRACKET"
+        elif use_limit:
             order_data = LimitOrderRequest(
                 symbol       = ticker,
                 qty          = qty,
@@ -622,6 +674,7 @@ class Dispatcher:
                 time_in_force = TimeInForce.DAY,
                 limit_price  = round(limit_price, 2),
             )
+            order_type = "LIMIT"
         else:
             order_data = MarketOrderRequest(
                 symbol        = ticker,
@@ -629,6 +682,7 @@ class Dispatcher:
                 side          = order_side,
                 time_in_force = TimeInForce.DAY,
             )
+            order_type = "MARKET"
 
         order = client.submit_order(order_data)
 
@@ -636,8 +690,7 @@ class Dispatcher:
         status       = order.status.value.upper() if order.status else "PENDING"
 
         logger.info(
-            f"Orden enviada: {ticker} {side} qty={qty} "
-            f"type={'LIMIT' if use_limit else 'MARKET'} "
+            f"Orden enviada: {ticker} {side} qty={qty} type={order_type} "
             f"status={status} filled={filled_price}"
         )
         return {
