@@ -193,6 +193,39 @@ def _ema(closes, span: int):
     return closes.ewm(span=span, adjust=False).mean()
 
 
+def _atr(bars, window: int = 14) -> float:
+    """
+    Average True Range con suavizado de Wilder. Retorna el ÚLTIMO valor de ATR
+    (escalar float) — es lo que el sizing por riesgo necesita; el caller lo
+    convierte a Decimal en el borde monetario (#GR-2).
+
+    TR_i = max(high_i - low_i, |high_i - close_(i-1)|, |low_i - close_(i-1)|).
+    El primer ATR es la media simple de los primeros `window` TR; luego Wilder:
+        ATR_i = (ATR_(i-1) * (window - 1) + TR_i) / window.
+
+    Retorna NaN si hay menos de `window` barras (sin seed posible).
+    """
+    high   = bars["high"].tolist()
+    low    = bars["low"].tolist()
+    close  = bars["close"].tolist()
+    n = len(close)
+    if n < window:
+        return float("nan")
+
+    tr = [high[0] - low[0]]  # primera barra: sin close previo → solo el rango
+    for i in range(1, n):
+        tr.append(max(
+            high[i] - low[i],
+            abs(high[i] - close[i - 1]),
+            abs(low[i] - close[i - 1]),
+        ))
+
+    atr = sum(tr[:window]) / window  # seed: SMA de los primeros `window` TR
+    for i in range(window, n):
+        atr = (atr * (window - 1) + tr[i]) / window
+    return float(atr)
+
+
 def _default_tickers(tickers: Optional[list[str]]) -> list[str]:
     """Default a [BASE_TICKER] si no se provee lista (evita default mutable)."""
     return list(tickers) if tickers else [BASE_TICKER]

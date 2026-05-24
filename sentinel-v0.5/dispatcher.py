@@ -20,16 +20,22 @@
 import asyncio
 import logging
 import math
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN, ROUND_HALF_EVEN
+from typing import Optional
 from uuid import UUID
 
 from config import (
     ALPACA_API_KEY,
     ALPACA_SECRET_KEY,
+    ATR_STOP_MULTIPLIER,
     KELLY_FRACTION,
     MAX_ALLOCATION_TOTAL,
     MAX_CAPITAL_PER_SENTINEL,
+    MAX_POSITION_PCT_OF_EQUITY,
     MIN_CAPITAL_PER_SENTINEL,
+    MIN_POSITION_USD,
+    RISK_PER_TRADE,
+    RR_RATIO_TAKE_PROFIT,
 )
 from correlation_guard import CorrelationGuard
 from historian import Historian
@@ -821,3 +827,84 @@ class Dispatcher:
             f"Ciclo completado — régimen={regime} can_trade={can_trade} "
             f"señales={len(results)} aprobadas={approved_count}"
         )
+
+
+# =============================================================================
+# § 9 — Position sizing por ATR (#GR-2 — risk parity, flag-gated)
+# =============================================================================
+
+def calculate_position_size(
+    ticker: str,
+    equity: Decimal,
+    current_price: Decimal,
+    atr: Decimal,
+    risk_per_trade: Decimal = RISK_PER_TRADE,
+    atr_multiplier: Decimal = ATR_STOP_MULTIPLIER,
+    rr_ratio: Decimal = RR_RATIO_TAKE_PROFIT,
+    max_position_pct: Decimal = MAX_POSITION_PCT_OF_EQUITY,
+    min_position_usd: Decimal = MIN_POSITION_USD,
+    is_fractionable: bool = True,
+) -> Optional[dict]:
+    """
+    Dimensiona una posición por riesgo (ATR risk parity) con cap por % de equity
+    (anti-concentración) y piso en USD (para que los fees no dominen).
+
+        qty   = min(risk_usd / (atr·mult),  equity·max_pct / price), truncado.
+        stop  = price - atr·mult
+        tp    = price + atr·mult·rr_ratio
+
+    Con risk 1% y cap 15% el cap domina casi siempre (precio > 30·ATR) — es el
+    punto del cap. Todo monetario en Decimal (§8.6).
+
+    Returns:
+        dict {qty, stop_price, take_profit_price, risk_usd, position_value_usd,
+        capped} o None si no es factible (ATR<=0, o posición bajo el piso $).
+    """
+    # Edge: ATR <= 0 (mercado plano) → evita división por cero.
+    if atr <= 0:
+        return None
+
+    # 1. Risk parity puro.
+    risk_usd      = equity * risk_per_trade
+    stop_distance = atr * atr_multiplier
+    qty_pure      = risk_usd / stop_distance
+
+    # 2. Cap por % de equity (anti-concentración).
+    max_position_value = equity * max_position_pct
+    qty_capped         = max_position_value / current_price
+
+    # 3. El menor de ambos respeta los dos límites.
+    qty_final = min(qty_pure, qty_capped)
+    capped    = qty_final < qty_pure
+
+    # 4. Quantize (fraccional a 9 decimales, o entero).
+    if is_fractionable:
+        qty_final = qty_final.quantize(Decimal("0.000000001"), rounding=ROUND_DOWN)
+    else:
+        qty_final = qty_final.quantize(Decimal("1"), rounding=ROUND_DOWN)
+
+    # 5. Piso de viabilidad (fees no deben dominar).
+    position_value = qty_final * current_price
+    if position_value < min_position_usd:
+        return None
+
+    # 6. Stop y take-profit.
+    stop_price = (current_price - stop_distance).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_EVEN
+    )
+    take_profit_price = (current_price + stop_distance * rr_ratio).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_EVEN
+    )
+
+    return {
+        "qty": qty_final,
+        "stop_price": stop_price,
+        "take_profit_price": take_profit_price,
+        "risk_usd": (qty_final * stop_distance).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_EVEN
+        ),
+        "position_value_usd": position_value.quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_EVEN
+        ),
+        "capped": capped,
+    }

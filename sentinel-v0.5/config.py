@@ -4,6 +4,7 @@
 # Importar este módulo y llamar validate_config() al iniciar el sistema.
 
 import os
+from decimal import Decimal
 
 # =============================================================================
 # CREDENCIALES — leídas desde entorno
@@ -65,6 +66,19 @@ KELLY_FRACTION           = 0.5    # Half-Kelly
 MAX_ALLOCATION_TOTAL     = 85     # % del equity. La suma de allocations por Sentinel no
                                   # excede esto: garantiza 15% en cash para fees, slippage,
                                   # gaps de apertura y oportunidades asimétricas. #GR-4.
+
+# --- #GR-2 — Position sizing por ATR (risk parity). FLAG-GATED, default OFF. ---
+# Con ATR_SIZING_ENABLED=False el bot mantiene el comportamiento viejo (qty del
+# Sentinel, sin TP/SL). Roman lo activa en .env (ATR_SIZING_ENABLED=true) + restart
+# cuando decida — fallback inmediato volviendo a false. Sin esto, el bot del lunes
+# empezaría a operar con sizing ~30× mayor sin validación gradual.
+ATR_SIZING_ENABLED         = os.environ.get("ATR_SIZING_ENABLED", "false").lower() == "true"
+RISK_PER_TRADE             = Decimal("0.01")   # % del equity arriesgado por trade (1%)
+ATR_WINDOW                 = 14                 # ventana Wilder estándar
+ATR_STOP_MULTIPLIER        = Decimal("2.0")     # distancia entry→stop = 2× ATR
+RR_RATIO_TAKE_PROFIT       = Decimal("2.0")     # take-profit a 2× el riesgo (R/R 2:1)
+MAX_POSITION_PCT_OF_EQUITY = Decimal("0.15")    # cap por posición individual (15%)
+MIN_POSITION_USD           = Decimal("25")      # piso $ para que los fees no dominen
 
 # =============================================================================
 # CORRELATION GUARD
