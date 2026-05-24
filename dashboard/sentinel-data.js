@@ -679,29 +679,76 @@ async function reloadFromAPI() {
 }
 
 let _sse = null;
+let _sseErrorSince = null;   // timestamp del primer error sin reconexión
+let _sseBannerTimer = null;  // timer que muestra el banner si el corte persiste
 function connectSSE() {
   if (_sse) { try { _sse.close(); } catch(_){} }
   try {
     _sse = new EventSource('/api/sse');
+    _sse.addEventListener('open', _sseRecovered);
     _sse.addEventListener('update', () => {
+      _sseRecovered();
       reloadFromAPI();
     });
     _sse.addEventListener('error', () => {
-      // El navegador re-conecta automáticamente (por defecto cada 3s)
+      // El navegador re-conecta solo (~3s). Si el corte persiste >10s, avisamos
+      // al usuario para que sepa que los datos pueden estar desactualizados.
+      if (_sseErrorSince === null) _sseErrorSince = Date.now();
+      if (_sseBannerTimer === null) {
+        _sseBannerTimer = setTimeout(() => {
+          if (_sseErrorSince !== null && (Date.now() - _sseErrorSince) >= 10000) {
+            _showSSEBanner();
+          }
+        }, 10000);
+      }
     });
   } catch (e) {
     console.error('[sentinel-data] SSE connect:', e);
   }
 }
 
+function _sseRecovered() {
+  _sseErrorSince = null;
+  if (_sseBannerTimer !== null) { clearTimeout(_sseBannerTimer); _sseBannerTimer = null; }
+  const b = document.getElementById('sseBanner');
+  if (b) b.style.display = 'none';
+}
+
+function _showSSEBanner() {
+  let b = document.getElementById('sseBanner');
+  if (!b) {
+    b = document.createElement('div');
+    b.id = 'sseBanner';
+    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;' +
+      'padding:6px 12px;text-align:center;font-family:monospace;font-size:12px;' +
+      'background:#3a1a1a;color:#ffb3b3;border-bottom:1px solid #ff6b6b;';
+    // textContent (no innerHTML): mensaje fijo, sin riesgo de inyección.
+    b.textContent = '⚠ Conexion en vivo interrumpida — reintentando…';
+    document.body.appendChild(b);
+  }
+  b.style.display = 'block';
+}
+
 /* ============ PERSISTENCIA lang/view/theme ============
  * sentinel-app.js NO toca localStorage. Lo hacemos acá vía event delegation.
  * ============================================================ */
 function setupPersistence() {
-  // Cargar de localStorage
-  const lang  = localStorage.getItem('sentinel.lang')  || 'es';
-  const view  = localStorage.getItem('sentinel.view')  || 'full';
-  const theme = localStorage.getItem('sentinel.theme') || 'cyber';
+  // Cargar de localStorage validando contra whitelist (#TD-17): localStorage es
+  // input no confiable (modificable por el usuario / extensiones). Un valor fuera
+  // de la whitelist cae al default — evita que un valor arbitrario llegue a STATE,
+  // a dataset, o a índices de i18n.
+  const _ALLOWED = {
+    lang:  ['es', 'en', 'ja', 'th'],
+    view:  ['full', 'simple'],
+    theme: ['cyber', 'sober'],
+  };
+  const _readPref = (key, fallback) => {
+    const v = localStorage.getItem('sentinel.' + key);
+    return _ALLOWED[key].includes(v) ? v : fallback;
+  };
+  const lang  = _readPref('lang',  'es');
+  const view  = _readPref('view',  'full');
+  const theme = _readPref('theme', 'cyber');
   STATE.lang = lang; STATE.view = view; STATE.theme = theme;
   document.body.dataset.view  = view;
   document.body.dataset.theme = theme;
