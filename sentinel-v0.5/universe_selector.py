@@ -20,6 +20,7 @@
 import asyncio
 import json
 import logging
+from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
 
@@ -54,6 +55,29 @@ _BLACKLIST = frozenset({
     # Inverse single-stock
     "BITI", "ETHU",
 })
+
+
+# Trigger idle_timeout (#UNIVERSE-IDLE, v0.6): un ticker asignado que no opera
+# hace tiempo es un "zombie inverso" (asignado pero silencioso) — los 3 triggers
+# previos (warning/decay/recovery) solo ven tickers que SÍ operaron. El umbral
+# de inactividad se calibra por la frecuencia natural de cada estrategia.
+_IDLE_TIMEOUT_DAYS: dict[str, int] = {
+    "rsi_short":         5,   # mean-reversion alta frecuencia
+    "rsi_divergence":    7,   # mean-reversion media frecuencia
+    "bollinger_bounce":  5,   # mean-reversion alta frecuencia
+    "vwap_reversion":    5,   # intraday, debería operar a diario
+    "macd_volume":      10,   # mixto
+    "sma_crossover":    14,   # trend-following baja frecuencia natural
+    "ema_triple":       14,   # trend-following
+    "orb_breakout":     10,   # máx 1 setup/día por diseño
+    "bollinger_squeeze": 14,  # squeeze events raros, frecuencia muy baja
+}
+_IDLE_TIMEOUT_DEFAULT_DAYS = 10  # estrategias fuera de la tabla
+
+# Guard de mercado plano: si el VIX promedio reciente está muy bajo, todos los
+# tickers están callados — no es problema del ticker individual, no se rota.
+_IDLE_VIX_GUARD_THRESHOLD = 14.0
+_IDLE_VIX_GUARD_DAYS = 5
 
 
 # =============================================================================
@@ -433,6 +457,7 @@ class UniverseSelector:
             "warning":    0,
             "rotations":  0,
             "candidates": 0,
+            "idle":       0,
             "errors":     0,
             "cost_usd":   0.0,
         }
@@ -468,12 +493,72 @@ class UniverseSelector:
                 )
                 stats["errors"] += 1
 
+        # 3. Trigger idle_timeout (#UNIVERSE-IDLE): los zombies inversos no
+        #    aparecen en performance_scores (nunca operaron), así que se
+        #    evalúan recorriendo los Sentinels activos. Mismo flujo que warning:
+        #    se pide candidato y queda en watchlist (TTL 7d).
+        await self._evaluate_idle_timeout(stats)
+
         logger.info(
             f"Universe Selection ciclo: evaluated={stats['evaluated']} "
             f"warnings={stats['warning']} rotations={stats['rotations']} "
-            f"new_candidates={stats['candidates']} errors={stats['errors']}"
+            f"new_candidates={stats['candidates']} idle={stats['idle']} "
+            f"errors={stats['errors']}"
         )
         return stats
+
+    async def _evaluate_idle_timeout(self, stats: dict) -> None:
+        """
+        Recorre los Sentinels activos buscando tickers idle y, por cada uno sin
+        candidato pendiente, pide uno a Claude (trigger_reason='idle_timeout').
+        Errores aislados por Sentinel: una falla no detiene a los demás. Muta
+        `stats` in-place (idle, candidates, errors).
+        """
+        try:
+            active = await self.historian.get_active_sentinels(self.owner_id)
+        except Exception as e:
+            logger.warning(f"idle_timeout: get_active_sentinels falló: {e}")
+            return
+
+        for s in active:
+            sid   = s.get("sentinel_id")
+            strat = s.get("strategy_type") or ""
+            name  = s.get("name") or "?"
+            try:
+                idle = await self._check_idle_tickers(sid, strat)
+            except Exception as e:
+                logger.warning(f"idle_timeout check falló (sentinel={sid}): {e}")
+                stats["errors"] += 1
+                continue
+
+            for ticker in idle:
+                stats["idle"] += 1
+                try:
+                    # Si ya hay candidato pendiente para este Sentinel, no
+                    # gastamos otra llamada a Claude (espejo de _handle_warning).
+                    existing = await self.historian.get_pending_candidate(sid)
+                    if existing is not None:
+                        continue
+                    score = {
+                        "sentinel_id":   sid,
+                        "ticker":        ticker,
+                        "sentinel_name": name,
+                        "strategy_type": strat,
+                        "win_rate":      None,
+                        "sharpe_ratio":  None,
+                        "total_trades":  0,
+                    }
+                    decision_id = await self._request_candidate(
+                        score, trigger_reason="idle_timeout",
+                    )
+                    if decision_id is not None:
+                        stats["candidates"] += 1
+                except Exception as e:
+                    logger.exception(
+                        f"idle_timeout _request_candidate falló "
+                        f"(sentinel={sid}/{ticker}): {e}"
+                    )
+                    stats["errors"] += 1
 
     # ---------------------------------------------------------------------
     # Evaluación por (sentinel_id, ticker)
@@ -609,6 +694,62 @@ class UniverseSelector:
                 logger.warning(f"email rotación falló (no bloquea): {e}")
 
         return "rotation"
+
+    # ---------------------------------------------------------------------
+    # Trigger idle_timeout (#UNIVERSE-IDLE)
+    # ---------------------------------------------------------------------
+    async def _check_idle_tickers(
+        self,
+        sentinel_id: UUID,
+        strategy_type: str,
+    ) -> list[str]:
+        """
+        Detecta tickers asignados al Sentinel que no operan hace N días
+        (zombies inversos: asignados pero silenciosos). N depende de la
+        frecuencia natural de la estrategia (`_IDLE_TIMEOUT_DAYS`).
+
+        Returns:
+            Lista de tickers idle. Vacía si: VIX promedio < guard (mercado
+            plano), ningún ticker excede su umbral, o el ticker se agregó al
+            universo hace menos que el umbral (aún sin tiempo de operar).
+
+        Nota de zona horaria: los timestamps de la DB son naive en hora local
+        del server (mismo host que este proceso), así que el cutoff se calcula
+        con `datetime.now()` naive — NO UTC-aware — para comparar consistente.
+        """
+        timeout_days = _IDLE_TIMEOUT_DAYS.get(strategy_type, _IDLE_TIMEOUT_DEFAULT_DAYS)
+
+        # Guard de mercado plano.
+        avg_vix = await self.historian.get_avg_vix(days=_IDLE_VIX_GUARD_DAYS)
+        if avg_vix is not None and avg_vix < _IDLE_VIX_GUARD_THRESHOLD:
+            logger.debug(
+                f"idle_timeout suspendido ({strategy_type}): VIX promedio "
+                f"{avg_vix:.2f} < {_IDLE_VIX_GUARD_THRESHOLD} (mercado plano)"
+            )
+            return []
+
+        tickers = await self.historian.get_sentinel_tickers(sentinel_id)
+        cutoff = datetime.now() - timedelta(days=timeout_days)
+        idle_tickers: list[str] = []
+
+        for ticker in tickers:
+            last_trade_at = await self.historian.get_last_trade_timestamp(sentinel_id, ticker)
+            if last_trade_at is None:
+                # Nunca operó: solo es idle si lleva en el universo más que el
+                # umbral (un ticker recién agregado aún no tuvo tiempo).
+                added_at = await self.historian.get_ticker_added_at(sentinel_id, ticker)
+                if added_at is None or added_at > cutoff:
+                    continue
+                idle_tickers.append(ticker)
+            elif last_trade_at < cutoff:
+                idle_tickers.append(ticker)
+
+        if idle_tickers:
+            logger.info(
+                f"idle_timeout: tickers inactivos en Sentinel {sentinel_id} "
+                f"({strategy_type}, umbral {timeout_days}d): {idle_tickers}"
+            )
+        return idle_tickers
 
     # ---------------------------------------------------------------------
     # Defensa doble POST-Claude (#UNIVERSE-FILTER)
@@ -822,8 +963,10 @@ class UniverseSelector:
             )
             return None
 
-        # Si es warning → guardar en watchlist
-        if trigger_reason == "pre_decay_warning":
+        # Si es warning o idle → guardar en watchlist (TTL 7d). idle_timeout
+        # sigue el mismo flujo que pre_decay_warning: deja el candidato en
+        # pending_candidates para que el ciclo siguiente lo considere.
+        if trigger_reason in ("pre_decay_warning", "idle_timeout"):
             try:
                 await self.historian.save_pending_candidate(
                     sentinel_id     = sentinel_id,

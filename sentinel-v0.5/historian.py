@@ -7,6 +7,7 @@
 import json
 import logging
 import math
+from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 from uuid import UUID
@@ -598,6 +599,67 @@ class Historian:
         except asyncpg.PostgresError as e:
             logger.error(f"Error al obtener tickers del sentinel {sentinel_id}: {e}")
             raise
+
+    # -- Helpers del trigger idle_timeout (#UNIVERSE-IDLE) --------------------
+
+    async def get_avg_vix(self, days: int) -> Optional[float]:
+        """
+        Promedio de macro_events.vix_level en los últimos `days` días. Usado por
+        el guard de mercado plano de idle_timeout. Retorna None si no hay datos
+        de VIX en la ventana (o ante error de DB — fail-safe sin crashear).
+        """
+        sql = """
+            SELECT AVG(vix_level)::float8
+            FROM macro_events
+            WHERE created_at >= NOW() - make_interval(days => $1)
+              AND vix_level IS NOT NULL
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                return await conn.fetchval(sql, days)
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al calcular VIX promedio ({days}d): {e}")
+            return None
+
+    async def get_last_trade_timestamp(
+        self, sentinel_id: UUID, ticker: str,
+    ) -> Optional[datetime]:
+        """
+        created_at del último trade FILLED de (sentinel_id, ticker), o None si
+        ese ticker nunca tuvo un trade FILLED. Mide inactividad para
+        idle_timeout. Timestamp naive en hora local del server.
+        """
+        sql = """
+            SELECT MAX(created_at)
+            FROM trades
+            WHERE sentinel_id = $1 AND ticker = $2 AND status = 'FILLED'
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                return await conn.fetchval(sql, sentinel_id, ticker)
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al obtener último trade ({sentinel_id}/{ticker}): {e}")
+            return None
+
+    async def get_ticker_added_at(
+        self, sentinel_id: UUID, ticker: str,
+    ) -> Optional[datetime]:
+        """
+        assigned_at del ticker activo en sentinel_tickers, o None si no está
+        asignado/activo. idle_timeout lo usa para no rotar tickers recién
+        agregados que aún no tuvieron tiempo de operar.
+        """
+        sql = """
+            SELECT assigned_at
+            FROM sentinel_tickers
+            WHERE sentinel_id = $1 AND ticker = $2 AND is_active = TRUE
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                return await conn.fetchval(sql, sentinel_id, ticker)
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al obtener assigned_at ({sentinel_id}/{ticker}): {e}")
+            return None
 
     async def get_sentinel_scores(self, owner_id: UUID) -> list[dict]:
         """
