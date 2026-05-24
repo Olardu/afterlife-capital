@@ -465,6 +465,16 @@ Tu acceso a Sentinel Control fue revocado · Your access to Sentinel Control has
 # Renderers
 # ---------------------------------------------------------------------------
 
+# =============================================================================
+# Índice de secciones (§) — buscables con "§ N":
+#   § 1 — Imports y configuración (arriba de este bloque)
+#   § 2 — Cliente Resend (_send) + emails welcome / revoked (templates HTML arriba)
+#   § 3 — Email de cierre de período (period_close)
+#   § 4 — Email de rotación (Universe Selector)
+#   § 5 — Reporte diario (daily_report)
+# =============================================================================
+
+# ═══════════════════════════ § 2 — Cliente Resend + welcome / revoked ═══════════════════════════
 def _render_welcome_html(email: str, role: str) -> str:
     return _WELCOME_TEMPLATE.format(
         email                = email,
@@ -734,6 +744,7 @@ Cierre anticipado del período de prueba · El reporte diario queda en pausa
 </html>"""
 
 
+# ═══════════════════════════ § 3 — Email de cierre de período ═══════════════════════════
 def _render_period_close_html() -> str:
     """Devuelve el HTML del email de cierre del período (texto fijo aprobado)."""
     return _PERIOD_CLOSE_HTML
@@ -964,6 +975,7 @@ def _esc(s) -> str:
     )
 
 
+# ═══════════════════════════ § 4 — Email de rotación (Universe Selector) ═══════════════════════════
 def _render_rotation_html(decision: dict, dashboard_base: str) -> str:
     return _ROTATION_TEMPLATE.format(
         sentinel_codename     = _esc(decision.get("sentinel_name") or "?"),
@@ -1309,6 +1321,7 @@ _SOBER_MAG   = "#8a2db5"
 _SOBER_YEL   = "#b8861d"
 
 
+# ═══════════════════════════ § 5 — Reporte diario ═══════════════════════════
 def _build_trade_row(t: dict) -> str:
     ts_raw = t.get("created_at") or t.get("ts") or ""
     if hasattr(ts_raw, "strftime"):
