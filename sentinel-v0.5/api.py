@@ -49,6 +49,7 @@ from config import (
     GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET,
     LOG_LEVEL,
+    NEWS_API_KEY,
     OAUTH_REDIRECT_URI,
     OWNER_USERNAME,
     PARKING_BRAKE_TIME,
@@ -455,6 +456,9 @@ async def api_status():
                 """,
                 _owner_id,
             )
+        # #ME-3: desglose de señales de hoy por destino (filled/cancelled/
+        # pending/no_trade). Adquiere su propia conexión → fuera del with previo.
+        signals_breakdown = await historian.get_signals_breakdown_today(_owner_id)
         return {
             "system":           "ONLINE",
             "sentinels_active": stats["sentinels_active"],
@@ -465,6 +469,11 @@ async def api_status():
             "risk_score":       float(stats["risk_score"]) if stats["risk_score"] is not None else 0.0,
             "circuit_breaker":  bool(stats["circuit_breaker"]) if stats["circuit_breaker"] is not None else False,
             "parking_brake":    _is_parking_brake_active(),
+            # #ME-3 — tracking de trades fallidos por categoría (señales de hoy).
+            "signals_breakdown_today": signals_breakdown,
+            # #TD-6 follow-up — visible si NEWS_API_KEY falta (The Ear queda ciego
+            # a noticias). True = sin key configurada.
+            "the_ear_news_disabled":   not bool(NEWS_API_KEY),
         }
     except Exception as e:
         _http_500("/api/status", e)

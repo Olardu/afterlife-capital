@@ -42,6 +42,34 @@ _SHARPE_ANNUALIZATION_FACTOR = math.sqrt(_TRADING_DAYS_PER_YEAR * _BARS_PER_TRAD
 _OWNER_EMAIL = "***REMOVED-EMAIL***"
 
 
+def _bucket_signal_rows(rows) -> dict:
+    """
+    Clasifica filas {trade_status} (el status del trade MÁS reciente de cada
+    signal, o None si la signal nunca produjo trade) en 4 categorías (#ME-3):
+
+    - filled:    signal con trade FILLED.
+    - cancelled: signal con trade CANCELLED.
+    - pending:   signal con trade en cualquier estado intermedio (PENDING,
+                 PENDING_NEW, ACCEPTED, NEW, ...).
+    - no_trade:  signal sin ningún trade (descartada por kill_switch / can_trade /
+                 CorrelationGuard / sizing 0 / etc.).
+
+    Función pura (sin DB) → testeable con data sintética.
+    """
+    out = {"filled": 0, "cancelled": 0, "pending": 0, "no_trade": 0}
+    for r in rows:
+        st = r["trade_status"]
+        if st is None:
+            out["no_trade"] += 1
+        elif st == "FILLED":
+            out["filled"] += 1
+        elif st == "CANCELLED":
+            out["cancelled"] += 1
+        else:
+            out["pending"] += 1
+    return out
+
+
 # =============================================================================
 # Índice de secciones (§) — buscables con "§ N":
 #   § 1  — Imports y configuración (arriba de este bloque)
@@ -50,7 +78,7 @@ _OWNER_EMAIL = "***REMOVED-EMAIL***"
 #   § 4  — Performance y decay (calculate_performance, evaluate_decay)
 #   § 5  — Sentinels y tickers (get_active_sentinels, get_sentinel_tickers)
 #   § 6  — Helpers VIX / idle / drawdown (get_avg_vix, get_last_trade_timestamp, get_ticker_added_at)
-#   § 7  — Scores e historia de trades (get_sentinel_scores, get_trade_history)
+#   § 7  — Scores e historia de trades (get_sentinel_scores, get_trade_history, get_signals_breakdown_today)
 #   § 8  — Macro events (record_macro_event)
 #   § 9  — Usuarios (get_user_by_email, list_users, add_user, remove_user)
 #   § 10 — System flags (get_system_flag, set_system_flag)
@@ -996,6 +1024,42 @@ class Historian:
             return [dict(r) for r in rows]
         except asyncpg.PostgresError as e:
             logger.error(f"Error al obtener historial ({sentinel_id}, ticker={ticker}): {e}")
+            raise
+
+    async def get_signals_breakdown_today(self, owner_id: UUID) -> dict:
+        """
+        Desglose de las signals de HOY por destino (#ME-3): cuántas terminaron
+        en trade FILLED / CANCELLED / pending vs. cuántas no produjeron trade
+        (descarte por kill_switch / can_trade / CorrelationGuard / sizing 0).
+
+        "Hoy" = created_at::date = CURRENT_DATE. Los timestamps de la DB están en
+        hora local del server (EDT), igual que CURRENT_DATE → el corte es por día
+        de mercado ET, consistente con el resto del sistema.
+
+        Para cada signal toma el status del trade MÁS reciente (subquery LIMIT 1)
+        y delega el conteo a _bucket_signal_rows (función pura, testeable).
+        Devuelve {filled, cancelled, pending, no_trade}.
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT (
+                        SELECT t.status
+                        FROM trades t
+                        WHERE t.signal_id = s.signal_id
+                        ORDER BY t.created_at DESC
+                        LIMIT 1
+                    ) AS trade_status
+                    FROM signals s
+                    WHERE s.owner_id = $1
+                      AND s.created_at::date = CURRENT_DATE
+                    """,
+                    owner_id,
+                )
+            return _bucket_signal_rows(rows)
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error en get_signals_breakdown_today ({owner_id}): {e}")
             raise
 
     # ═══════════════════════════ § 8 — Macro events ═══════════════════════════
