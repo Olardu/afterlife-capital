@@ -1,0 +1,63 @@
+name: CI
+
+# Gates objetivos para cada push/PR a main (#FASE2-NEW-1).
+# test → suite pytest | lint → ruff correctness | secrets → gitleaks | coverage → umbral escalonado.
+# Coverage arranca en 35% (estado real al 2026-05-25, ver docs/coverage_audit_2026-05-25.md)
+# y se sube por fases hasta 95% (#FASE2-NEW-4).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sentinel-v0.5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m pytest tests/ -q
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: pip install ruff
+      - run: ruff check .
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  coverage:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sentinel-v0.5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: pip install -r requirements.txt -r requirements-dev.txt pytest-cov
+      - run: >
+          python -m pytest tests/
+          --cov=dispatcher --cov=historian --cov=the_ear --cov=correlation_guard
+          --cov=universe_selector --cov=config --cov=claude_client --cov=market_clock
+          --cov-report=term-missing --cov-fail-under=35

@@ -1,0 +1,46 @@
+# Pre-commit hooks — gate LOCAL de calidad antes de cada commit (#FASE2-NEW-1).
+# Instalar:      pip install pre-commit && pre-commit install
+# Correr manual: pre-commit run --all-files
+# Actualizar revs: pre-commit autoupdate
+# Doc completa:  README.md → "Development setup".
+#
+# NOTA: NO se usa black/ruff-format. El código del bot usa alineación manual
+# intencional de '=' (ver config.py); un formateador la destruiría con un cambio
+# masivo (anti BUENAS_PRACTICAS_V2 §14.0). El lint (ruff) corre solo reglas de
+# CORRECTNESS (F=pyflakes: imports/vars sin usar, nombres indefinidos; E9: syntax),
+# no reglas de estilo. Ver ruff.toml.
+
+# Rutas que NO se chequean (backups, scratchpads, artefactos in-place).
+exclude: '^(backups/|outputs/|code-outputs/|htmlcov/|.*\.bak.*|.*\.original$)'
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-json
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff            # lint de correctness (ver ruff.toml), con --fix
+        args: [--fix]
+
+  - repo: local
+    hooks:
+      - id: pytest-collect
+        name: pytest collect-only (los tests al menos colectan sin error)
+        entry: sentinel-v0.5/venv/Scripts/python.exe -m pytest sentinel-v0.5/tests/ --collect-only -q
+        language: system
+        pass_filenames: false
+        always_run: true

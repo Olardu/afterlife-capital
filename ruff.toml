@@ -1,0 +1,23 @@
+# ruff — config de lint para Sentinel (#FASE2-NEW-1).
+# Filosofía: gate de CORRECTNESS, no de estilo. El código del bot usa alineación
+# manual intencional de '=' que un formateador rompería; ruff NO se usa para formato.
+# Solo se seleccionan reglas que cazan bugs reales:
+#   F   = pyflakes  (imports sin usar, variables sin usar, nombres indefinidos)
+#   E9  = errores de sintaxis / IndentationError graves
+# Se puede ampliar gradualmente (B, UP, etc.) cuando el código esté más cubierto.
+
+line-length = 100
+target-version = "py314"
+
+extend-exclude = [
+    "backups",
+    "outputs",
+    "code-outputs",
+    "htmlcov",
+    "venv",
+    "*.bak*",
+]
+
+[lint]
+select = ["F", "E9"]
+# E501 (line-length) y reglas de estilo quedan OFF a propósito (ver arriba).
