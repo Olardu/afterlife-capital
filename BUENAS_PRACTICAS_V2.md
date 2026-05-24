@@ -1,9 +1,14 @@
 # Manual de Buenas Prácticas v2.0
 
 **Autor:** Roman Alejandro  
-**Versión:** 2.5  
+**Versión:** 2.6  
 **Fecha:** 24 de mayo de 2026  
 **Alcance:** Universal — aplica a todos los proyectos, lenguajes y frameworks.
+
+**Cambios v2.5 → v2.6 (24-may-2026 tarde — 2do incidente del mismo patrón truncado en mismo día, refuerzo §14.0):**
+- Ampliación 14.0.6: prohibición de `Write` para archivos > 300 líneas en cualquier circunstancia.
+- Nuevo §14.0.7: **cierre = cierre.** Después de `[CODE DONE]` NO más Edits/Writes en la sesión sin nueva TAREA explícita con su propio gate §14.0. Cierra el loophole "cleanup post-commit silencioso" que causó los incidentes del 24-may. Incluye requisito de `git status --short` literal en cada reporte DONE + autoridad de Cowork para `[COWORK BLOQ]` si detecta M huérfanos no explicados.
+- Mención del script `validate-workspace.ps1` como capa preventiva automatizada (implementación queda en `NEXT_ITERATION.md`).
 
 **Cambios v2.4 → v2.5 (24-may-2026 — Validación técnica post-edit, derivada del incidente Code post-`d73568f`):**
 - Ampliación 14: nuevo bloque **"Verificación técnica post-edit (gate OBLIGATORIO antes de DONE)"** al inicio del checklist. Incluye `py_compile` + `pytest` + `git diff --stat` + preferencia `Edit` sobre `Write` + manejo de truncado silencioso del tool. Cierra el gap del 24-may madrugada (4 .py truncados, Code reportó "DONE" sin validar).
@@ -1048,6 +1053,17 @@ Antes de dar por terminado un cambio significativo, recorrer este checklist.
 **6. Prevención (elección de tool):**
 - **Preferir `Edit` sobre `Write`** para cambios incrementales. `Edit` falla con error visible si el `old_string` no matchea; `Write` puede truncar silenciosamente al hit buffer/pipe limit.
 - **Para reemplazos extensos**: dividir en N `Edit` quirúrgicos. Si imprescindible un `Write`, verificar inmediatamente con `wc -l <archivo>` + `tail -5 <archivo>` (detección de truncado) + `py_compile`.
+- **`Write` prohibido para archivos > 300 líneas** en cualquier circunstancia. Si necesitás reescribir un archivo grande, dividí en N `Edit` quirúrgicos o `mv + Write < 300 + verify wc -l`. Nunca un `Write` extenso sin verificación inmediata post-escritura.
+
+**7. Cierre de sesión = cierre. NO más edits post-DONE sin nueva TAREA.**
+
+Después de reportar `[CODE DONE]` (o `[COWORK DONE]`) con un commit cerrado, **NO hacer más Edits/Writes en archivos del repo en la misma sesión**. Si aparece la necesidad de cleanup, dedup, fix cosmético o reorganización post-commit, eso es una **nueva TAREA** que se anuncia explícitamente en el LOG, se ejecuta con su propio gate §14.0 completo, y termina en su propio commit con reporte separado. No existe "un cambio chiquito más sin commit". Cierre = cierre.
+
+**Por qué importa:** los gates §14.0.1-14.0.6 corren ANTES de DONE. Si hacés edits POST-DONE silenciosamente, esos cambios NO pasan por gate y quedan como cambios huérfanos en working tree, expuestos al mismo bug de truncado del tool `Write`. El incidente 24-may tarde (5 archivos truncados post-`ac55d40`) sucedió exactamente así: Code completó el commit limpio, después hizo cleanup adicional sin reportar, y volvió a truncar archivos. La regla §14.0.7 cierra ese loophole — los gates aplican incluso a "edits pequeños post-commit", porque no existen como tales: cualquier edit es una nueva TAREA con su propio ciclo de validación.
+
+**Cross-check post-commit OBLIGATORIO para el reporte `[CODE DONE]`:** incluir literal el output de `git status --short` mostrando working tree limpio (o explicando explícitamente qué quedó M y por qué). Cowork antes de dar PUSH-OK valida que el reporte coincide con lo observado en sandbox. Si hay archivos M huérfanos sin explicación → `[COWORK BLOQ]` automático y se investiga antes de avanzar.
+
+**Precedente:** incidentes 2026-05-24 madrugada (4 .py post-`d73568f`) y 2026-05-24 tarde (5 archivos post-`ac55d40`). Los commits en sí estaban limpios; el daño fue siempre POST-commit por edits que no pasaron por el gate. Es la misma raíz: tool `Write` trunca silenciosamente + falta de gate post-DONE. La capa preventiva (script `sentinel-v0.5/scripts/validate-workspace.ps1`, ver `NEXT_ITERATION.md`) automatiza la detección al final de sesión.
 
 **Precedente:** incidente 2026-05-24 madrugada en Sentinel. Code completó limpio el commit `d73568f` (#GR-3, suite 77/77). Post-commit intentó más edits y 4 archivos del bot quedaron truncados (`historian.py` cortado a media palabra en `except asyncpg.Pos`, más `main.py` / `email_service.py` / `config.py` con strings/parens sin cerrar). Code reportó "acabó" sin correr `py_compile` ni `pytest`. Detección a posteriori por Cowork al inspeccionar working tree. Si Roman arrancaba el bot el lunes pre-apertura sin detectar, hubiera explotado al import. Rescue via `git show HEAD + cp` (bypass de índice corrupto por bug paralelo). El backup pre-edit existía y estaba bien hecho — eso protegió el código viejo. Lo que faltó fue este gate.
 
@@ -1155,4 +1171,4 @@ Agendar como ítem de Fase 2 (auditoría) cuando el proyecto entre a esa fase. N
 
 ---
 
-*Manual de Buenas Prácticas — fin del documento. v2.5, 24 de mayo de 2026.*
+*Manual de Buenas Prácticas — fin del documento. v2.6, 24 de mayo de 2026.*

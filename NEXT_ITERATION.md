@@ -595,6 +595,15 @@ Acciones manuales:
   - [ ] Cobertura ≥95% confirmada por CI sobre módulos críticos.
   - **Sin checklist completo, NO se promueve a live.**
 
+- **#FASE2-NEW-6 — Script `sentinel-v0.5/scripts/validate-workspace.ps1` (24-may, derivado del 2do incidente truncado).** Capa preventiva automatizada para detectar el bug del `Write` truncado silencioso (3 incidentes en 24h el 24-may). Spec: recorre `git status --short` y para cada archivo `M`/`??` valida:
+  - `.py` → `python -m py_compile`, abort si error.
+  - `.js` → `node --check`, abort si error.
+  - `.md`/`.json`/`.yaml` → verifica último carácter (debe ser `\n`, NO terminar a media palabra). Heurístico de balance básico (paréntesis, llaves, comillas dobles).
+  - Si todo pasa → exit 0. Si falla → reporta archivo + línea + sugerencia (`git checkout HEAD -- <file>` o restaurar desde `.bak`).
+  - Cowork lo invoca antes de cualquier PUSH-OK. Code lo invoca al final de cada sesión post-commit.
+  - Estimación: ~80 líneas PowerShell, 30 min. Bundleable con próxima TAREA Code.
+  - Cierra la raíz operacional del incidente: hoy los gates §14.0.1-14.0.6 son humanos (recordar correrlos); este script los automatiza al cierre de sesión.
+
 **Code review externo (opcional pero recomendado):**
 - Una IA independiente (Plan documentado en memoria: `project_audit_ia_independiente.md` — 3 perfiles distintos para auditoría desde código / matemáticas / investigación).
 - Particular atención a: race conditions en async (TheEar, Universe Selector concurrente), manejo de errores (exception swallowing), seguridad (SQL injection en queries dinámicas, validación de inputs del panel admin).

@@ -5,6 +5,114 @@ All notable changes to Afterlife Capital — Sentinel v0.5 are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 2026-05-24 — Validación post-edit (v2.5 manual) + incidente Code + #GR-3 cableo real
+
+### Added
+
+- **`BUENAS_PRACTICAS_V2.md` v2.5** (commit `1261e8c`, autor Cowork): nuevo §14.0
+  "Verificación técnica post-edit (gate OBLIGATORIO antes de DONE)" al inicio
+  del checklist §14. 6 reglas duras: `py_compile`/`node --check`, `pytest`
+  con número esperado, `git diff --stat` coherente vs prometido, `grep`
+  verificación para `.md` post-Edit/Write, NUNCA reportar DONE si checklist
+  falla (`[BLOQ]` en su lugar), preferir `Edit` sobre `Write` para
+  incrementales + dividir `Write` masivos. Subsecciones §14.1 a 14.7
+  renumeradas (antes negritas sueltas, ahora headers numerados). Incluye
+  precedente literal del incidente Code 24-may como evidencia histórica.
+- **`db/011_create_daily_equity_snapshots.sql`** (commit `d73568f`):
+  migración nueva, tabla `daily_equity_snapshots` con `UNIQUE(owner_id, snapshot_date)`,
+  `equity_open/close`, `peak_to_date` running via `GREATEST` en `ON CONFLICT`.
+  **Aplicada a la DB** por Code con autorización Cowork (scope acotado).
+  DDL idempotente también en `historian.connect()` como red de seguridad.
+- **`historian.record_daily_equity_snapshot`** + `has_equity_snapshot_today` +
+  `get_drawdown_equities` (day_open / week_ago 5 días hábiles / peak MAX).
+- **`main._daily_equity_snapshot_poller`**: corre 1×/día post-close ET (≥16:05),
+  idempotente, cancelación limpia en shutdown. #GR-3 ahora funcional end-to-end.
+- **`tests/test_daily_equity_snapshots.py`**: 4 casos TDD. Suite 73 → **77/77**.
+- **`teamwork/archive/LOG_v01.md`** (commit `13f2052`): rotación del LOG v01
+  (828 líneas, ~71 KB) según protocolo. LOG v02 nuevo con header de 5 líneas
+  resumiendo v01 + lecciones del incidente.
+- **Memoria Cowork `feedback_post_edit_validation_obligatoria.md`**: regla
+  durable de validación post-edit (origina la sección §14.0 del manual).
+
+### Changed
+
+- **`sentinel-v0.5/CLAUDE.md`** (commit `13f2052`): contexto Fase 2 in-progress
+  con commits H-4/H-5b/H-6b/GR-* pusheados al cierre v01 del LOG.
+- **`NEXT_ITERATION.md`** (commit `13f2052`): items #FASE2-NEW-1 a 5 derivados
+  de la sesión 23-may (enforcement pre-commit, requirements pin `==`,
+  marcadores § en archivos >500 LOC, cobertura paths críticos, gate pre-live).
+- **`dispatcher._get_drawdown_equities`** (commit `d73568f`): reemplaza stub
+  fail-safe → current de Alpaca en vivo + refs a la tabla nueva.
+
+### Fixed
+
+- **Índice git corrupto + `.git/index.lock` huérfano** (incidente 24-may
+  madrugada): bug recurrente — 3er incidente del mismo patrón (previos
+  13-may y 24-may madrugada). Reparado manualmente por Roman vía
+  `Remove-Item .git\index.lock + index + git reset HEAD`. Sandbox Cowork
+  NO puede limpiar el lock (`Operation not permitted`).
+- **4 archivos del bot truncados post-`d73568f`** (`historian.py`/`main.py`/
+  `email_service.py`/`config.py` con `SyntaxError`): Code completó limpio
+  el commit `d73568f` (cableo #GR-3) y reportó "acabó". Post-commit intentó
+  más edits y el tool `Write`/`Edit` truncó silenciosamente al escribir
+  (`historian.py` cortado en `except asyncpg.Pos`). Code NO corrió
+  `py_compile`/`pytest` y reportó DONE. Detección por Cowork al inspeccionar
+  working tree post-rescate del índice. **Rescue:** backup catalogado de los
+  corruptos en `backups/2026-05-24/corrupted_pre_revert/` (8 archivos + LOG
+  uncommitted), restauración de los 6 .py desde HEAD vía `git show + cp`
+  (bypass del índice corrupto). Suite vuelve a 77/77.
+
+### Decisions
+
+- **Permiso Code para ejecutar DB con scope acotado**: aplicado por primera
+  vez en migración 011 (autorización Cowork sesión anterior). Aplica solo a
+  DB (NO a Alpaca — sigue manual via dashboard por fiscal/legal). Documentado
+  en memoria `feedback_no_autonomous_db_or_account_changes.md`.
+
+### Notes
+
+- **`d73568f` + `13f2052` + `1261e8c` pusheados** a `github.com/Olardu/afterlife-capital`
+  (`origin/main` = `1261e8c` al cierre de esta entrada).
+- **Pendiente para martes 26-may pre-apertura:** restart `api.py` (toma fix
+  #H-5b + scheduler off + nuevo poller EOD), decisión sobre activar flags
+  `ATR_SIZING_ENABLED` y `PORTFOLIO_DD_LIMITS_ENABLED` (hoy `False` default),
+  `UPDATE sentinels SET name='S-2 RSI Fast Reversion'` (rename Mantis).
+
+---
+
+## Post-mortem T1 — 17 signals huérfanas del 2026-04-27
+
+**Síntoma:** 17 signals registradas en tabla `signals` el 27-abr nunca llegaron
+al dispatcher; quedaron sin trade asociado. Detectado en auditoría del 23-may.
+
+**Causa raíz:** bug VARCHAR(10) en columna `ticker` de `signals` previo al
+**FIX-005** (commit pre-28-abr). Tickers con símbolo >10 caracteres (típico en
+ETFs leveraged / tickers extendidos del Universe Selector) truncaban
+silenciosamente al INSERT, generando mismatch con la lookup posterior del
+dispatcher por `signals.ticker`. Sin match → signal huérfana, sin trade.
+
+**Resolución:** **FIX-005** (migración `005_fix_trades_status_length.sql` +
+extensión ticker a VARCHAR(50), 28-abr). El bug no reaparece desde entonces
+(verificado: 0 signals huérfanas en período 28-abr → 23-may).
+
+**Lecciones aplicadas:**
+
+- **`BUENAS_PRACTICAS_V2 §8.6`** (paths críticos): tests TDD pre-live para
+  cualquier path financiero. Una validación de length de ticker antes del
+  INSERT habría cazado el bug.
+- **`BUENAS_PRACTICAS_V2 §15`** (Automatización): pre-commit con linters
+  detectaría `VARCHAR(10)` como sospechoso en migraciones nuevas (regla
+  configurable: longitud mínima para campos identificadores de mercado).
+- **`BUENAS_PRACTICAS_V2 §14.0`** (post-edit, nuevo): `pytest` post-edit
+  habría detectado la query del dispatcher fallando con tickers truncados.
+
+**Acción residual:** las 17 signals huérfanas del 27-abr **permanecen en DB
+como artefacto histórico**. Sin valor para reconstruir trades (faltan los
+dispatches asociados). **NO eliminar** — sirven como evidencia del bug para
+auditorías futuras y como ejemplo de "fail silent" en sistemas time-sensitive.
+
+---
+
 ## [Unreleased] — 2026-05-23 (tarde) — Migración al protocolo teamwork/LOG.md
 
 ### Added
