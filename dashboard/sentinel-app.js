@@ -265,9 +265,9 @@ function renderSentGrid(){
     const sigCls = s.sig.toLowerCase();
     const sigTxt = t('sig_'+sigCls);
     const sharpeC = s.sharpe>=1?'green':s.sharpe>=0?'':'red';
-    return `<div class="sent-card" data-detail="${s.id}">
+    return `<div class="sent-card" data-detail="${escapeHtml(s.id)}">
       <div class="top">
-        <div><span class="name">${escapeHtml(s.name)}</span> <span class="sid">${s.id}</span></div>
+        <div><span class="name">${escapeHtml(s.name)}</span> <span class="sid">${escapeHtml(s.id)}</span></div>
         <span class="sig ${sigCls}">${sigTxt}</span>
       </div>
       <div class="strat">${t(s.stratKey)}</div>
@@ -400,14 +400,14 @@ function renderDetail(){
       return `<tr><td>${escapeHtml(tr.ts)}</td><td>${tickerSpan(tr.ticker)}</td><td class="${sideCls}">${sideTxt}</td><td style="text-align:center">${escapeHtml(tr.qty)}</td><td style="text-align:right">${fmt(tr.px)}</td><td style="text-align:center" class="${statusInfo(tr.status).cls}"><span class="tip-trigger" data-tip="${statusInfo(tr.status).tip}">${statusInfo(tr.status).text}</span></td></tr>`;
     }).join('') : `<tr><td colspan="6" class="empty">${t('empty_ops')}</td></tr>`;
 
-    return `<div class="detail-block ${open?'open':''}" id="detail-${s.id}">
-      <div class="detail-head" data-id="${s.id}">
-        <span class="name">${s.name}</span>
+    return `<div class="detail-block ${open?'open':''}" id="detail-${escapeHtml(s.id)}">
+      <div class="detail-head" data-id="${escapeHtml(s.id)}">
+        <span class="name">${escapeHtml(s.name)}</span>
         <span class="strat">${t(s.stratKey)}</span>
         <span class="chev">▶</span>
       </div>
       <div class="detail-body">
-        <div class="detail-quote">"${escapeHtml(getQuote(s))}"<span class="src">— ${s.quoteSrc}</span></div>
+        <div class="detail-quote">"${escapeHtml(getQuote(s))}"<span class="src">— ${escapeHtml(s.quoteSrc)}</span></div>
         <div class="detail-desc">${t('desc_'+s.stratKey)}</div>
         <div class="dt-subhead">${t('dt_tickers')}</div>
         <div class="tbl-wrap"><table class="tbl tbl-fixed"><colgroup><col style="width:14%"><col style="width:22%"><col style="width:28%"><col style="width:18%"><col style="width:18%"></colgroup><thead><tr>
@@ -451,7 +451,7 @@ function renderFlow(){
     const sigCls = s.sig==='BUY'?'sig-buy':s.sig==='SELL'?'sig-sell':'sig-hold';
     const sigTxt = s.sig==='BUY'?t('sig_buy'):s.sig==='SELL'?t('sig_sell'):t('sig_hold');
     const sharpeC = s.sharpe>=1?'var(--green)':s.sharpe>=0?'var(--text)':'var(--red)';
-    return `<tr><td><span style="color:var(--cyan);font-family:var(--display);font-weight:700;letter-spacing:0.08em">${s.name}</span> <span style="color:var(--faint);font-size:9px">${s.id}</span></td><td>${t(s.stratKey)}</td><td><span class="${sigCls}">${sigTxt}</span></td><td style="text-align:center">${(s.win*100).toFixed(1)}%</td><td style="text-align:center;color:${sharpeC}">${s.sharpe > 0 ? s.sharpe.toFixed(2) : '--'}</td><td style="text-align:center">${(s.alloc*100).toFixed(1)}%</td></tr>`;
+    return `<tr><td><span style="color:var(--cyan);font-family:var(--display);font-weight:700;letter-spacing:0.08em">${escapeHtml(s.name)}</span> <span style="color:var(--faint);font-size:9px">${escapeHtml(s.id)}</span></td><td>${t(s.stratKey)}</td><td><span class="${sigCls}">${sigTxt}</span></td><td style="text-align:center">${(s.win*100).toFixed(1)}%</td><td style="text-align:center;color:${sharpeC}">${s.sharpe > 0 ? s.sharpe.toFixed(2) : '--'}</td><td style="text-align:center">${(s.alloc*100).toFixed(1)}%</td></tr>`;
   }).join('');
   $('#flowCount').textContent = '9 sentinels';
 }
@@ -492,7 +492,7 @@ function renderHistorian(){
     if (apiRow.decay_status === true)       decay = `<span style="color:var(--red)">YES</span>`;
     else if (apiRow.decay_status === false) decay = `<span style="color:var(--green)">NO</span>`;
     else                                    decay = '—';
-    return `<tr><td><span style="color:var(--cyan);font-weight:700">${s.name}</span></td><td style="text-align:center">${s.win > 0 ? (s.win*100).toFixed(0)+'%' : '--'}</td><td style="text-align:center">${s.sharpe > 0 ? s.sharpe.toFixed(2) : '--'}</td><td style="text-align:center">${escapeHtml(totalTrades)}</td><td style="text-align:center">${slip}</td><td style="text-align:center">${decay}</td></tr>`;
+    return `<tr><td><span style="color:var(--cyan);font-weight:700">${escapeHtml(s.name)}</span></td><td style="text-align:center">${s.win > 0 ? (s.win*100).toFixed(0)+'%' : '--'}</td><td style="text-align:center">${s.sharpe > 0 ? s.sharpe.toFixed(2) : '--'}</td><td style="text-align:center">${escapeHtml(totalTrades)}</td><td style="text-align:center">${slip}</td><td style="text-align:center">${decay}</td></tr>`;
   }).join('');
 }
 
@@ -503,7 +503,7 @@ function renderAlloc(){
     const top25 = (0.25/max)*100;
     const bot5 = (0.05/max)*100;
     return `<div class="alloc-row">
-      <span class="name">${s.name}</span>
+      <span class="name">${escapeHtml(s.name)}</span>
       <div class="bar"><div class="fill" style="width:${pct}%"></div><div class="top-line" style="left:${top25}%"></div><div class="bot-line" style="left:${bot5}%"></div></div>
       <span class="pct">${(s.alloc*100).toFixed(0)}%</span>
     </div>`;
@@ -565,7 +565,7 @@ function tick(){
 
   const msg = newSig==='HOLD'
     ? `SIGNAL HOLD  :: ${s.name.toLowerCase()} ${tk} px=${newPx}`
-    : `SIGNAL ${newSig}   :: ${s.name.toLowerCase()} ${tk} px=${newPx} agent=${s.id}`;
+    : `SIGNAL ${newSig}   :: ${s.name.toLowerCase()} ${tk} px=${newPx} agent=${escapeHtml(s.id)}`;
   STATE.logs.push({ts:tsLog, lvl: Math.random()<0.06?'WARN':'INFO', msg, isNew:true});
   if (STATE.logs.length > 60) STATE.logs.shift();
 
