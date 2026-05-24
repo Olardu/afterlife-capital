@@ -18,7 +18,11 @@ from uuid import uuid4
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from universe_selector import UniverseSelector, _IDLE_VIX_GUARD_THRESHOLD
+from universe_selector import (
+    UniverseSelector,
+    _IDLE_EXECUTE_AFTER_DAYS,
+    _IDLE_VIX_GUARD_THRESHOLD,
+)
 
 
 def _run(coro):
@@ -75,3 +79,61 @@ def test_ticker_inactivo_supera_umbral_es_idle():
     sel = _selector(avg_vix=18.0, tickers=["SPY"], last_trade_at=_ago(20))
     idle = _run(sel._check_idle_tickers(uuid4(), "ema_triple"))
     assert idle == ["SPY"]
+
+
+# =============================================================================
+# Ejecución / recovery del pending idle (_resolve_idle_pending)
+# =============================================================================
+
+def _exec_selector():
+    """Selector con historian mockeado para resolver un pending idle."""
+    hist = MagicMock()
+    hist.execute_rotation_in_db = AsyncMock(return_value=True)
+    hist.discard_pending_candidate = AsyncMock(return_value=True)
+    return UniverseSelector(
+        historian=hist, claude_client=MagicMock(), owner_id=uuid4(), email_sender=None,
+    ), hist
+
+
+def _idle_pending(old_ticker="AMD", proposed="GLD", proposed_days_ago=None):
+    return {
+        "candidate_id":    uuid4(),
+        "proposed_ticker": proposed,
+        "proposed_at":     _ago(proposed_days_ago if proposed_days_ago is not None
+                                 else _IDLE_EXECUTE_AFTER_DAYS + 1),
+        "decision_id":     uuid4(),
+        "old_ticker":      old_ticker,
+    }
+
+
+# --- Caso 6: pending idle 8d, ticker sigue idle → ejecutar rotación --------
+def test_resolve_idle_pending_ejecuta_rotacion():
+    sel, hist = _exec_selector()
+    pending = _idle_pending(old_ticker="AMD")
+    stats = {"rotations": 0}
+    _run(sel._resolve_idle_pending(pending, {"AMD"}, stats))  # AMD sigue idle
+    hist.execute_rotation_in_db.assert_awaited_once_with(pending["decision_id"])
+    assert stats["rotations"] == 1
+    hist.discard_pending_candidate.assert_awaited_once()  # limpieza post-ejecución
+
+
+# --- Caso 7: ticker recuperó (ya no idle) → descartar, NO ejecutar ---------
+def test_resolve_idle_pending_recovery_descarta_sin_ejecutar():
+    sel, hist = _exec_selector()
+    pending = _idle_pending(old_ticker="AMD")
+    stats = {"rotations": 0}
+    _run(sel._resolve_idle_pending(pending, set(), stats))  # AMD ya NO está idle
+    hist.execute_rotation_in_db.assert_not_awaited()
+    hist.discard_pending_candidate.assert_awaited_once()
+    assert stats["rotations"] == 0
+
+
+# --- Caso 8: pending idle reciente (2d), sigue idle → esperar, no ejecutar --
+def test_resolve_idle_pending_reciente_espera():
+    sel, hist = _exec_selector()
+    pending = _idle_pending(old_ticker="AMD", proposed_days_ago=2)
+    stats = {"rotations": 0}
+    _run(sel._resolve_idle_pending(pending, {"AMD"}, stats))
+    hist.execute_rotation_in_db.assert_not_awaited()
+    hist.discard_pending_candidate.assert_not_awaited()
+    assert stats["rotations"] == 0

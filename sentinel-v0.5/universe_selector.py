@@ -79,6 +79,14 @@ _IDLE_TIMEOUT_DEFAULT_DAYS = 10  # estrategias fuera de la tabla
 _IDLE_VIX_GUARD_THRESHOLD = 14.0
 _IDLE_VIX_GUARD_DAYS = 5
 
+# Ventana de recovery antes de ejecutar la rotación idle: el candidato queda en
+# watchlist y solo se ejecuta si el ticker SIGUE idle pasados estos días (da
+# chance a que rompa el silencio). El TTL del pending idle es más largo que esta
+# ventana para que no expire antes de poder ejecutarse (el pending de warning/
+# decay usa el TTL corto estándar; idle necesita sobrevivir hasta la ejecución).
+_IDLE_EXECUTE_AFTER_DAYS = 7
+_IDLE_PENDING_TTL_DAYS = 14
+
 
 # =============================================================================
 # PROMPTS
@@ -531,14 +539,34 @@ class UniverseSelector:
                 stats["errors"] += 1
                 continue
 
-            for ticker in idle:
-                stats["idle"] += 1
+            idle_set = set(idle)
+            stats["idle"] += len(idle)
+
+            # 1. ¿Ya hay un candidato idle pendiente para este Sentinel? Entonces
+            #    resolverlo (ejecutar si cumplió la ventana y sigue idle, o
+            #    descartar si el ticker recuperó) — no se pide otro (UNIQUE
+            #    parcial: un solo 'watching' por Sentinel).
+            try:
+                idle_pending = await self.historian.get_idle_pending_candidate(sid)
+            except Exception as e:
+                logger.warning(f"idle_timeout get_idle_pending falló (sentinel={sid}): {e}")
+                idle_pending = None
+
+            if idle_pending is not None:
                 try:
-                    # Si ya hay candidato pendiente para este Sentinel, no
-                    # gastamos otra llamada a Claude (espejo de _handle_warning).
-                    existing = await self.historian.get_pending_candidate(sid)
-                    if existing is not None:
-                        continue
+                    await self._resolve_idle_pending(idle_pending, idle_set, stats)
+                except Exception as e:
+                    logger.exception(f"idle_timeout resolve falló (sentinel={sid}): {e}")
+                    stats["errors"] += 1
+                continue
+
+            # 2. Sin pending idle → pedir candidato para el primer ticker idle
+            #    (solo uno: el índice UNIQUE permite un 'watching' por Sentinel).
+            for ticker in idle:
+                try:
+                    # No pisar un pending vivo de otro trigger (warning/decay).
+                    if await self.historian.get_pending_candidate(sid) is not None:
+                        break
                     score = {
                         "sentinel_id":   sid,
                         "ticker":        ticker,
@@ -559,6 +587,54 @@ class UniverseSelector:
                         f"(sentinel={sid}/{ticker}): {e}"
                     )
                     stats["errors"] += 1
+                break  # un solo pending por Sentinel
+
+    async def _resolve_idle_pending(
+        self, pending: dict, idle_set: set, stats: dict,
+    ) -> None:
+        """
+        Resuelve un candidato idle pendiente (#UNIVERSE-IDLE):
+
+        - Si el ticker que iba a reemplazar YA NO está idle (rompió el silencio
+          dentro de la ventana) → descartar el candidato (recovery).
+        - Si SIGUE idle y el pending ya cumplió `_IDLE_EXECUTE_AFTER_DAYS` →
+          ejecutar la rotación (un ticker idle nunca cruza decay, así que esta
+          es la única vía de ejecución) y descartar el pending ya consumido.
+        - Si sigue idle pero el pending es reciente → esperar (no hace nada).
+
+        Muta `stats` in-place (rotations).
+        """
+        old_ticker   = pending["old_ticker"]
+        candidate_id = pending["candidate_id"]
+        proposed     = pending["proposed_ticker"]
+
+        if old_ticker not in idle_set:
+            await self.historian.discard_pending_candidate(
+                candidate_id, reason="idle_recovered",
+            )
+            logger.info(
+                f"idle_timeout recovery: {old_ticker} volvió a operar — "
+                f"candidato {proposed} descartado"
+            )
+            return
+
+        cutoff = datetime.now() - timedelta(days=_IDLE_EXECUTE_AFTER_DAYS)
+        if pending["proposed_at"] < cutoff:
+            ok = await self.historian.execute_rotation_in_db(pending["decision_id"])
+            if ok:
+                stats["rotations"] += 1
+                await self.historian.discard_pending_candidate(
+                    candidate_id, reason="idle_rotation_executed",
+                )
+                logger.info(
+                    f"idle_timeout ejecutado: {old_ticker} → {proposed} "
+                    f"(pending {_IDLE_EXECUTE_AFTER_DAYS}d+, sigue idle)"
+                )
+            else:
+                logger.warning(
+                    f"idle_timeout: execute_rotation_in_db devolvió False "
+                    f"(decision={pending['decision_id']})"
+                )
 
     # ---------------------------------------------------------------------
     # Evaluación por (sentinel_id, ticker)
@@ -963,16 +1039,22 @@ class UniverseSelector:
             )
             return None
 
-        # Si es warning o idle → guardar en watchlist (TTL 7d). idle_timeout
-        # sigue el mismo flujo que pre_decay_warning: deja el candidato en
-        # pending_candidates para que el ciclo siguiente lo considere.
+        # Si es warning o idle → guardar en watchlist. idle_timeout sigue el
+        # mismo flujo que pre_decay_warning, pero con TTL más largo: su
+        # ejecución ocurre recién a los _IDLE_EXECUTE_AFTER_DAYS, así que el
+        # pending debe sobrevivir esa ventana (con el TTL corto expiraría justo
+        # al querer ejecutarlo).
         if trigger_reason in ("pre_decay_warning", "idle_timeout"):
+            ttl = (
+                _IDLE_PENDING_TTL_DAYS if trigger_reason == "idle_timeout"
+                else UNIVERSE_SELECTION_CANDIDATE_TTL_DAYS
+            )
             try:
                 await self.historian.save_pending_candidate(
                     sentinel_id     = sentinel_id,
                     proposed_ticker = new_ticker,
                     decision_id     = decision_id,
-                    ttl_days        = UNIVERSE_SELECTION_CANDIDATE_TTL_DAYS,
+                    ttl_days        = ttl,
                 )
             except Exception as e:
                 # Posible UNIQUE violation si race condition — descartamos.

@@ -1224,6 +1224,35 @@ class Historian:
             logger.error(f"Error al leer pending_candidate ({sentinel_id}): {e}")
             raise
 
+    async def get_idle_pending_candidate(self, sentinel_id: UUID) -> Optional[dict]:
+        """
+        Retorna el pending_candidate 'watching' del Sentinel cuyo
+        rotation_decision asociado fue disparado por idle_timeout, o None.
+        (pending_candidates no guarda trigger_reason — se obtiene por JOIN con
+        rotation_decisions.) Incluye old_ticker de la decisión para verificar
+        que el ticker a reemplazar sigue idle antes de ejecutar la rotación.
+
+        Returns dict {candidate_id, proposed_ticker, proposed_at, decision_id,
+        old_ticker} o None.
+        """
+        sql = """
+            SELECT pc.candidate_id, pc.proposed_ticker, pc.proposed_at,
+                   pc.decision_id, rd.old_ticker
+            FROM pending_candidates pc
+            JOIN rotation_decisions rd ON rd.decision_id = pc.decision_id
+            WHERE pc.sentinel_id = $1
+              AND pc.status = 'watching'
+              AND rd.trigger_reason = 'idle_timeout'
+            LIMIT 1
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(sql, sentinel_id)
+            return dict(row) if row else None
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al leer idle pending_candidate ({sentinel_id}): {e}")
+            raise
+
     async def save_pending_candidate(
         self,
         sentinel_id: UUID,
