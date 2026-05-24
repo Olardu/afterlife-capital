@@ -76,6 +76,10 @@ backups/**/LOG.md.*
 # === Backups de scripts PowerShell del proyecto ===
 backups/**/*.ps1.*
 
+# === Outputs de datos/reportes (NO son codigo, no van a git) ===
+backups/**/*.csv
+backups/**/*.html
+
 # === Code outputs (logs de sesiones de Claude Code) ===
 code-outputs/
 
