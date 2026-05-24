@@ -20,6 +20,7 @@ client_secret_*.json
 **/*.log
 **/*.db
 **/*.dump
+**/*.dump.gz
 
 # === Backups in-place: copias de archivos editados (NO van a git) ===
 dashboard/*.bak
