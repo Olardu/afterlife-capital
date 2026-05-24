@@ -60,26 +60,32 @@ foreach ($line in $statusOutput) {
     # Procesar M (modified), A (added), ?? (untracked); saltar D (deleted)
     if ($status -notmatch '^( M|M |MM|A |\?\?)$') { continue }
 
-    if (-not (Test-Path $file -PathType Leaf)) { continue }
+    # FIX 2026-05-24 (Cowork): path absoluto OBLIGATORIO. PowerShell hace Set-Location
+    # arriba pero metodos .NET ([System.IO.File], [System.IO.Path]) y cmdlets como
+    # Get-Item usan el CWD del proceso .NET (que NO es el de PowerShell). Sin
+    # absolute path, ReadAllBytes/Get-Item fallan con 'No se puede encontrar'
+    # cuando el script se invoca desde fuera del repo root.
+    $absPath = Join-Path $repoRoot $file
+    if (-not (Test-Path $absPath -PathType Leaf)) { continue }
 
     $checked++
     $ext = [System.IO.Path]::GetExtension($file).ToLower()
 
     switch ($ext) {
         '.py' {
-            $null = python -m py_compile $file 2>&1
+            $null = python -m py_compile $absPath 2>&1
             if ($LASTEXITCODE -ne 0) {
                 $errors += "[.py] $file - py_compile FAIL"
             }
         }
         '.js' {
-            $null = node --check $file 2>&1
+            $null = node --check $absPath 2>&1
             if ($LASTEXITCODE -ne 0) {
                 $errors += "[.js] $file - node --check FAIL"
             }
         }
         { $_ -in '.md', '.json', '.yaml', '.yml' } {
-            $bytes = [System.IO.File]::ReadAllBytes($file)
+            $bytes = [System.IO.File]::ReadAllBytes($absPath)
             if ($bytes.Length -eq 0) {
                 $warnings += "[$ext] $file - archivo vacio"
                 continue
@@ -89,13 +95,13 @@ foreach ($line in $statusOutput) {
             if ($lastByte -eq 10 -or $lastByte -eq 13) { continue }
 
             # Si no termina en newline, check si ultima linea termina en char de cierre razonable
-            $lastLine = (Get-Content $file -Tail 1 -ErrorAction SilentlyContinue)
+            $lastLine = (Get-Content $absPath -Tail 1 -ErrorAction SilentlyContinue)
             if ($lastLine -match '[.,?!:})>\"''*`\]_\-]$') { continue }
 
             $warnings += "[$ext] $file - posible truncado: ultima linea no termina en newline ni cierre razonable (ultimo byte=$lastByte)"
         }
         default {
-            if ((Get-Item $file).Length -eq 0) {
+            if ((Get-Item $absPath).Length -eq 0) {
                 $warnings += "[$ext] $file - archivo vacio"
             }
         }

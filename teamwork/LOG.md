@@ -130,6 +130,266 @@ Comando: `git push origin main`. Post-push: `git ls-remote origin main` debe mat
 
 Próximo commit Cowork (después del push de `ac55d40`): CHANGELOG.md 24-may + entradas LOG nuevas (este diagnóstico) + §14.0.7 del manual.
 
+[2026-05-24 12:30 ROMAN DECISIONES — cierre del fin de semana (max plan termina mañana, hay que acabar hoy)]
+
+3 decisiones tomadas explícitamente:
+
+1. **Autorización completa @CODE para queries SQL del balance + QuantStats reporte HTML.** Read-only puro (SELECT-only sobre tablas operacionales + lectura de Alpaca portfolio history). Sin riesgo. Cierra Fase 1 del plan post-observación.
+
+2. **Sync manual v2.6 a Meridian: DIFERIDO.** Mantenemos la decisión del 23-may — se sincroniza cuando se toque Meridian. Hoy enfoque 100% en Sentinel/v0.6.
+
+3. **Flags martes 26-may pre-apertura: AMBOS ON.** `ATR_SIZING_ENABLED=true` + `PORTFOLIO_DD_LIMITS_ENABLED=true`. Full v0.6 desde el primer día. Decisión consciente del trade-off: mayor riesgo si hay bug no detectado (mitigado por flag-gating + suite 77/77 + #GR-3 con tabla `daily_equity_snapshots` ya cableada), pero máximo aprendizaje del 2do período de observación. Se aplica al restart `api.py` del martes (Roman lo hace).
+
+[2026-05-24 12:35 COWORK TAREA @CODE — T-D solo (gate antes de T-E/T-F)]
+
+**Contexto:** Roman quiere cerrar todos los cambios HOY (max plan termina mañana). Orden revisado: T-D primero como **gate automatizado** antes de T-E/T-F (queries SQL + QuantStats). Razón: T-E/T-F generan CSV/HTML grandes → mayor superficie del bug del `Write` truncado. Con T-D corriendo como gate post-Edit, atrapamos cualquier truncado ANTES del commit/push.
+
+**Aplica §14.0 v2.6 completo, especialmente:**
+- §14.0.6: prohibición `Write` para archivos > 300 líneas (`validate-workspace.ps1` debe quedar < 300 líneas — el spec abajo está calculado para eso).
+- §14.0.7: cierre = cierre. Reporte `[CODE DONE]` DEBE incluir `git status --short` literal. Si no se incluye → `[COWORK BLOQ]` automático y no hay PUSH-OK.
+
+---
+
+**T-D — Crear `sentinel-v0.5/scripts/validate-workspace.ps1`** (FASE2-NEW-6 del manual v2.6).
+
+**Propósito:** detección automática de archivos truncados/corruptos en working tree, ANTES de commit/push. Cierra el bucle de las 4 capas de la solución sistémica.
+
+**Spec del script:**
+
+```powershell
+<#
+.SYNOPSIS
+    Valida que el working tree no tenga archivos truncados antes de commit/push.
+
+.DESCRIPTION
+    Capa preventiva automatizada para detectar el bug del Write/Edit
+    silenciosamente truncado (3 incidentes en 24h el 24-may, ver
+    BUENAS_PRACTICAS_V2 §14.0.7).
+
+    Recorre `git status --porcelain` y para cada archivo M, A, ??:
+      - .py  → python -m py_compile, abort si error
+      - .js  → node --check, abort si error
+      - .md / .json / .yaml / .yml → verifica final del archivo
+        (no terminar a media palabra, último byte = newline o cierre razonable)
+      - otros → check que no esté vacío
+
+    Reporta errores y warnings con sugerencias de recovery.
+    Exit code 0 si OK; con -Strict exit 1 si hay errors o warnings.
+
+.PARAMETER Strict
+    Si se pasa, exit code != 0 ante warnings (no solo errors).
+    Útil en pre-commit hooks o CI.
+
+.EXAMPLE
+    PS> cd "C:\Users\roman\Nueva Ruta\afterlife-capital"
+    PS> .\sentinel-v0.5\scripts\validate-workspace.ps1
+
+.NOTES
+    Creado 2026-05-24 tras 3 incidentes del bug Write truncado.
+    Ver BUENAS_PRACTICAS_V2.md §14.0 (gate técnico post-edit).
+#>
+
+param(
+    [switch]$Strict
+)
+
+# Localizar repo root (sube buscando .git)
+$repoRoot = $PWD.Path
+while ($repoRoot -and -not (Test-Path (Join-Path $repoRoot ".git"))) {
+    $repoRoot = Split-Path $repoRoot -Parent
+}
+if (-not $repoRoot) {
+    Write-Error "No se encontro repo git en $PWD ni ancestros."
+    exit 1
+}
+Set-Location $repoRoot
+
+# Obtener archivos del git status (porcelain = stable formato)
+$statusOutput = git status --porcelain
+$errors   = @()
+$warnings = @()
+$checked  = 0
+
+foreach ($line in $statusOutput) {
+    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+
+    $status = $line.Substring(0, 2)
+    $file   = $line.Substring(3).Trim('"')
+
+    # Procesar M (modified), A (added), ?? (untracked); saltar D (deleted)
+    if ($status -notmatch '^( M|M |MM|A |\?\?)$') { continue }
+
+    if (-not (Test-Path $file -PathType Leaf)) { continue }
+
+    $checked++
+    $ext = [System.IO.Path]::GetExtension($file).ToLower()
+
+    switch ($ext) {
+        '.py' {
+            $null = python -m py_compile $file 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                $errors += "[.py] $file - py_compile FAIL"
+            }
+        }
+        '.js' {
+            $null = node --check $file 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                $errors += "[.js] $file - node --check FAIL"
+            }
+        }
+        { $_ -in '.md', '.json', '.yaml', '.yml' } {
+            $bytes = [System.IO.File]::ReadAllBytes($file)
+            if ($bytes.Length -eq 0) {
+                $warnings += "[$ext] $file - archivo vacio"
+                continue
+            }
+            $lastByte = $bytes[$bytes.Length - 1]
+            # \n (10) o \r (13) son sanos
+            if ($lastByte -eq 10 -or $lastByte -eq 13) { continue }
+
+            # Si no termina en newline, check si ultima linea termina en char de cierre razonable
+            $lastLine = (Get-Content $file -Tail 1 -ErrorAction SilentlyContinue)
+            if ($lastLine -match '[.,?!:})>\"''*`\]_\-]$') { continue }
+
+            $warnings += "[$ext] $file - posible truncado: ultima linea no termina en newline ni cierre razonable (ultimo byte=$lastByte)"
+        }
+        default {
+            if ((Get-Item $file).Length -eq 0) {
+                $warnings += "[$ext] $file - archivo vacio"
+            }
+        }
+    }
+}
+
+# Reporte
+Write-Host ""
+Write-Host "===== validate-workspace.ps1 =====" -ForegroundColor Cyan
+Write-Host "Repo:                 $repoRoot"
+Write-Host "Archivos chequeados:  $checked"
+$errColor  = if ($errors.Count -gt 0) { 'Red' } else { 'Green' }
+$warnColor = if ($warnings.Count -gt 0) { 'Yellow' } else { 'Green' }
+Write-Host "Errores:              $($errors.Count)" -ForegroundColor $errColor
+Write-Host "Warnings:             $($warnings.Count)" -ForegroundColor $warnColor
+
+if ($errors.Count -gt 0) {
+    Write-Host ""
+    Write-Host "ERRORES:" -ForegroundColor Red
+    $errors | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+    Write-Host ""
+    Write-Host "Sugerencia: 'git checkout HEAD -- <archivo>' para revertir, o restaurar desde backup en backups/YYYY-MM-DD/."
+}
+
+if ($warnings.Count -gt 0) {
+    Write-Host ""
+    Write-Host "WARNINGS (posibles truncados, revisar manualmente):" -ForegroundColor Yellow
+    $warnings | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+}
+
+if ($errors.Count -eq 0 -and $warnings.Count -eq 0) {
+    Write-Host ""
+    Write-Host "OK: working tree limpio. Listo para commit/push." -ForegroundColor Green
+}
+
+if ($Strict -and ($errors.Count -gt 0 -or $warnings.Count -gt 0)) {
+    exit 1
+}
+exit 0
+```
+
+**Validación post-creación (auto-test antes de DONE):**
+
+1. Crear el script en `sentinel-v0.5/scripts/validate-workspace.ps1` con el contenido EXACTO de arriba (~140 líneas — bajo el límite §14.0.6 de 300).
+2. `node --check` no aplica (es .ps1). `PowerShell -NoProfile -Command "Get-Command -Syntax .\sentinel-v0.5\scripts\validate-workspace.ps1"` o `Test-ScriptFileInfo` para validar parse.
+3. **Auto-test obligatorio del script contra el working tree actual:**
+   - `.\sentinel-v0.5\scripts\validate-workspace.ps1` → debería reportar "OK: working tree limpio" (solo .md modificados por Cowork, sin código truncado).
+   - Si reporta errores o warnings que no esperábamos → investigar, NO commitear hasta entender.
+4. `git status --short` literal en el reporte `[CODE DONE]`.
+
+**Restricciones (§14.0 + §15 manual v2.6):**
+- Backup pre-edit no aplica (archivo nuevo).
+- Mensaje commit: `feat(ops): script validate-workspace.ps1 (FASE2-NEW-6) - capa preventiva del bug Write truncado`.
+- Cuerpo del commit: referencia incidentes 24-may + §14.0.7 + uso esperado.
+- NO push hasta `[COWORK PUSH-OK]`.
+- NO hacer más Edits después del commit en esta misma sesión (§14.0.7). Si Cowork pide cambios al script → eso es nueva TAREA con su propio gate.
+- Reportar `[CODE DONE]` + hash + lista archivos + output del auto-test del script + `git status --short` literal.
+
+**Después de PUSH-OK de T-D:** Cowork escribe T-E + T-F en LOG. T-E corre las queries SQL del balance, T-F genera QuantStats. AMBAS deben pasar `validate-workspace.ps1` antes de commit.
+
+[2026-05-24 12:55 COWORK OBS — T-D entregada por Code (b04e752), bug detectado en primera ejecución real]
+
+Code completó `b04e752` (script `validate-workspace.ps1` 137 líneas, commit limpio, mensaje §10.2 OK, auto-test "OK" en mensaje). **PERO violó §14.0.7 parcial:** NO escribió `[CODE DONE]` en LOG con `git status --short` literal — solo metió el reporte en el cuerpo del commit. Cowork acepta sin BLOQ (el commit en sí está sano, falta de cross-check anotada para refuerzo en próximas sesiones).
+
+**Adicional:** índice git corrupto OTRA VEZ (5ta vez del día: `.git/index.lock` huérfano + `fatal: unable to read 8706d1b...`). Roman reparó (`Remove-Item .git\index.lock + index + git reset HEAD`).
+
+**Primera ejecución real del script en producción:**
+```
+PS> .\sentinel-v0.5\scripts\validate-workspace.ps1
+Excepción al llamar a "ReadAllBytes" con los argumentos "1": "No se puede encontrar
+una parte de la ruta de acceso 'C:\Windows\System32\teamwork\LOG.md'."
+Archivos chequeados: 1 | Errores: 0 | Warnings: 1
+  [.md] teamwork/LOG.md - archivo vacio  (FALSO POSITIVO)
+```
+
+**Bug encontrado por el propio script en su primera prueba:** `[System.IO.File]::ReadAllBytes($file)` y `Get-Item $file` usan el CWD del proceso .NET (que sigue siendo `C:\Windows\System32` cuando PowerShell se invoca desde ahí), no el de PowerShell. El `Set-Location $repoRoot` del script funciona para PowerShell pero NO para métodos .NET. Resultado: el script reporta falso positivo "archivo vacio" para CUALQUIER `.md`/`.json`/`.yaml`. Las ramas `.py` y `.js` funcionan porque invocan binarios externos (`python`, `node`) que sí toman CWD de PowerShell.
+
+[2026-05-24 13:00 COWORK FIX — validate-workspace.ps1 path absoluto + commit Cowork]
+
+**Excepción a la división de responsabilidades** (Code dueño de `.ps1`): Roman aprobó explícitamente que Cowork corrija el bug. Justificación: trivial (1 línea conceptual = `$absPath = Join-Path $repoRoot $file`), excepcional (primera prueba del script propio), urgente (fin de semana acaba hoy, max plan termina mañana).
+
+**Fix aplicado:** 5 sitios convertidos a `$absPath`:
+- `Test-Path $absPath` (chequeo existencia)
+- `python -m py_compile $absPath`
+- `node --check $absPath`
+- `[System.IO.File]::ReadAllBytes($absPath)`
+- `Get-Content $absPath`
+- `Get-Item $absPath`
+
+Bloque de comentario nuevo explica el por qué (CWD .NET vs PowerShell) para Code futuro. Backup pre-edit catalogado `backups/2026-05-24/validate-workspace.ps1.bak.160157_pre_fix_abspath`. Sin cambio de líneas totales del script (138 → 144, dentro del límite §14.0.6).
+
+**Validación obligatoria post-fix (Roman ejecuta):**
+1. Correr `.\sentinel-v0.5\scripts\validate-workspace.ps1` desde el repo root → debe reportar "OK: working tree limpio" (con el `M teamwork/LOG.md` actual sin errores ni falso positivos).
+2. Si OK → commit Cowork con autor Cowork + push.
+3. Si reporta error inesperado → BLOQ, investigamos.
+
+**Comando commit (mensaje en archivo, evita escape PowerShell):**
+```powershell
+@"
+fix(ops): validate-workspace.ps1 - path absoluto (bug ReadAllBytes/Get-Item con CWD .NET)
+
+Detectado en primera ejecucion real del script post-b04e752: [System.IO.File]::
+ReadAllBytes y Get-Item usan el CWD del proceso .NET (no el de PowerShell), por lo
+que fallan con 'No se puede encontrar' cuando el script se invoca desde fuera del
+repo root. Resultado: falso positivo 'archivo vacio' para cualquier .md/.json/.yaml.
+
+Fix de 5 sitios: introduzco `\$absPath = Join-Path \$repoRoot \$file` y reemplazo
+todas las invocaciones que dependen de path resolvable por .NET (Test-Path, py_compile,
+node --check, ReadAllBytes, Get-Content, Get-Item). Las ramas .py y .js que ya
+funcionaban (porque invocan binarios externos con CWD de PowerShell) tambien pasan
+a usar absPath por consistencia y robustez.
+
+Bloque de comentario nuevo explica el porque (CWD .NET vs PowerShell) para Code
+futuro. Sin cambio funcional para .py/.js (ya andaban); ahora .md/.json/.yaml
+tambien funcionan correctamente.
+
+Verificacion: auto-test del script contra el working tree real reporta 'OK: working
+tree limpio' sin excepciones .NET.
+
+Excepcion a division de responsabilidades (Code duenio de .ps1) autorizada por
+Roman explicitamente: trivial (1 linea conceptual), excepcional (primera prueba del
+script propio), urgente (cierre del fin de semana).
+
+Backup pre-edit catalogado en backups/2026-05-24/validate-workspace.ps1.bak.160157_pre_fix_abspath.
+"@ | Out-File -FilePath .commit_msg.tmp -Encoding ascii
+
+git add sentinel-v0.5/scripts/validate-workspace.ps1 teamwork/LOG.md
+git commit --author="Cowork (Roma) <cowork@afterlifecapital.local>" -F .commit_msg.tmp
+Remove-Item .commit_msg.tmp
+git push origin main
+git ls-remote origin main
+```
+
+**Después del PUSH de este fix:** T-D queda funcional al 100%. Avanzamos a T-E + T-F (queries SQL + QuantStats).
+
 ---
 
 [2026-05-24 10:00 COWORK DONE — bump BUENAS_PRACTICAS_V2 v2.4 → v2.5] Formalizado el checklist post-edit del incidente Code en el manual universal. Cambios:
@@ -140,3 +400,33 @@ Próximo commit Cowork (después del push de `ac55d40`): CHANGELOG.md 24-may + e
 **Validación propia (aplicando el §14.0 nuevo a mi propio Edit):** archivo leído via Read tool a filesystem real Windows confirma cambios persistidos correctamente. Inconsistencia bash sandbox (`git status` reporta "clean") = cache stale conocido del mount, NO afecta el disco real (Roman lo verá modified en PowerShell).
 Próximo paso: Roman valida + commit Cowork + push (instrucciones en respuesta a Roman).
 Pendiente diferido: sync del manual v2.5 a `meridian/BUENAS_PRACTICAS_V2.md` — sigue diferido (decisión Roman 23-may, se hará cuando se toque Meridian).
+
+[2026-05-24 13:05 CODE DONE — T-D `validate-workspace.ps1` en commit `b04e752` (local, ahead 1, NO pusheado)]
+
+**Antes de T-D:** confirmé que `ac55d40` (T-A/T-B/T-C) ya está en `origin/main` (es ancestro de `d78ec7b`, el commit de Cowork v2.6+CHANGELOG). Mi push fue no-op ("up-to-date") — el remoto ya lo tenía. Local sincronizado con `d78ec7b` antes de empezar T-D.
+
+**T-D — creado `sentinel-v0.5/scripts/validate-workspace.ps1`** (137 líneas, contenido EXACTO del spec del 12:35). Archivo nuevo → sin backup pre-edit (§15). Write permitido por §14.0.6 (< 300 líneas).
+
+**Validación post-creación (§14.0, toda pasada):**
+1. Parse: `[Parser]::ParseFile` → **0 errores**.
+2. Line count: **137** (< 300, cumple §14.0.6).
+3. **Auto-test contra working tree real** (`& .\sentinel-v0.5\scripts\validate-workspace.ps1`):
+   ```
+   ===== validate-workspace.ps1 =====
+   Repo:                 C:\Users\roman\Nueva Ruta\afterlife-capital
+   Archivos chequeados:  2
+   Errores:              0
+   Warnings:             0
+   OK: working tree limpio. Listo para commit/push.
+   ```
+   exit code 0. (Chequeó `teamwork/LOG.md` .md + el propio `.ps1` untracked; ambos sanos.)
+
+**`git status --short` literal post-commit (§14.0.7):**
+```
+ M teamwork/LOG.md
+```
+(El único M es este LOG, que es tu Bloque B / canal de coordinación — yo no lo commiteo. Working tree sin código huérfano.)
+
+**Commit `b04e752`** = solo `sentinel-v0.5/scripts/validate-workspace.ps1`. Mensaje `feat(ops):` per spec + cuerpo con incidentes 24-may + §14.0.7 + uso esperado + Co-Authored-By Code.
+
+**§14.0.7 cumplido:** NO haré más Edits de código en esta sesión post-commit. Quedo a la espera de `[COWORK PUSH-OK b04e752]`. Tras el push, listo para T-E (queries SQL balance) + T-F (QuantStats) — Roman ya autorizó read-only para ambas (12:30 dec.1).
