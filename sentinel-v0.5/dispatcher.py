@@ -24,10 +24,12 @@ from decimal import Decimal, ROUND_DOWN, ROUND_HALF_EVEN
 from typing import Optional
 from uuid import UUID
 
+import config  # acceso runtime al flag ATR_SIZING_ENABLED (patcheable en tests)
 from config import (
     ALPACA_API_KEY,
     ALPACA_SECRET_KEY,
     ATR_STOP_MULTIPLIER,
+    ATR_WINDOW,
     KELLY_FRACTION,
     MAX_ALLOCATION_TOTAL,
     MAX_CAPITAL_PER_SENTINEL,
@@ -352,8 +354,8 @@ class Dispatcher:
                 allocation = {}
             allocation = self.apply_regime_adjustment(allocation, regime)
 
-        # 4. Determinar qty máxima según allocation del Sentinel
-        sentinel_alloc = allocation.get(str(sentinel_id), MIN_CAPITAL_PER_SENTINEL)
+        # 4. Determinar la qty objetivo. El equity de cuenta es común a ambos
+        #    modos de sizing (allocation viejo y sizing por ATR).
         if account_equity is None:
             try:
                 account_equity = await asyncio.wait_for(
@@ -367,10 +369,48 @@ class Dispatcher:
                 logger.error(f"Error al obtener equity de cuenta: {e}")
                 account_equity = Decimal("0")
 
-        if account_equity > 0 and price > 0:
-            max_dollar_value = account_equity * Decimal(str(sentinel_alloc / 100.0))
-            max_qty          = max_dollar_value / price
-            qty              = min(qty, max_qty)
+        # #GR-1+#GR-2 (flag-gated): con ATR_SIZING_ENABLED el qty se dimensiona
+        # por riesgo (ATR) con stop/take-profit automáticos. El flag se lee en
+        # runtime (config.ATR_SIZING_ENABLED) para respetar .env sin reimportar.
+        # Con el flag OFF, comportamiento de siempre: cap por allocation del
+        # Sentinel, sin TP/SL (backward compat estricto, sin overhead de ATR).
+        take_profit_price = None
+        stop_loss_price = None
+        if config.ATR_SIZING_ENABLED:
+            from sentinels import _atr
+
+            bars = await self._fetch_bars_for_atr(ticker, window=ATR_WINDOW + 5)
+            atr_value = _atr(bars, window=ATR_WINDOW) if bars is not None else float("nan")
+            if math.isnan(atr_value) or atr_value <= 0:
+                logger.info(f"Skip {ticker}: ATR no calculable (NaN o <=0).")
+                return {**base_result, "reason": "atr_unavailable"}
+
+            sizing = calculate_position_size(
+                ticker=ticker,
+                equity=account_equity,
+                current_price=price,
+                atr=Decimal(str(atr_value)),
+            )
+            if sizing is None:
+                logger.info(
+                    f"Skip {ticker}: position sizing no factible "
+                    f"(ATR={atr_value}, equity={account_equity})."
+                )
+                return {**base_result, "reason": "sizing_not_feasible"}
+
+            qty = sizing["qty"]
+            take_profit_price = sizing["take_profit_price"]
+            stop_loss_price   = sizing["stop_price"]
+            if sizing["capped"]:
+                logger.info(
+                    f"{ticker}: sizing capeado por MAX_POSITION_PCT_OF_EQUITY → qty={qty}."
+                )
+        else:
+            sentinel_alloc = allocation.get(str(sentinel_id), MIN_CAPITAL_PER_SENTINEL)
+            if account_equity > 0 and price > 0:
+                max_dollar_value = account_equity * Decimal(str(sentinel_alloc / 100.0))
+                max_qty          = max_dollar_value / price
+                qty              = min(qty, max_qty)
 
         # 5. CorrelationGuard
         try:
@@ -413,11 +453,13 @@ class Dispatcher:
                 return {**base_result, "reason": "no_open_position"}
         try:
             order_result = await self.execute_order(
-                ticker        = ticker,
-                side          = side,
-                qty           = final_qty,
-                strategy_type = strategy_type,
-                limit_price   = price if self._is_limit_strategy(strategy_type) else None,
+                ticker            = ticker,
+                side              = side,
+                qty               = final_qty,
+                strategy_type     = strategy_type,
+                limit_price       = price if self._is_limit_strategy(strategy_type) else None,
+                take_profit_price = take_profit_price,
+                stop_loss_price   = stop_loss_price,
             )
         except Exception as e:
             logger.error(f"Error al ejecutar orden {ticker}: {e}")
@@ -496,6 +538,63 @@ class Dispatcher:
             self.open_positions.pop(ticker, None)
         else:
             self.open_positions[ticker] = position
+
+    async def _fetch_bars_for_atr(self, ticker: str, window: int):
+        """
+        Trae las últimas barras DIARIAS de `ticker` para el cálculo de ATR
+        (#GR-2). A diferencia del fetch de 15min de los Sentinels/CorrelationGuard,
+        el ATR para sizing es daily. Cliente Alpaca local (patrón del codebase).
+
+        Returns:
+            DataFrame con columnas high/low/close (las que `_atr` consume), o
+            None si Alpaca no responde / no hay datos (el caller lo trata como
+            ATR no disponible y omite la señal — fail-safe).
+        """
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._fetch_bars_for_atr_sync, ticker, window),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout (15s) en _fetch_bars_for_atr {ticker}")
+            return None
+
+    def _fetch_bars_for_atr_sync(self, ticker: str, window: int):
+        """Versión síncrona de _fetch_bars_for_atr, ejecutada en thread separado."""
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+
+        from alpaca.data.historical import StockHistoricalDataClient
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+        from alpaca.data.enums import DataFeed
+
+        client = StockHistoricalDataClient(
+            api_key=ALPACA_API_KEY, secret_key=ALPACA_SECRET_KEY,
+        )
+        now = datetime.now(tz=ZoneInfo("UTC"))
+        # `window` barras diarias → pedir ~2× en días calendario para cubrir
+        # fines de semana y feriados.
+        start = now - timedelta(days=window * 2 + 10)
+
+        request = StockBarsRequest(
+            symbol_or_symbols=ticker,
+            timeframe=TimeFrame(1, TimeFrameUnit.Day),
+            start=start,
+            end=now,
+            feed=DataFeed.IEX,
+        )
+        try:
+            bars_df = client.get_stock_bars(request).df
+        except Exception as e:
+            logger.warning(f"_fetch_bars_for_atr {ticker} falló: {e}")
+            return None
+        try:
+            ticker_bars = bars_df.loc[ticker]
+        except KeyError:
+            logger.warning(f"_fetch_bars_for_atr: {ticker} sin datos diarios en Alpaca.")
+            return None
+        return ticker_bars[["high", "low", "close"]].tail(window)
 
     # ════════════════════════════════════════════════════════
     # § 6 — Ejecución de órdenes
