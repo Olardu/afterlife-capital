@@ -86,3 +86,9 @@ code-outputs/
 # === Handoffs Design archivados (binarios sin auditar) ===
 panel-admin/panel-admin.zip
 templetes-correo/templetes-correo.zip
+
+# === Coverage artifacts (pytest-cov, #FASE2-NEW-4) ===
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
