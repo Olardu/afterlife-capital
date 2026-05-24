@@ -347,6 +347,62 @@ class Historian:
             logger.error(f"Error al registrar signal ({ticker} {signal_type}): {e}")
             raise
 
+    async def record_shadow_fractional(
+        self,
+        signal_id: UUID,
+        ticker: str,
+        sentinel_id: UUID,
+        price_at_signal: Decimal,
+        equity_at_decision: Decimal,
+        allocation_pct: Decimal,
+        max_dollar_value: Decimal,
+        qty_real_executed: Decimal,
+        qty_fractional_would: Decimal,
+        notional_real: Decimal,
+        notional_fractional_would: Decimal,
+        dollar_diff: Decimal,
+        status: str,
+    ) -> None:
+        """
+        EXP-005 — Modo Observador Fractional. Persiste en signals_shadow_fractional
+        (migración 015) qué HUBIERA operado el dispatcher con fractional vs lo que
+        ejecutó realmente (qty entera tras floor). Tabla aislada; NO afecta el flow
+        ejecutable. El caller (dispatcher) ya envuelve esta llamada en try/except.
+        """
+        # Montos → Decimal (conversión defensiva; el dispatcher ya pasa Decimal).
+        price_at_signal           = Decimal(str(price_at_signal))
+        equity_at_decision        = Decimal(str(equity_at_decision))
+        allocation_pct            = Decimal(str(allocation_pct))
+        max_dollar_value          = Decimal(str(max_dollar_value))
+        qty_real_executed         = Decimal(str(qty_real_executed))
+        qty_fractional_would      = Decimal(str(qty_fractional_would))
+        notional_real             = Decimal(str(notional_real))
+        notional_fractional_would = Decimal(str(notional_fractional_would))
+        dollar_diff               = Decimal(str(dollar_diff))
+
+        sql = """
+            INSERT INTO signals_shadow_fractional (
+                signal_id, ticker, sentinel_id, price_at_signal, equity_at_decision,
+                allocation_pct, max_dollar_value, qty_real_executed, qty_fractional_would,
+                notional_real, notional_fractional_would, dollar_diff, status
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute(
+                    sql, signal_id, ticker, sentinel_id, price_at_signal, equity_at_decision,
+                    allocation_pct, max_dollar_value, qty_real_executed, qty_fractional_would,
+                    notional_real, notional_fractional_would, dollar_diff, status,
+                )
+            logger.debug(
+                f"Shadow fractional: {ticker} status={status} "
+                f"real={qty_real_executed} frac={qty_fractional_would} diff={dollar_diff}"
+            )
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al registrar shadow fractional ({ticker}): {e}")
+            raise
+
     async def record_trade(
         self,
         signal_id: Optional[UUID],

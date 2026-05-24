@@ -88,6 +88,13 @@ MAX_DAILY_DRAWDOWN_PCT      = Decimal("0.05")   # 5% intradía vs equity al open
 MAX_WEEKLY_DRAWDOWN_PCT     = Decimal("0.10")   # 10% en 5 días hábiles → kill switch
 MAX_CUMULATIVE_DRAWDOWN_PCT = Decimal("0.15")   # 15% vs peak histórico → pausa indefinida (intervención manual)
 
+# --- EXP-005 — Modo Observador Fractional. FLAG-GATED, default ON. ---
+# El bot opera IDÉNTICO (qty entera, floor en execute_order); con
+# SHADOW_FRACTIONAL_ENABLED=true el dispatcher persiste en signals_shadow_fractional
+# qué HUBIERA operado con fractional (notional), solo para análisis post-período.
+# NO altera ninguna orden enviada a Alpaca. Fallback: =false en .env + restart.
+SHADOW_FRACTIONAL_ENABLED  = os.environ.get("SHADOW_FRACTIONAL_ENABLED", "true").lower() == "true"
+
 # =============================================================================
 # CORRELATION GUARD
 # Corre antes de cada orden. Si la correlación rolling entre la señal entrante

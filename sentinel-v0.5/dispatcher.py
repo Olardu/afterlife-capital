@@ -533,6 +533,57 @@ class Dispatcher:
             {"ticker": ticker, "qty": final_qty, "side": side, "sentinel_id": sentinel_id},
         )
 
+        # EXP-005 — Modo Observador Fractional. NO afecta el flow ejecutable: solo
+        # calcula qué HABRÍA operado con fractional (notional) y lo persiste aparte.
+        # Envuelto en try/except amplio — si falla, log warning y sigue normal.
+        if config.SHADOW_FRACTIONAL_ENABLED and signal_id is not None:
+            try:
+                # qty_fractional_would = final_qty pre-floor (allocation + reducción
+                # CorrelationGuard ya aplicadas). qty_real = floor() = lo que execute_order
+                # realmente manda a Alpaca (L688). El delta = capital sin desplegar por
+                # el redondeo a entero, que es justo lo que fractional eliminaría.
+                qty_frac_would = Decimal(str(final_qty))
+                qty_real       = Decimal(math.floor(qty_frac_would))
+                notional_frac  = qty_frac_would * price
+                notional_real  = qty_real * price
+                dollar_diff    = notional_frac - notional_real
+
+                # Contexto del allocation (informativo): % y techo $ del sentinel.
+                if config.ATR_SIZING_ENABLED:
+                    alloc_pct  = MAX_POSITION_PCT_OF_EQUITY * Decimal("100")
+                    ref_dollar = account_equity * MAX_POSITION_PCT_OF_EQUITY
+                else:
+                    sentinel_alloc = allocation.get(str(sentinel_id), MIN_CAPITAL_PER_SENTINEL)
+                    alloc_pct  = Decimal(str(sentinel_alloc))
+                    ref_dollar = account_equity * Decimal(str(sentinel_alloc)) / Decimal("100")
+
+                if qty_real == 0 and qty_frac_would > 0:
+                    shadow_status = "signal_lost_to_int_floor"
+                elif abs(dollar_diff) < Decimal("1"):
+                    shadow_status = "matched"
+                elif qty_frac_would > qty_real:
+                    shadow_status = "fractional_would_increase"
+                else:
+                    shadow_status = "other"
+
+                await self.historian.record_shadow_fractional(
+                    signal_id=signal_id,
+                    ticker=ticker,
+                    sentinel_id=sentinel_id,
+                    price_at_signal=price,
+                    equity_at_decision=account_equity,
+                    allocation_pct=alloc_pct,
+                    max_dollar_value=ref_dollar,
+                    qty_real_executed=qty_real,
+                    qty_fractional_would=qty_frac_would,
+                    notional_real=notional_real,
+                    notional_fractional_would=notional_frac,
+                    dollar_diff=dollar_diff,
+                    status=shadow_status,
+                )
+            except Exception as e:
+                logger.warning(f"EXP-005 shadow fractional falló para {ticker} (NO afecta flow): {e}")
+
         # PENDING (limit orders en background, FIX #H-6) NO se cuenta como aprobada
         # hasta que el background task confirme FILLED via update_trade_status.
         approved = order_result.get("status") == "FILLED"
