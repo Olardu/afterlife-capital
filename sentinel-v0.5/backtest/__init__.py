@@ -12,6 +12,6 @@
 #   runner.py    — orquesta backtest → métricas → comparación opcional vs paper.
 #   __main__.py  — CLI: python -m backtest --sentinel s2 --start ... --end ...
 
-from backtest import adapters, data, metrics
+from backtest import adapters, data, metrics, runner
 
-__all__ = ["adapters", "data", "metrics"]
+__all__ = ["adapters", "data", "metrics", "runner"]
