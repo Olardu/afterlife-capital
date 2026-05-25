@@ -26,7 +26,7 @@ from config import (
 from corporate_actions import build_corporate_actions_report
 from investment_thesis import validate_transition
 from simulated_costs import calculate_fees
-from tax_lots import compute_tax_report
+from tax_lots import compute_tax_report, match_fifo
 
 logger = logging.getLogger("sentinel.historian")
 
@@ -669,7 +669,7 @@ class Historian:
             dict con win_rate, sharpe_ratio y total_trades.
         """
         sql = """
-            SELECT side, filled_price, created_at
+            SELECT side, filled_price, qty, created_at
             FROM trades
             WHERE sentinel_id = $1
               AND ticker = $2
@@ -684,23 +684,28 @@ class Historian:
             logger.error(f"Error al obtener trades para performance ({sentinel_id}, {ticker}): {e}")
             raise
 
-        # LIMITACIÓN v0.5: el pareo FIFO asume ciclos BUY→SELL alternados.
-        # Si un Sentinel emite dos BUYs sin SELL intermedio, el segundo BUY
-        # se despareja. Aceptable porque los Sentinels heredan la protección
-        # last_signal del v0.0 que previene señales duplicadas consecutivas.
-        buys  = [r for r in rows if r["side"] == "BUY"]
-        sells = [r for r in rows if r["side"] == "SELL"]
-        pairs = list(zip(buys, sells))
-        total_trades = len(pairs)
+        # #TECH-003 (cierra #TD-1): pareo FIFO real con el motor `tax_lots.match_fifo`
+        # en lugar del `zip(buys, sells)` ingenuo, que desparejaba BUY-BUY-SELL (el
+        # 2º BUY quedaba huérfano) y mezclaba qty distintas. match_fifo casa por
+        # cantidad exacta y maneja LONG y SHORT (S-2/S-8 shortean), devolviendo
+        # disposals con gain/cost_basis en Decimal.
+        fifo_trades = [
+            {"ticker": ticker, "side": r["side"], "qty": r["qty"],
+             "price": r["filled_price"], "dt": r["created_at"]}
+            for r in rows
+        ]
+        disposals = match_fifo(fifo_trades)
+        total_trades = len(disposals)
 
         if total_trades == 0:
             return {"win_rate": 0.0, "sharpe_ratio": 0.0, "total_trades": 0}
 
-        # Cálculo en Decimal (precios monetarios, #H-4) y conversión a float al final:
-        # `returns` es un ratio adimensional usado en sharpe → float OK (§8.6).
+        # return por ciclo cerrado = gain / cost_basis (ratio adimensional usado en
+        # sharpe → float OK, §8.6). cost_basis es qty*precio_apertura > 0 en la
+        # práctica; guarda defensiva por si un precio fuese 0.
         returns = [
-            float((sell["filled_price"] - buy["filled_price"]) / buy["filled_price"])
-            for buy, sell in pairs
+            float(d["gain"] / d["cost_basis"]) if d["cost_basis"] != 0 else 0.0
+            for d in disposals
         ]
         win_rate = sum(1 for r in returns if r > 0) / total_trades
 

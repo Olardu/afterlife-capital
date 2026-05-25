@@ -16,6 +16,7 @@ import asyncio
 import os
 import statistics
 import sys
+from datetime import datetime, timedelta
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -47,12 +48,13 @@ def _historian_con_conn(conn) -> Historian:
 def _rows_desde_sells(sells, buy="100"):
     """Construye rows BUY/SELL pareados. buy fijo, cada sell define un return."""
     rows = []
+    base = datetime(2026, 1, 1)
     ts = 0
     for s in sells:
         ts += 1
-        rows.append({"side": "BUY", "filled_price": Decimal(buy), "created_at": ts})
+        rows.append({"side": "BUY", "filled_price": Decimal(buy), "qty": 1, "created_at": base + timedelta(days=ts)})
         ts += 1
-        rows.append({"side": "SELL", "filled_price": Decimal(str(s)), "created_at": ts})
+        rows.append({"side": "SELL", "filled_price": Decimal(str(s)), "qty": 1, "created_at": base + timedelta(days=ts)})
     return rows
 
 

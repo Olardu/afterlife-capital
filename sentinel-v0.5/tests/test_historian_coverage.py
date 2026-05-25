@@ -15,7 +15,7 @@ Mock del pool asyncpg (sin DB real). Correr:
 import asyncio
 import os
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -226,8 +226,8 @@ def test_calculate_performance_pgerror_reraise():
 def test_evaluate_decay_warmup_insuficiente_devuelve_false():
     # 1 ciclo BUY→SELL → total_trades=1 < _PARTIAL_SCORE_MIN_TRADES (2) → False sin upsert.
     rows = [
-        {"side": "BUY", "filled_price": Decimal("100"), "created_at": 1},
-        {"side": "SELL", "filled_price": Decimal("110"), "created_at": 2},
+        {"side": "BUY", "filled_price": Decimal("100"), "qty": 1, "created_at": datetime(2026, 1, 1)},
+        {"side": "SELL", "filled_price": Decimal("110"), "qty": 1, "created_at": datetime(2026, 1, 2)},
     ]
     conn = _conn()
     conn.fetch = AsyncMock(return_value=rows[:2])
@@ -241,11 +241,11 @@ def test_evaluate_decay_warmup_insuficiente_devuelve_false():
 def test_evaluate_decay_pgerror_en_upsert_reraise():
     # 4 ciclos → warmup parcial, intenta upsert que falla.
     rows = [
-        {"side": "BUY", "filled_price": Decimal("100"), "created_at": i}
+        {"side": "BUY", "filled_price": Decimal("100"), "qty": 1, "created_at": datetime(2026, 1, 1) + timedelta(days=i)}
         for i in range(0, 8, 2)
     ]
     sells = [
-        {"side": "SELL", "filled_price": Decimal("105"), "created_at": i + 1}
+        {"side": "SELL", "filled_price": Decimal("105"), "qty": 1, "created_at": datetime(2026, 1, 1) + timedelta(days=i + 1)}
         for i in range(0, 8, 2)
     ]
     merged = []

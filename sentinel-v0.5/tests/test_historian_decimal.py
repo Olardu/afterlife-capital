@@ -14,6 +14,7 @@ Mock del pool asyncpg (sin DB real). Correr:
 import asyncio
 import os
 import sys
+from datetime import datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -91,10 +92,10 @@ def test_update_trade_status_calcula_slippage_decimal_sin_perdida():
 
 def test_calculate_performance_win_rate_float_y_preciso():
     rows = [
-        {"side": "BUY",  "filled_price": Decimal("100"), "created_at": 1},
-        {"side": "SELL", "filled_price": Decimal("110"), "created_at": 2},
-        {"side": "BUY",  "filled_price": Decimal("100"), "created_at": 3},
-        {"side": "SELL", "filled_price": Decimal("90"),  "created_at": 4},
+        {"side": "BUY",  "filled_price": Decimal("100"), "qty": 1, "created_at": datetime(2026, 1, 1)},
+        {"side": "SELL", "filled_price": Decimal("110"), "qty": 1, "created_at": datetime(2026, 1, 2)},
+        {"side": "BUY",  "filled_price": Decimal("100"), "qty": 1, "created_at": datetime(2026, 1, 3)},
+        {"side": "SELL", "filled_price": Decimal("90"),  "qty": 1, "created_at": datetime(2026, 1, 4)},
     ]
     conn = MagicMock()
     conn.fetch = AsyncMock(return_value=rows)
@@ -109,10 +110,10 @@ def test_calculate_performance_win_rate_float_y_preciso():
 
 def test_calculate_performance_sharpe_sigue_siendo_float():
     rows = [
-        {"side": "BUY",  "filled_price": Decimal("100"), "created_at": 1},
-        {"side": "SELL", "filled_price": Decimal("110"), "created_at": 2},
-        {"side": "BUY",  "filled_price": Decimal("100"), "created_at": 3},
-        {"side": "SELL", "filled_price": Decimal("121"), "created_at": 4},
+        {"side": "BUY",  "filled_price": Decimal("100"), "qty": 1, "created_at": datetime(2026, 1, 1)},
+        {"side": "SELL", "filled_price": Decimal("110"), "qty": 1, "created_at": datetime(2026, 1, 2)},
+        {"side": "BUY",  "filled_price": Decimal("100"), "qty": 1, "created_at": datetime(2026, 1, 3)},
+        {"side": "SELL", "filled_price": Decimal("121"), "qty": 1, "created_at": datetime(2026, 1, 4)},
     ]
     conn = MagicMock()
     conn.fetch = AsyncMock(return_value=rows)
