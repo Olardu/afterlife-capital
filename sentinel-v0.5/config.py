@@ -112,6 +112,18 @@ MAX_CUMULATIVE_DRAWDOWN_PCT = Decimal("0.15")   # 15% vs peak histórico → pau
 # NO altera ninguna orden enviada a Alpaca. Fallback: =false en .env + restart.
 SHADOW_FRACTIONAL_ENABLED  = os.environ.get("SHADOW_FRACTIONAL_ENABLED", "true").lower() == "true"
 
+# --- #HE-2 — Investment Thesis Tracking. FLAG-GATED, default OFF. ---
+# Con THESIS_TRACKING_ENABLED=False el Universe Selector opera idéntico (no crea
+# ni transiciona tesis, no inyecta el feedback histórico al prompt). Con =true,
+# cada rotación nace como una tesis (IDEA → ENTRY_READY → ... → CLOSED) y el
+# historial de tesis cerradas se incluye en el system prompt como contexto
+# (feedback loop, #ME-2). NO altera las órdenes que manda el bot; solo registra
+# metadata y enriquece el prompt. Roman lo activa en .env (5º flag del restart
+# del martes) — fallback inmediato volviendo a false. Ver investment_thesis.py.
+THESIS_TRACKING_ENABLED    = os.environ.get("THESIS_TRACKING_ENABLED", "false").lower() == "true"
+# Cuántas tesis cerradas recientes se incluyen en el prompt del Universe Selector.
+THESIS_FEEDBACK_LIMIT      = int(os.environ.get("THESIS_FEEDBACK_LIMIT", "20"))
+
 # =============================================================================
 # CORRELATION GUARD
 # Corre antes de cada orden. Si la correlación rolling entre la señal entrante

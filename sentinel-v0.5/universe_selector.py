@@ -33,11 +33,14 @@ from claude_client import ClaudeClient
 from config import (
     DECAY_THRESHOLD_SHARPE,
     DECAY_THRESHOLD_WIN_RATE,
+    THESIS_FEEDBACK_LIMIT,
+    THESIS_TRACKING_ENABLED,
     UNIVERSE_SELECTION_CANDIDATE_TTL_DAYS,
     WARNING_THRESHOLD_SHARPE,
     WARNING_THRESHOLD_WIN_RATE,
     WARMUP_TRADES_REQUIRED,
 )
+from investment_thesis import build_feedback_block
 
 
 logger = logging.getLogger("sentinel.universe_selector")
@@ -371,6 +374,16 @@ async def _filter_candidate_eligibility(ticker: str, client) -> dict:
     return {"eligible": True, "reason": None, "asset": asset}
 
 
+# Estrategias que operan en CORTO (#HE-2: la dirección de la tesis condiciona el
+# cálculo de MAE/MFE y outcome). El resto del universo de Sentinels es long.
+_SHORT_STRATEGY_TYPES = frozenset({"rsi_short", "rsi_divergence"})
+
+
+def _thesis_direction(strategy_type: Optional[str]) -> str:
+    """Dirección de la tesis ('LONG'/'SHORT') según el tipo de estrategia del Sentinel."""
+    return "SHORT" if strategy_type in _SHORT_STRATEGY_TYPES else "LONG"
+
+
 def build_user_prompt(
     *,
     sentinel: dict,
@@ -379,6 +392,7 @@ def build_user_prompt(
     reason: str,
     portfolio_composition: Optional[list[dict]] = None,
     pending_tickers_in_watchlist: Optional[list[dict]] = None,
+    thesis_feedback: str = "",
 ) -> str:
     win_rate = sentinel.get("win_rate") or 0.0
     sharpe   = sentinel.get("sharpe_ratio") or 0.0
@@ -388,6 +402,9 @@ def build_user_prompt(
 
     portfolio_section = _format_portfolio_composition(portfolio_composition or [])
     pending_section   = _format_pending_watchlist(pending_tickers_in_watchlist or [])
+    # Feedback de tesis cerradas (#HE-2 / #ME-2): historial de cómo resultaron las
+    # rotaciones previas. Sección vacía si no hay historial o el flag está off.
+    feedback_section = f"\n\n{thesis_feedback}" if thesis_feedback else ""
 
     return f"""Necesito reemplazar el ticker para el siguiente Sentinel.
 
@@ -417,7 +434,7 @@ PORTAFOLIO AGREGADO (composición actual de los Sentinels activos):
 {portfolio_section}{pending_section}
 
 TICKERS YA ROTADOS POR ESTE SENTINEL (sin éxito):
-{_format_failed(failed_tickers)}
+{_format_failed(failed_tickers)}{feedback_section}
 
 Propón el mejor ticker de reemplazo siguiendo el schema. Considera explícitamente la diversificación factorial del portafolio agregado en tu reasoning y poblá el campo factor_exposure_analysis."""
 
@@ -765,6 +782,9 @@ class UniverseSelector:
                 pass
             return "warning"
 
+        # #HE-2: tesis nueva → ENTRY_READY; tesis del ticker saliente → CLOSED.
+        await self._track_rotation_executed(decision_id=decision_id, score=score)
+
         # Notificar por email (best-effort)
         if self.email_sender is not None:
             try:
@@ -869,6 +889,92 @@ class UniverseSelector:
     # ---------------------------------------------------------------------
     # Llamada a Claude
     # ---------------------------------------------------------------------
+    # ---------------------------------------------------------------------
+    # Investment Thesis Tracking (#HE-2) — flag-gated, error-isolado.
+    # Una falla en el tracking NUNCA debe abortar la rotación ni el ciclo.
+    # ---------------------------------------------------------------------
+    async def _fetch_thesis_feedback(self, sentinel_id: UUID) -> str:
+        """
+        Bloque de feedback de tesis cerradas para el system prompt (#ME-2).
+        '' si el flag está off, no hay historial o falla la consulta.
+        """
+        if not THESIS_TRACKING_ENABLED:
+            return ""
+        try:
+            closed = await self.historian.get_closed_theses_feedback(
+                self.owner_id, sentinel_id=sentinel_id, limit=THESIS_FEEDBACK_LIMIT,
+            )
+            return build_feedback_block(closed)
+        except Exception as e:
+            logger.warning(f"thesis feedback falló (prompt sin bloque): {e}")
+            return ""
+
+    async def _track_thesis_idea(
+        self, *, decision_id: UUID, score: dict, new_ticker: str,
+        reasoning: Optional[str], trigger_reason: str,
+    ) -> None:
+        """Registra la rotación propuesta como tesis IDEA. No bloquea si falla."""
+        if not THESIS_TRACKING_ENABLED:
+            return
+        try:
+            await self.historian.save_investment_thesis(
+                sentinel_id      = score["sentinel_id"],
+                owner_id         = self.owner_id,
+                ticker           = new_ticker,
+                direction        = _thesis_direction(score.get("strategy_type")),
+                decision_id      = decision_id,
+                rationale_text   = f"Rotación {score.get('ticker')} → {new_ticker} ({trigger_reason})",
+                claude_reasoning = reasoning,
+                state            = "IDEA",
+            )
+        except Exception as e:
+            logger.warning(f"track_thesis_idea falló (no bloquea): {e}")
+
+    async def _track_rotation_executed(self, *, decision_id: UUID, score: dict) -> None:
+        """
+        Al ejecutarse la rotación: la tesis nueva pasa IDEA→ENTRY_READY (ticker ya
+        asignado, listo para operar) y la tesis abierta del ticker saliente se
+        cierra (postmortem). El new_ticker se lee de la decisión ejecutada (cubre
+        candidato pre-aprobado y urgente). El outcome coarse sale del win_rate del
+        score; el outcome fino + MAE/MFE quedan para el backfill (#HE-2b). No
+        bloquea si falla.
+        """
+        if not THESIS_TRACKING_ENABLED:
+            return
+        sentinel_id = score["sentinel_id"]
+        old_ticker  = score.get("ticker")
+        new_ticker = None
+        try:
+            full = await self.historian.get_rotation_decision(decision_id)
+            if full:
+                new_ticker = full.get("new_ticker")
+        except Exception as e:
+            logger.warning(f"track: get_rotation_decision falló: {e}")
+
+        if new_ticker:
+            try:
+                new_thesis = await self.historian.find_open_thesis(
+                    self.owner_id, sentinel_id, new_ticker)
+                if new_thesis is not None:
+                    await self.historian.update_thesis_state(
+                        UUID(new_thesis["thesis_id"]), "ENTRY_READY")
+            except Exception as e:
+                logger.warning(f"track ENTRY_READY falló (no bloquea): {e}")
+        try:
+            old_thesis = await self.historian.find_open_thesis(
+                self.owner_id, sentinel_id, old_ticker)
+            if old_thesis is not None:
+                wr = score.get("win_rate")
+                outcome = "win" if (wr is not None and wr >= 0.5) else "loss"
+                await self.historian.update_thesis_state(
+                    UUID(old_thesis["thesis_id"]), "CLOSED",
+                    closed_at=datetime.now(),
+                    outcome=outcome,
+                    notes=f"Cerrada por rotación → {new_ticker} | win_rate={wr}",
+                )
+        except Exception as e:
+            logger.warning(f"track CLOSE old falló (no bloquea): {e}")
+
     async def _request_candidate(
         self,
         score: dict,
@@ -953,6 +1059,10 @@ class UniverseSelector:
                 logger.warning(f"get_active_pending_candidates falló: {e}")
                 pending_tickers_in_watchlist = []
 
+            # Feedback loop (#HE-2 / #ME-2): historial de tesis cerradas de este
+            # Sentinel como contexto para la próxima decisión. '' si flag off.
+            thesis_feedback = await self._fetch_thesis_feedback(sentinel_id)
+
             user_prompt = build_user_prompt(
                 sentinel={
                     "name":          score.get("sentinel_name") or "?",
@@ -967,6 +1077,7 @@ class UniverseSelector:
                 reason=trigger_reason,
                 portfolio_composition=portfolio_composition,
                 pending_tickers_in_watchlist=pending_tickers_in_watchlist,
+                thesis_feedback=thesis_feedback,
             )
 
             result = await self.claude.call_json(
@@ -1043,6 +1154,12 @@ class UniverseSelector:
                 f"(reason={trigger_reason}, error={notes})"
             )
             return None
+
+        # #HE-2: registrar la rotación propuesta como tesis IDEA (flag-gated).
+        await self._track_thesis_idea(
+            decision_id=decision_id, score=score, new_ticker=new_ticker,
+            reasoning=reasoning, trigger_reason=trigger_reason,
+        )
 
         # Si es warning o idle → guardar en watchlist. idle_timeout sigue el
         # mismo flujo que pre_decay_warning, pero con TTL más largo: su
