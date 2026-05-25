@@ -20,6 +20,7 @@ import logging
 import uuid
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -62,8 +63,12 @@ def _setup_logging():
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(fmt)
 
+    # Path absoluto basado en la ubicación del módulo (no en el CWD del proceso),
+    # para que el log no se fragmente si se arranca desde otra carpeta.
+    log_dir = Path(__file__).parent / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
     file_handler = RotatingFileHandler(
-        filename    = "logs/sentinel.log",
+        filename    = str(log_dir / "sentinel.log"),
         maxBytes    = 5 * 1024 * 1024,  # 5 MB
         backupCount = 3,
         encoding    = "utf-8",
@@ -352,7 +357,7 @@ async def main_loop(system: dict):
         pending_signals = []
         for i, result in enumerate(signals_raw):
             if isinstance(result, Exception):
-                logger.error(f"Sentinel[{i}] lanzó excepción: {result}")
+                logger.error(f"Sentinel {sentinels[i].name} lanzó excepción: {result}")
                 continue
             if result:
                 pending_signals.extend(result)
