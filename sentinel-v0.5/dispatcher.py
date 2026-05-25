@@ -330,12 +330,21 @@ class Dispatcher:
             logger.warning(f"Kill switch activo — señal {ticker} rechazada.")
             return {**base_result, "reason": "kill_switch_active"}
 
+        # #TD-2: validación defensiva de signal_type. Antes cualquier valor != "BUY"
+        # caía en la rama SELL (incluido "HOLD" o un typo del Sentinel), lo que podía
+        # disparar un cierre no intencionado. Solo BUY/SELL son operables en v0.5.
+        if signal_type not in ("BUY", "SELL"):
+            logger.warning(f"signal_type inválido {signal_type!r} para {ticker} — señal rechazada.")
+            return {**base_result, "reason": "invalid_signal_type"}
+
         # 2. The Ear — usar estado provisto por run_cycle o evaluar de forma independiente
         if ear_state is None:
             try:
                 ear_state = await self.the_ear.evaluate()
             except Exception as e:
-                logger.error(f"Error en The Ear al procesar {ticker}: {e}")
+                # #TD-7: si The Ear falla, el bot opera a ciegas → se veta por
+                # seguridad. Es una condición crítica (no un error recuperable más).
+                logger.critical(f"Error en The Ear al procesar {ticker}: {e}")
                 ear_state = {"can_trade": False, "risk_score": 1.0, "circuit_breaker": False, "parking_brake": False}
 
         if not ear_state["can_trade"]:
@@ -409,6 +418,11 @@ class Dispatcher:
                     f"{ticker}: sizing capeado por MAX_POSITION_PCT_OF_EQUITY → qty={qty}."
                 )
         else:
+            if str(sentinel_id) not in allocation:
+                logger.info(
+                    f"{ticker}: sentinel {sentinel_id} sin allocation asignada (warmup / "
+                    f"sin score) — usando piso MIN_CAPITAL_PER_SENTINEL={MIN_CAPITAL_PER_SENTINEL}%."
+                )
             sentinel_alloc = allocation.get(str(sentinel_id), MIN_CAPITAL_PER_SENTINEL)
             if account_equity > 0 and price > 0:
                 max_dollar_value = account_equity * Decimal(str(sentinel_alloc / 100.0))
@@ -1092,7 +1106,9 @@ class Dispatcher:
         try:
             ear_state = await self.the_ear.evaluate()
         except Exception as e:
-            logger.error(f"Error en The Ear durante run_cycle: {e}")
+            # #TD-7: The Ear caído en run_cycle → el ciclo entero opera a ciegas y
+            # se veta. Crítico, no error recuperable.
+            logger.critical(f"Error en The Ear durante run_cycle: {e}")
             ear_state = {"can_trade": False}
 
         can_trade = ear_state.get("can_trade", False)

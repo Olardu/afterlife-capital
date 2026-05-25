@@ -178,6 +178,13 @@ def test_process_signal_kill_switch():
     assert res["reason"] == "kill_switch_active"
 
 
+def test_process_signal_signal_type_invalido():
+    # #TD-2: HOLD (o cualquier valor != BUY/SELL) se rechaza, ya no cae en SELL.
+    d = _disp()
+    assert _run(_signal(d, signal_type="HOLD"))["reason"] == "invalid_signal_type"
+    d.execute_order.assert_not_awaited()
+
+
 def test_process_signal_ear_none_evaluate_falla_veta():
     d = _disp()
     d.the_ear.evaluate = AsyncMock(side_effect=RuntimeError("ear down"))
