@@ -3,3 +3,7 @@
 # Separadas de prod per BUENAS_PRACTICAS_V2 §7.5 (#FASE2-NEW).
 pytest==9.0.3
 pytest-cov==7.1.0
+# Framework de backtesting (#HE-4 / T-T): herramienta de validación on-demand
+# (paquete local backtest/, CLI python -m backtest). NO la importa el runtime del
+# bot (main.py/api.py) → dev/test, no prod. Trae bokeh/jinja2/tornado como aditivas.
+backtesting==0.6.5
