@@ -2,6 +2,18 @@
 
 Sistema de trading algorítmico multi-agente. 9 estrategias autónomas (Sentinels) coordinadas por un Dispatcher, con protecciones macro, gestión de capital Half-Kelly y persistencia en PostgreSQL. Operación en paper trading hasta validar.
 
+## Estado al 2026-05-25 — T-T Sub-1 #HE-2 Investment Thesis Tracking COMPLETO. `origin/main`=`31f0304`, HEAD `9c8893a` (ahead 8), suite 602/602
+
+**#HE-2 Investment Thesis Tracking — COMPLETO** (core). 3 commits LOCALES + migración **017 APLICADA**. Tracking estructurado de las tesis de inversión del bot: cada rotación del Universe Selector nace como tesis con state machine, y el historial cerrado realimenta el system prompt (#ME-2). FLAG-GATED (`THESIS_TRACKING_ENABLED`, default False) — Roman lo activa como **5º flag del restart del martes**. NO toca el hot-path del dispatcher; vive en el flujo de rotación (ya error-isolado + bajo timeout). El enganche es observabilidad enriquecida: registra metadata + alimenta el prompt; no altera las órdenes salvo el feedback loop (el objetivo).
+- `7573747` `investment_thesis.py` PURO (sin DB/red, 100% cobertura §8.6, 26 tests TDD): state machine `IDEA→ENTRY_READY→ACTIVE→CLOSED` (`VALID_TRANSITIONS` + `can/validate_transition`; descarte temprano IDEA/ENTRY_READY→CLOSED) · `compute_excursions` MAE/MFE LONG/SHORT desde barras OHLC ({high,low} o {close}/{price}), Decimal, clamp ≥0, % vs entry, entrada inválida→0.0 (seguro) · `compute_outcome` (win/loss/breakeven) · `summarize_theses` + `build_feedback_block`. Calcado de tax_lots/corporate_actions (DIP).
+- `a884c8a` migración **017** `investment_theses` (CREATE TABLE + 5 índices, verificado en information_schema: 26 cols, CHECK direction/state; FK a sentinels/users/rotation_decisions). DDL idempotente inline en `historian.connect()` (patrón 011/013/014/015/016) + `db/017`. historian §7.5: `save_investment_thesis` (nace IDEA) · `update_thesis_state` (transición validada con el módulo puro dentro de la tx SELECT FOR UPDATE; SET dinámico sobre allowlist; transición inválida→False sin lanzar) · `find_open_thesis` · `get_closed_theses_feedback` · `_serialize_thesis`. 14 tests.
+- `9c8893a` flag `THESIS_TRACKING_ENABLED` + `THESIS_FEEDBACK_LIMIT` (config) + enganche universe_selector: rotación propuesta→tesis IDEA; rotación ejecutada→nueva IDEA→ENTRY_READY + cierra tesis del ticker saliente; feedback loop al prompt (`build_user_prompt(thesis_feedback=...)`). `_thesis_direction` (SHORT para rsi_short/rsi_divergence). Flag-gated + try/except (nunca aborta la rotación). 14 tests.
+- Suite 548→**602** (+54 TDD). Gate CI cobertura **99.84%** (exit 0): historian/universe_selector/investment_thesis/dispatcher/main/the_ear/etc. **100%**. ruff verde. validate-workspace **0/0**.
+- **Decisión de alcance (consultada a Roman):** las funcionalidades nuevas ENTRAN A OPERAR desde el martes (a diferencia del fraccionamiento, en sombras). Por eso enganche al runtime real, flag-gated para reversibilidad.
+- **Pendiente #HE-2b (follow-up documentado, NO en este sprint):** transición ENTRY_READY→ACTIVE al primer fill (captura `entry_price`/`entry_at` — requiere hook en dispatcher, hot-path financiero) + backfill de MAE/MFE y outcome fino sobre tesis cerradas (requiere fetch de barras Alpaca sobre el holding, reusando `backtest/data.py`). Hoy el cierre setea outcome coarse desde el win_rate; el calculador MAE/MFE ya existe y está testeado, falta solo alimentarlo con barras reales.
+
+**Pendiente T-T:** Sub-3 Equity Research integración al system prompt del Universe Selector (plugin instalado ✅, NO bloqueado).
+
 ## Estado al 2026-05-25 — T-T Sub-2 #HE-4 backtesting COMPLETO. `origin/main`=`31f0304`, ahead 5 (`d21966f`..`b24ccfb`), suite 548/548
 
 **#HE-4 Framework de backtesting — COMPLETO** (paquete `backtest/`, 4 commits feat + 1 docs LOCALES, SIN migración). Herramienta de validación on-demand — **NO la importa el runtime del bot** (main.py/api.py):
@@ -136,6 +148,8 @@ Sesión T-K→T-O con Cowork. **Modelo desde LOG 04:45: commits LOCALES, sin pus
 | `universe_selector.py` | Lógica de rotación automática con Claude Sonnet 4.6 (warning/decay → propuesta → rotación). |
 | `market_clock.py` | Estado mercado NYSE (OPEN/CLOSED/PRE_MARKET/AFTER_HOURS) + holidays 2026-2027. |
 | `backtest/` | Framework de backtesting (#HE-4, dev-only). metrics/data/adapters/runner + CLI `python -m backtest`. Valida Sentinels sobre data histórica. NO runtime del bot. Ver `backtest/README.md`. |
+| `investment_thesis.py` | Módulo PURO de Investment Thesis Tracking (#HE-2): state machine IDEA→ENTRY_READY→ACTIVE→CLOSED + MAE/MFE + outcome + feedback dataset. Sin DB/red. Lo consumen historian (persistencia) y universe_selector (enganche flag-gated `THESIS_TRACKING_ENABLED`). |
+| `db/017_create_investment_theses.sql` | Migración 2026-05-25: tabla `investment_theses` (#HE-2). State machine + MAE/MFE + FK a rotation_decisions/sentinels. APLICADA. |
 
 ## 9 Sentinels operativos
 
