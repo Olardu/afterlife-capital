@@ -2,7 +2,10 @@
 
 Sistema de trading algorítmico multi-agente. 9 estrategias autónomas (Sentinels) coordinadas por un Dispatcher, con protecciones macro, gestión de capital Half-Kelly y persistencia en PostgreSQL. Operación en paper trading hasta validar.
 
-## Estado al 2026-05-24 — T-P CERRADO (9/9 módulos a 100%, gate CI a 95). 23 commits LOCALES, `origin/main`=`0242eb2`, HEAD `371a044`, suite 431/431
+## Estado al 2026-05-24 — T-P CERRADO + lint verde (9/9 a 100%, gate CI 95). 25 commits LOCALES, `origin/main`=`0242eb2`, HEAD `f56f174`, suite 431/431
+
+**Update:** `f56f174` `style(ruff)` resolvió los 15 errores ruff preexistentes (F401/F541) → **los 3 jobs del CI pasan local** (test 431/431, lint "All checks passed!", coverage exit 0 / 99.83%). Backups en `backups/2026-05-24/*_pre_ruff`. Sin bloqueadores de CI; falta solo el bundle (Cowork commitea su parte + orden de Roman).
+
 
 **T-P (cobertura ≥95% módulos críticos) — COMPLETO.** Modelo NO-push vigente. Los 9 módulos críticos a 100% (config 94%, sin target):
 - ✅ market_clock (`76db0e0`) · claude_client (`4949540`) · the_ear (`84f97e5`) · main (`d680084`) · correlation_guard (`e850432`) · universe_selector (`fbb6d64`).
@@ -11,7 +14,7 @@ Sistema de trading algorítmico multi-agente. 9 estrategias autónomas (Sentinel
 - ✅ **Gate CI** (`371a044`): `--cov-fail-under` 35→95 + `--cov=main` en `.github/workflows/ci.yml`; `docs/coverage_audit_2026-05-25.md` sección "Cierre T-P". Réplica del comando CI con gate 95 → **exit 0, TOTAL 99.83%**.
 - Patrón: bloques `if __name__=="__main__"` → `# pragma: no cover`. Loops infinitos: `asyncio.sleep` mockeado con centinela. Suite 115→431.
 
-**⚠️ BLOQUEADOR bundle push (CI job `lint`):** `ruff check .` = 16 errores PREEXISTENTES (13 F401 + 3 F541, NO de T-P) en api.py/the_ear.py/sentinels/universe_selector/claude_client/main/scripts/adopt_orphan_positions/run_adopt/test_decay_pf_rtd. 15/16 auto-fixables. El job `lint` nace ROJO hasta resolverlos — propuse commit dedicado `style(ruff)` (ver `teamwork/LOG.md`), pendiente luz verde de Roman.
+**✅ Lint verde (`f56f174`):** los 15 errores ruff preexistentes (F401/F541) en api.py/the_ear.py/sentinels/universe_selector/claude_client/main/scripts/adopt_orphan_positions/run_adopt/test_decay_pf_rtd quedaron resueltos (14 auto + 1 manual). `ruff check .` → "All checks passed!".
 
 ## Estado al 2026-05-24 — T-O COMPLETA. 11 commits LOCALES (modelo NO-push), `origin/main`=`0242eb2`, suite 115/115
 
