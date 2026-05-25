@@ -629,7 +629,7 @@ async def main():
         logger.info("=== Sentinel v0.5 — Sistema cerrado limpiamente ===")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
