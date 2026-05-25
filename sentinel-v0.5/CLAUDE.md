@@ -2,12 +2,13 @@
 
 Sistema de trading algorítmico multi-agente. 9 estrategias autónomas (Sentinels) coordinadas por un Dispatcher, con protecciones macro, gestión de capital Half-Kelly y persistencia en PostgreSQL. Operación en paper trading hasta validar.
 
-## Estado al 2026-05-24 — T-P EN CURSO (3/9 módulos a 100%). 15 commits LOCALES, `origin/main`=`0242eb2`, HEAD `84f97e5`, suite 173/173
+## Estado al 2026-05-24 — T-P EN CURSO (6/9 módulos a 100%). 19 commits LOCALES, `origin/main`=`0242eb2`, HEAD `fbb6d64`, suite 278/278
 
 **T-P (cobertura ≥95% módulos críticos) — parcial.** Modelo NO-push vigente. Cobertura por módulo:
-- ✅ **market_clock 0%→100%** (`76db0e0`, 18 tests) · ✅ **claude_client 18%→100%** (`4949540`, 15) · ✅ **the_ear 29%→100%** (`84f97e5`, 25 nuevos).
-- ⏳ Pendientes: main.py (16%), historian (27%), universe_selector (43%), dispatcher (44%), correlation_guard (44%), gate CI `--cov-fail-under=95`.
-- Patrón: bloques `if __name__=="__main__"` ejecutables → `# pragma: no cover`. Suite 115→173.
+- ✅ **market_clock 0%→100%** (`76db0e0`, 18 tests) · ✅ **claude_client 18%→100%** (`4949540`, 15) · ✅ **the_ear 29%→100%** (`84f97e5`, 25).
+- ✅ **main.py 16%→100%** (`d680084`, 47 tests, `test_main_coverage.py`) · ✅ **correlation_guard 44%→100%** (`e850432`, 16, `test_correlation_guard_coverage.py`) · ✅ **universe_selector 43%→100%** (`fbb6d64`, 45, `test_universe_selector_coverage.py`).
+- ⏳ Pendientes (orden post-reinicio decidido con Roman): **(1) historian (27%, 712 stmts — el más grande, mock asyncpg) PRIMERO con budget fresco → (2) dispatcher (44%, 498 stmts, mock Alpaca) → (3) gate CI `--cov-fail-under=95` AL FINAL** (recién con historian+dispatcher ≥95%) + actualizar `docs/coverage_audit_2026-05-25.md`.
+- Patrón: bloques `if __name__=="__main__"` ejecutables → `# pragma: no cover`. Loops infinitos: `asyncio.sleep` mockeado con centinela. Suite 115→278.
 
 ## Estado al 2026-05-24 — T-O COMPLETA. 11 commits LOCALES (modelo NO-push), `origin/main`=`0242eb2`, suite 115/115
 
