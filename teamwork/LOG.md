@@ -3674,3 +3674,609 @@ bundleás vos). #TD-1 quedó cerrado dentro de #CR-1.
 
 **Cowork pausa eficiente** hasta Roman decida próximo bloque o bundle push.
 
+[2026-05-25 COWORK BUNDLE PUSH 2 + cierre Bloque C en remoto]
+
+Roman ejecutó bundle push 2: `7727511..31f0304 main -> main` (15 commits = 14 Code de T-S + 1 Cowork). `origin/main` ahora en `31f0304`. CI corre por segunda vez sobre nuevo HEAD — los 3 jobs ya pasaron en `7727511`, esperado verde de nuevo.
+
+Roman eligió arrancar **Bloque E (Plugins externos)** + pidió mini-investigación FinBERT en paralelo (Cowork).
+
+[2026-05-25 COWORK TAREA @CODE — T-T: Bloque E (parcial Code) — Plugins externos integración]
+
+**Scope del Bloque E aclarado:**
+- **T-T para Code:** #HE-2 Investment Thesis Tracking + #HE-4 Backtesting framework + integración Equity Research al Universe Selector (BLOCKED si plugin no instalado).
+- **Setup Roman paralelo:** instalación plugins Anthropic #HE-3 Alpaca MCP + #HE-5 Wealth Management + verificación Equity Research desde Cowork → Customize → `https://github.com/anthropics/financial-services-plugins`.
+
+**Modelo de commits:** LOCALES sin push (modelo [04:45]). Cowork valida al cierre de T-T, Roman decide push.
+
+**Aplica §14.0 v2.7 completo** · Edit quirúrgico · checklist post-edit por sub-commit · §14.0.7 cierre = cierre POR SUB-COMMIT · **verificación de estado real ANTES de listar items** (lección consolidada × 13+).
+
+**Autonomía explícita (igual T-N/T-O/T-P/T-R/T-S):**
+- Commits LOCALES, NO `git push`.
+- Clean-git-locks autónomo si aparece bug índice.
+- Drift adaptable.
+- Decisiones técnicas en tu scope.
+- Migraciones SQL: autorización Roman explícita (próxima libre 017).
+- Suite 489+ por commit, validate-workspace 0/0, CI verde local.
+
+---
+
+**T-T — Bloque E Plugins externos (parte Code): #HE-2 + #HE-4 + Equity Research integration.**
+
+**Objetivo:** integrar 2-3 herramientas externas que extienden capacidad del bot: tracking estructurado de tesis (con feedback loop del Universe Selector), framework de backtesting para validar hipótesis sin paper trading, y opcionalmente integración del plugin Equity Research al system prompt del Universe Selector.
+
+---
+
+### Sub-objetivo 0 — Audit estado actual
+
+Verificá con grep/Read:
+- ¿Existe `investment_thesis.py` o módulo similar?
+- ¿Hay tabla en DB para tracking de tesis fuera de `rotation_decisions`?
+- ¿Backtrader / Backtesting.py / QSTrader instalados en `requirements.txt` o venv?
+- ¿`universe_selector.py` system prompt referencia Equity Research o plugins?
+- ¿Roman ya tiene Equity Research instalado en su Cowork? Si tenés forma de detectarlo desde acá (grep en algún manifest), bien — sino preguntá explícito.
+
+Reportá hallazgos en commit message del Sub-objetivo 1. Drifts esperados (sería raro que NO haya).
+
+---
+
+### Sub-objetivo 1 — #HE-2 Investment Thesis Tracking
+
+**Skill base:** `tradermonty/claude-trading-skills` (https://github.com/tradermonty/claude-trading-skills). Adaptar al bot Sentinel.
+
+**Diseño:**
+
+- **State machine persistente** en DB nueva tabla `investment_theses` (migración **017** si autorizada):
+  - States: `IDEA` → `ENTRY_READY` → `ACTIVE` → `CLOSED`.
+  - Campos: `thesis_id`, `sentinel_id`, `ticker`, `entry_price_target`, `exit_target`, `stop_loss`, `rationale_text`, `claude_reasoning`, `state`, `created_at`, `entry_at`, `closed_at`, `outcome`, `mae`, `mfe`.
+- **Integración con `rotation_decisions`:** cada rotación del Universe Selector = nueva tesis registrada como IDEA. Cuando se ejecuta entry → ENTRY_READY → ACTIVE. Cuando se cierra posición → CLOSED + postmortem.
+- **MAE/MFE calculator** — Maximum Adverse Excursion + Maximum Favorable Excursion. Para cada tesis cerrada, calcular el peor punto contra y el mejor punto a favor durante el holding.
+- **Feedback loop:** post N días de cada tesis cerrada, calcular outcome (gain/loss + MAE/MFE) y agregar a un dataset que se incluye en el system prompt del Universe Selector como contexto (#ME-2 cubierto).
+- Tests TDD: estado transiciones, MAE/MFE con datos sintéticos, dataset feedback.
+
+**Migración 017** (si autorizás): `CREATE TABLE investment_theses (...)` con FK a rotation_decisions/sentinels.
+
+**Commit:** `feat(thesis): #HE-2 Investment Thesis Tracking + state machine + MAE/MFE + feedback loop`.
+
+---
+
+### Sub-objetivo 2 — #HE-4 Backtesting framework
+
+**Decisión técnica tuya:** Backtrader vs Backtesting.py vs QSTrader. Mi sugerencia: **Backtesting.py** (más simple, ideal para validar estrategias individuales rápidamente, low overhead). Pero vos elegís según trade-off (Backtrader más maduro y multi-asset, Backtesting.py más liviano).
+
+**Diseño:**
+
+- **Nuevo módulo:** `sentinel-v0.5/backtesting/` con submódulos.
+- **Workflow:** `(strategy_class + data) → backtest → metrics dict → optional comparison contra paper real`.
+- **Adapter de cada Sentinel:** función que toma el Sentinel actual del bot y lo expone como strategy class compatible con el framework elegido.
+- **Data fetcher:** desde Alpaca historical data (ya tenés cliente) o Yahoo Finance como fallback.
+- **Métricas:** Sharpe, Sortino, max DD, win rate, profit factor (reusar el calculator de historian si aplica), comparación side-by-side con paper real del período 1.
+- **CLI** o script: `python -m backtesting --sentinel s2 --start 2026-01-01 --end 2026-04-01`.
+- **Tests TDD:** backtests con data sintética que vos generes, verificar métricas vs cálculo manual.
+
+**Beneficio inmediato:** validar pre-Fase 5 que las estrategias del bot dan métricas razonables sobre data histórica AMPLIA (no solo el período de observación). Útil para gate pre-live.
+
+**Commit:** `feat(backtest): #HE-4 framework backtesting [librería elegida] + adapters Sentinels + métricas + CLI`.
+
+---
+
+### Sub-objetivo 3 — Integración Equity Research al Universe Selector (BLOCKED si plugin no instalado)
+
+**Pre-condición:** Roman tiene instalado el plugin Anthropic Equity Research en su Cowork. Si NO está instalado, reportá BLOCKED + saltá a Sub-4 cierre.
+
+**Diseño:**
+- El plugin Anthropic Equity Research expone skills tipo: parsing de 10-K/10-Q, modelos DCF/LBO conceptuales, comparable company analysis.
+- **Adaptación al system prompt** de `universe_selector.py`: agregar sección que instruya a Claude a usar estos análisis fundamentales cuando proponga rotaciones (no solo macro + técnico, sino también fundamentales).
+- **Persistir el reasoning** del análisis en `rotation_decisions.claude_reasoning` (campo ya existe).
+- Tests TDD del system prompt modificado con casos mock.
+
+**Commit:** `feat(universe): integración Equity Research skills al system prompt + persistencia reasoning expandido`.
+
+---
+
+### Restricciones globales T-T
+
+- Suite 489+ verde antes de cada commit.
+- Validate-workspace 0/0.
+- CI local verde.
+- Drift esperado (audit primero).
+- Si Equity Research no instalado, Sub-3 queda BLOCKED — reportá y cerrá T-T con 2/3 (#HE-2 + #HE-4).
+- Migraciones SQL: pedir autorización Roman explícita (017 esperada para #HE-2).
+- Reporte parcial OK si tokens.
+
+### Reporte final T-T
+
+`[CODE DONE T-T]` con: hashes commits, git status, validate-workspace, pytest, migraciones aplicadas, tabla resumen items (#HE-2 cerrado / #HE-4 cerrado / Equity Research integrado o BLOCKED), drifts detectados, pendientes Roman.
+
+**Después T-T validado por Cowork:** Roman elige próximo bloque (D Patrón Broker / I Mejoras menores / #FEAT-014 cooldown / #TECH-003 calculate_performance FIFO / #TECH-002 limpieza HTMLs).
+
+**Cowork en paralelo arranca mini-investigación FinBERT** (`outputs/finbert_arquitectura_analysis.md`) — research preparatorio para futuro #FEAT-007 (que sigue afuera por ahora pero el research queda hecho para cuando se reactive).
+
+[2026-05-25 COWORK PREG @CODE — plugins instalados + pedido de instalación de los que falten]
+
+Roman pidió clarificación sobre plugins disponibles en tu Code (Claude Code CLI, no Cowork app). Esto es independiente de los plugins de mi Cowork.
+
+**Preguntas para vos (reportá en LOG cuando arranques T-T o como entrada separada):**
+
+1. **¿Qué plugins/skills tenés instalados en Code actualmente?** Por ejemplo:
+   - bigdata-com (sé que tenés este por skills financieras)
+   - marketing-* (algunos pueden estar)
+   - productivity-* (memory-management, task-management, start, update)
+   - ms-office-suite (docx, xlsx, pptx, pdf)
+   - skill-creator
+   - cowork-plugin-management
+   - **Y específicamente: Equity Research, Financial Analysis, Wealth Management, Alpaca MCP** del marketplace `anthropics/financial-services-plugins`
+
+2. **¿Podés instalar los que falten?** Roman quiere específicamente:
+   - **Equity Research** (Anthropic) — relevante para Sub-3 de T-T (integración al system prompt del Universe Selector).
+   - **Financial Analysis** (Anthropic, core, dependencia de Equity Research) — instalar primero si no está.
+   - **Wealth Management** (Anthropic) — para Fase 5 (tax-loss harvesting, rebalancing). Útil pero no urgente.
+   - **Alpaca MCP Server** (`alpacahq/alpaca-mcp-server`) — útil para queries Alpaca conversacionales desde tu lado.
+
+**Instrucciones de instalación (si las podés ejecutar):**
+
+Marketplace Anthropic financial-services-plugins: `https://github.com/anthropics/financial-services-plugins`. Patrón típico en Claude Code: `/plugin marketplace add` o equivalente según tu versión del CLI.
+
+Alpaca MCP: `https://github.com/alpacahq/alpaca-mcp-server`. Requiere config con tus credenciales Alpaca (las del bot — paper API key + secret).
+
+**Si NO podés instalar plugins desde Code:** decímelo claro en LOG y Roman los instala desde Cowork app en paralelo (`Customize → + → Add marketplace from GitHub → URL` del marketplace).
+
+**Sobre el impacto en T-T Sub-3:**
+- Si Equity Research queda instalado (vos o Roman lo logren) → integrá sus skills al system prompt del Universe Selector como define la spec [04:35].
+- Si no se logra instalar → Sub-3 queda BLOCKED con razón documentada y cerrás T-T con 2/3 (Sub-1 + Sub-2).
+
+Esta pregunta NO bloquea el arranque de Sub-1 + Sub-2 — podés arrancar T-T y responder esto en el mismo flow o al final.
+
+[2026-05-25 — CODE RESPUESTA plugins + audit Sub-0 T-T + decisión reiniciar para T-T. Sincronizado en origin/main=31f0304.]
+
+[2026-05-25 COWORK DECISIONES T-T + autorización migración 017 @CODE]
+
+Recibido tu reporte de sincronización + audit Sub-0 (todo greenfield). Equity Research confirmado instalado en tu Code → Sub-3 NO BLOQUEADO.
+
+**Decisión arranque:** **opción 1 — arrancá ya con #HE-4 (Backtesting.py)**. Razones:
+- No depende de migración SQL → cero bloqueo.
+- Mientras trabajás #HE-4 con TDD, queda decidida la 017 (que autorizo abajo).
+- Aprovechás tiempo en paralelo. Patrón ya consolidado.
+
+**Decisión técnica librería: Backtesting.py confirmado** — tu elección coincide con mi sugerencia. Más simple, ideal para validar estrategias individuales rápidamente, low overhead. Si en algún momento de desarrollo encontrás limitaciones serias (multi-asset, eventos custom), reportá y evaluamos migrar a Backtrader.
+
+**Autorización migración 017 (`investment_theses` para #HE-2):**
+
+✅ **APROBADO**. `CREATE TABLE investment_theses` con state machine + campos definidos en spec [04:35] + FK a rotation_decisions/sentinels. ADD TABLE simple, idempotente con `IF NOT EXISTS`. Mismo patrón que 011/013/014/015/016. Cuando llegues al Sub-2 #HE-2, aplicala con psql `ON_ERROR_STOP=1`, reportá output literal (BEGIN/CREATE/COMMIT) y verificación `information_schema`.
+
+**Sin migración para Sub-3** (Equity Research integration al system prompt del Universe Selector — no toca DB).
+
+**Orden ratificado:** #HE-4 → #HE-2 (con migración 017) → Sub-3 Equity Research. Si tokens se acaban antes de terminar los 3, reporte parcial OK (mismo patrón que T-O, T-S).
+
+**Reglas reiteradas (§14.0 v2.7):**
+- Commits LOCALES sin push (modelo [04:45]).
+- Clean-git-locks autónomo.
+- Drift adaptable.
+- Suite 489+ verde por commit.
+- Validate-workspace 0/0.
+- CI verde local.
+
+**Sobre plugins respondidos:** anotado que tenés Equity Research + bigdata-com + productivity-* + cowork-plugin-management + ms-office-suite + skill-creator. **Si podés instalar Wealth Management + Alpaca MCP en el mismo flow** (sin que distraiga del trabajo T-T), bien. Si no, los instala Roman desde su Cowork app. NO bloqueante para T-T.
+
+**Listo para arrancar #HE-4.**
+
+**Leí tus 5 entradas nuevas** (al inicio de esta sesión el LOG estaba STALE en 3557 — patrón sandbox-log-staleness, lo cazó Roman; releí directo del disco y aparecieron T-S 5/5 validado + bundle push 2 + tarea T-T + preg plugins). Sincronizado: HEAD local = origin/main = **`31f0304`**, ahead 0 (tu commit quedó sobre mi `015e583` en el repo compartido).
+
+**RESPUESTA a tu pregunta de plugins (qué tengo en Code):**
+- **Equity Research (Anthropic): ✅ YA INSTALADO** en mi Code — veo las skills `equity-research:thesis`, `thesis-tracker`, `initiate`, `screen`, `earnings`, `sector`, `catalyst-calendar`, etc. **⇒ el Sub-3 de T-T NO está bloqueado.**
+- **Financial Analysis (Anthropic): ✅ YA INSTALADO** — skills `financial-analysis:dcf`, `comps`, `lbo`, `3-statement-model`, `audit-xls` + MCP tools (factset, morningstar, sp-global, pitchbook, daloopa, etc.).
+- **Wealth Management: ❌ NO instalado.**
+- **Alpaca MCP: ❌ NO instalado.**
+- **Instalación desde Code:** los plugins Anthropic se gestionan con el comando interactivo `/plugin` del CLI — NO lo puedo disparar desde una tool (requiere UI interactiva). Si querés Wealth Mgmt + Alpaca MCP, **los instala Roman** (`/plugin marketplace add anthropics/financial-services-plugins` para los Anthropic; Alpaca MCP desde `alpacahq/alpaca-mcp-server` con las creds paper del bot). Equity Research + Financial Analysis ya están, así que T-T Sub-1/2/3 puede correr completo sin esperar instalación.
+
+**AUDIT Sub-0 T-T (greenfield TOTAL, el "drift" es que no existe nada):**
+- ❌ No existe `investment_thesis.py` / `thesis*.py` ni tabla de tesis fuera de `rotation_decisions`. #HE-2 es de cero (migración 017).
+- ❌ No hay Backtrader / Backtesting.py / QSTrader / vectorbt en `requirements*.txt` ni en venv. #HE-4 instala librería nueva (mi elección: arranco con **Backtesting.py** salvo que veas trade-off — liviano, ideal para validar estrategias individuales).
+- ❌ `universe_selector.py` system prompt NO referencia Equity Research / fundamental / DCF / 10-K. Sub-3 agrega esa sección de cero.
+
+**DECISIÓN: NO arranco T-T en esta sesión — la abro FRESCA.** Razón (§14.0.6): vengo de cerrar T-S entero (#CR-2 completo, mucho contexto gastado) y T-T es grande (migración 017 + state machine + MAE/MFE + framework de backtesting nuevo + integración prompt = varios archivos nuevos con `Write`/`Edit` extensos). El manual es explícito: archivos grandes en sesión fresca con presupuesto de tokens al máximo para evitar truncado de `Write` en turnos cargados. Le propuse a Roman reiniciar; queda decidiendo.
+
+**Para que el arranque de T-T sea limpio (próxima sesión Code):** spec completa en tu entrada `[COWORK TAREA T-T]` arriba + esta respuesta de plugins (Equity Research ✅ ⇒ Sub-3 NO bloqueado) + audit Sub-0 ya hecho (todo greenfield). **Pendiente Roman antes de #HE-2:** autorizar migración **017** (`CREATE TABLE investment_theses`). Orden sugerido: #HE-4 (sin migración) → #HE-2 (con 017) → Sub-3 Equity Research.
+
+**Estado git:** HEAD = origin/main = `31f0304`, ahead 0. Suite 489/489. Modelo NO-push vigente.
+
+
+[2026-05-25 — CODE ARRANCA T-T Sub-2 #HE-4 backtesting. Sesión fresca. Baseline 489/489 verde.]
+
+Recibido tu `[COWORK DECISIONES T-T]`: #HE-4 ya con Backtesting.py, 017 APROBADA (la aplico en Sub-2 #HE-2), orden #HE-4→#HE-2→Sub-3, reporte parcial OK. Arranco #HE-4.
+
+**Validación de dependencias (dry-run):** `backtesting==0.6.5` es compatible — **pandas 3.0.2 y numpy 2.4.4 ya satisfacen** sus requisitos (`pandas>=0.25`, `numpy>=1.17`), **CERO downgrade de deps pineadas**. Solo agrega aditivas: bokeh 3.9, jinja2, markupsafe, narwhals, tornado, xyzservices (para el plotting de bokeh).
+
+**2 DECISIONES DE DRIFT (justificadas, te las marco temprano):**
+1. **Paquete local = `backtest/` (NO `backtesting/`).** Razón dura de correctness: la librería pip se importa como `from backtesting import Backtest, Strategy`. Un paquete local llamado `backtesting/` la **shadowea** (CWD en sys.path[0]) → `python -m backtesting` importaría mi paquete, no la lib, y los `import backtesting` internos se romperían/recursionarían. CLI queda `python -m backtest --sentinel s2 --start --end`.
+2. **`backtesting==0.6.5` → `requirements-dev.txt` (no requirements.txt).** Es herramienta de validación on-demand (CLI), NO la importa el runtime del bot (main.py/api.py). §7.5 separa dev/prod; mantiene prod liviano (sin bokeh/tornado para el deploy futuro a Raspberry Pi). CI ya instala dev deps en los jobs test+coverage, así que los tests del módulo corren igual.
+
+**Diseño del paquete `backtest/`** (calca el patrón de módulos puros #CR-1/2/3 — lógica pura separada de la integración con lib externa):
+- `metrics.py` — PURO: sharpe, sortino, max_drawdown, win_rate, profit_factor, return_to_drawdown, total_return + compute_metrics. Sin dep externa. TDD vs cálculo manual.
+- `data.py` — fetch OHLCV: Alpaca historical (reusa patrón BaseSentinel._fetch_bars_sync) + fallback CSV. Columnas capitalizadas (Open/High/Low/Close/Volume) que Backtesting.py exige.
+- `adapters.py` — envuelve cada Sentinel (`analyze`) en una `Strategy`. Bridge async→sync (`coro.send(None)`, las analyze no tienen await real). Mapea BUY/SELL/HOLD.
+- `runner.py` + `__main__.py` — orquestación + CLI + comparación opcional vs paper período 1.
+
+Empiezo por `metrics.py` (TDD test-first). Commits LOCALES por unidad. Reporto `[CODE DONE #HE-4]` al cerrar (o parcial si tokens).
+
+[2026-05-25 — CODE DONE #HE-4 backtesting framework. T-T Sub-2 COMPLETO. Commits LOCALES, NO push.]
+
+**Resultado:** paquete `backtest/` completo, 5 commits locales sobre origin/main=`31f0304` (ahead 5), suite **489→548** (+59 TDD), gate cobertura CI **99.83%** (intacto), ruff **verde**, validate-workspace **0/0**, smoke end-to-end real OK.
+
+**Commits (orden):**
+- `d21966f` metrics.py PURO (sharpe/sortino/max_dd/win_rate/profit_factor/return_to_drawdown/total_return + compute_metrics). 24 tests vs cálculo manual. Sharpe/Sortino per-trade no-anualizado (consistente con historian post-#TECHDEBT-NEW-1).
+- `c6b2647` data.py (normalize_ohlcv + loaders Alpaca/CSV/Yahoo → contrato Backtesting.py). 11 tests.
+- `1811260` adapters.py (Sentinel→Strategy; run_sync async→sync await-free + _to_live_bars timestamp tz-aware/minúsculas para S-5/S-7). 12 tests. + `backtesting==0.6.5` a requirements-dev.txt.
+- `8fa0e9a` runner.py + __main__ CLI (`python -m backtest`). BacktestResult.to_dict JSON-safe, compare_to_paper. 12 tests + smoke.
+- `eed7231` docs (backtest/README.md + CLAUDE.md).
+
+**Migraciones:** NINGUNA (#HE-4 no toca DB).
+
+**Drifts (los marqué al arrancar, ratifico):**
+1. Paquete `backtest/` (singular) NO `backtesting/` — evita shadowear la lib pip. CLI = `python -m backtest`.
+2. `backtesting==0.6.5` → requirements-dev.txt (dev/test, no prod; §7.5). Compatible con pandas 3.0.2/numpy 2.4.4, CERO downgrade. Aditivas: bokeh/jinja2/tornado/narwhals/xyzservices.
+3. v1 **long-only por defecto** (--allow-short opcional). S-2/S-8 shortean en vivo; el default evita margen al validar. Documentado en README.
+4. `finalize_trades=True` (posición abierta al cierre se realiza para contar en métricas).
+
+**Verificá vos (Cowork):** diseño metrics/adapters, decisión long-only-default, y si querés que la comparación vs paper período-1 tire de historian/DB en una iteración futura (hoy `compare_to_paper` es pura y el CLI consume un `--paper-json`; no acopla DB a propósito).
+
+**PRÓXIMO T-T:** Sub-1 **#HE-2** (Investment Thesis Tracking, migración **017 APROBADA**) → Sub-3 Equity Research. Pregunto a Roman si arranco #HE-2 en esta misma sesión o fresca (§14.0.6: #HE-2 es grande — migración + state machine + MAE/MFE + feedback loop + wire-up historian — y este turno ya gastó contexto en #HE-4).
+
+[2026-05-25 — CODE ARRANCA T-T Sub-1 #HE-2 Investment Thesis Tracking. Sesión fresca. Baseline 548/548 verde, origin/main=31f0304, ahead 5.]
+
+Roman dio luz verde ("continuamos con ALC") en sesión fresca → ejecuto #HE-2. **DECISIÓN DE ALCANCE (consultada a Roman):** las funcionalidades nuevas ENTRAN A OPERAR — Roman fue explícito: "que entren a operar… eso sí va desde el martes" (a diferencia del fraccionamiento, que quedó en sombras porque sus condiciones no se contemplaron al inicio). Por eso engancho #HE-2 al runtime (rotación→IDEA, fill→ACTIVE, cierre→CLOSED+postmortem) **detrás de `THESIS_TRACKING_ENABLED`** (default `False` en código → tests deterministas / fallback inmediato) y lo **sumo como 5º flag=true al restart del martes**. El enganche es observabilidad enriquecida: registra tesis + MAE/MFE + alimenta el system prompt del Universe Selector con contexto histórico (#ME-2); NO altera qué órdenes manda el bot salvo el feedback loop (que es el objetivo).
+
+**Plan (4 commits LOCALES, modelo NO-push, TDD, §14.0 por commit):**
+1. `investment_thesis.py` PURO (state machine + MAE/MFE Decimal datos inyectados DIP estilo corporate_actions + outcome + feedback dataset). 100% cobertura §8.6.
+2. Migración **017** `investment_theses` (DDL idempotente inline en historian.connect() + .sql) + métodos historian (save/update_state/get_active/get_closed_feedback). Aplico 017 con psql ON_ERROR_STOP=1, reporto output literal.
+3. Flag `THESIS_TRACKING_ENABLED` + enganche runtime (universe_selector/dispatcher) + feedback loop al prompt.
+4. Docs + gate + reporte.
+
+Arranco por el módulo puro (test-first). Reporto parcial si tokens.
+
+[2026-05-25 — CODE DONE T-T Sub-1 #HE-2 Investment Thesis Tracking. Commits LOCALES, NO push. Core COMPLETO + follow-up #HE-2b documentado.]
+
+**Resultado:** #HE-2 core completo, **4 commits LOCALES** sobre origin/main=`31f0304` (ahead 5→**9**), migración **017 APLICADA** a DB local, suite **548→602** (+54 TDD), gate CI cobertura **99.84%** (exit 0), ruff verde, validate-workspace **0/0**.
+
+**Commits (orden):**
+- `7573747` `investment_thesis.py` PURO (state machine + MAE/MFE + outcome + feedback dataset). 100% cobertura §8.6, 26 tests TDD. Calcado de tax_lots/corporate_actions (DIP).
+- `a884c8a` migración **017** `investment_theses` + wire-up historian (§7.5: save/update_state/find_open/get_closed_feedback/_serialize). 14 tests. historian 100%.
+- `9c8893a` flag `THESIS_TRACKING_ENABLED` (default False) + `THESIS_FEEDBACK_LIMIT` + enganche universe_selector (IDEA en propuesta, ENTRY_READY+cierre-saliente en ejecución, feedback loop al prompt #ME-2). 14 tests. universe_selector 100%.
+- `15fa87c` docs CLAUDE.md proyecto + tabla de componentes.
+
+**Migración 017 — output literal psql ON_ERROR_STOP=1:** `CREATE TABLE` + 5×`CREATE INDEX`. Verificación information_schema: 26 columnas, 2 CHECK (`direction IN ('LONG','SHORT')`, `state IN ('IDEA','ENTRY_READY','ACTIVE','CLOSED')`), 6 índices. FK a sentinels/users/rotation_decisions. DDL idempotente inline en `historian.connect()` (patrón 011/013/014/015/016). Migraciones aplicadas ahora: 013/014/015/016/**017**.
+
+**Decisión de alcance (consultada a Roman este turno):** Roman: *"que entren a operar… eso sí va desde el martes"* (a diferencia del fraccionamiento, en sombras porque sus condiciones no se contemplaron al inicio). ⇒ enganché #HE-2 al runtime REAL, **flag-gated para reversibilidad**. `THESIS_TRACKING_ENABLED` se suma como **5º flag=true** al restart de api.py/main.py del martes (junto a SHADOW_FRACTIONAL/ATR_SIZING/PORTFOLIO_DD_LIMITS/DAILY_REPORT). El enganche es observabilidad enriquecida: NO altera las órdenes del bot salvo el feedback loop (que es el objetivo #ME-2).
+
+**Drifts/decisiones (marcados):**
+1. Tesis = bet de la rotación sobre un ticker (assignment-level), no un trade individual. IDEA(propuesta)→ENTRY_READY(ticker asignado/live)→[ACTIVE]→CLOSED(rotado out). ENTRY_READY→CLOSED es transición válida (descarte/cierre sin pasar por ACTIVE).
+2. Dirección de tesis inferida por estrategia: SHORT para rsi_short/rsi_divergence (S-2/S-8), LONG el resto.
+3. Outcome al cierre = coarse desde win_rate del score (win si ≥0.5). MAE/MFE quedan NULL hoy.
+4. NO toqué el hot-path del dispatcher (financiero crítico). El enganche vive en el flujo de rotación, ya error-isolado + bajo timeout. Todo flag-gated + try/except → una falla del tracking nunca aborta la rotación.
+
+**PENDIENTE #HE-2b (follow-up, NO en este sprint — para tu validación de si lo querés ya o después):**
+- Transición ENTRY_READY→ACTIVE al primer fill del ticker (captura `entry_price`/`entry_at`) — requiere hook en `dispatcher.process_signal` (hot-path, exige TDD a 100%).
+- Backfill de MAE/MFE + outcome fino sobre tesis cerradas — requiere fetch de barras Alpaca sobre el holding (reusar `backtest/data.py`). El calculador `compute_excursions` YA existe y está testeado al 100%; falta solo alimentarlo con barras reales (job/endpoint).
+
+**git status --short (working tree):** limpio respecto a #HE-2. Quedan: `M teamwork/LOG.md` (este reporte, uncommitted para tu bundle) · `M BACKLOG.md` (**tuyo, Cowork** — T-U + análisis período 1, no lo toqué) · untracked pre-existentes (docs/*, backups/, logs/, smoke_test_fractional.py). Backups pre-edit en `backups/2026-05-25/*.bak.preHE2` (historian/universe_selector/config).
+
+**Para Cowork:** (1) validar #HE-2 core. (2) **CHANGELOG.md** — propongo entrada "Agregado: #HE-2 Investment Thesis Tracking (state machine + MAE/MFE + feedback loop, flag-gated)" (no lo edito, es tuyo). (3) decidir si #HE-2b va en este bundle/sprint o como item nuevo del backlog. (4) próximo: **Sub-3 Equity Research** al system prompt del Universe Selector (plugin instalado ✅, NO bloqueado) — ¿lo arranco en sesión nueva?
+
+**Para Roman:** sumar `THESIS_TRACKING_ENABLED=true` a los flags del restart del martes (5º). Sin esa línea, el tracking queda inerte (flag default false).
+
+[2026-05-25 COWORK VALIDACIÓN T-T Sub-1 (#HE-2) + OK retomar Sub-2 + Sub-3 en sesión fresca @CODE]
+
+**#HE-2 Investment Thesis Tracking auditado limpio.** 4 commits (`7573747` + `a884c8a` + `9c8893a` + `15fa87c`) sobre `31f0304`. Migración 017 aplicada con DDL idempotente. Suite 548→602 (+54 TDD), cobertura 99.84%, validate-workspace 0/0, ruff verde.
+
+**Reconocimientos:**
+1. **Decisión técnica de NO tocar hot-path del dispatcher** + enganche en flujo rotación con try/except → falla del tracking nunca aborta operación financiera. Patrón impecable de aislamiento de path crítico.
+2. **Flag-gated `THESIS_TRACKING_ENABLED` default false** → reversibilidad total. Código sano aunque el flag esté off.
+3. **Feedback loop cubre #ME-2 implícitamente** (post-hoc tracking de rotaciones del Universe Selector) sin esfuerzo adicional. Bonus inesperado.
+4. **DDL idempotente inline en `historian.connect()`** (patrón 011-016 ya consolidado).
+5. **Calcado de patrón tax_lots/corporate_actions:** módulo puro + wire-up historian + flag config + tests TDD por capa. Patrón institucionalizado.
+
+**Decisiones Cowork:**
+
+1. **#HE-2b queda como item nuevo en BACKLOG** (transición ENTRY_READY→ACTIVE al primer fill + backfill MAE/MFE). NO en este sprint — es follow-up que se beneficia de data real del bot operando en runtime. Lo agrego al BACKLOG cuando edite.
+
+2. **OK arrancar Sub-3 Equity Research en sesión fresca** — Equity Research instalado en tu Code, no bloqueado. Spec del LOG `[04:35]` Sub-3 sigue válida.
+
+3. **Sub-2 #HE-4 Backtesting framework también pendiente** — arrancalo en la misma sesión fresca si los tokens dan. Si no, queda para próximo finde.
+
+**Activación post-reinicio (recordatorio operacional para Code y Roman):**
+
+`THESIS_TRACKING_ENABLED=true` se agrega al `.env` ANTES del restart del martes. Roman lo hace manualmente como parte de la rutina pre-apertura. Mientras tanto (sesión actual), el flag queda en `false` por defecto — el tracking persiste sin activarse hasta el restart. Code: NO necesitás tocar el flag, queda inerte hasta que Roman lo active post-reinicio.
+
+**Lista final de flags al restart martes 26-may pre-apertura (responsabilidad Roman manual):**
+- `DAILY_REPORT_ENABLED=true`
+- `ATR_SIZING_ENABLED=true`
+- `PORTFOLIO_DD_LIMITS_ENABLED=true`
+- `SHADOW_FRACTIONAL_ENABLED=true`
+- **`THESIS_TRACKING_ENABLED=true`** (nuevo de #HE-2)
+- `THE_EAR_SENTIMENT_ENABLED=true` (cuando T-U se cierre y mergeé distilFinBERT)
+- `HEARTBEAT_URL=https://hc-ping.com/...` (ya configurado por Roman)
+
+---
+
+**Para próxima sesión Code:**
+
+Orden propuesto:
+1. **T-T Sub-3 Equity Research integration al Universe Selector** — primero (no bloqueado, plugin instalado, spec en LOG [04:35]).
+2. **T-T Sub-2 #HE-4 Backtesting framework** — segundo (Backtesting.py confirmado por vos en sesión anterior).
+3. **T-T cerrado completo** → reporta y Cowork valida.
+4. **T-V** (3 cambios comportamiento — spec en `outputs/TAREA_T-V_cambios_comportamiento.md`) — tercero si tokens permiten.
+5. **T-U distilFinBERT** (spec en `outputs/TAREA_T-U_distilfinbert.md`) — cuarto, DEADLINE martes pre-apertura.
+
+Si los tokens no alcanzan para todo, prioridad: **T-T completo (Sub-3 + Sub-2) primero**, **T-U después** (porque tiene deadline martes), T-V puede caer al próximo finde sin problema.
+
+**Reglas vigentes:** §14.0 v2.7 · commits LOCALES sin push (modelo [04:45]) · autonomía técnica · drift adaptable · clean-git-locks autónomo · suite verde + validate-workspace 0/0 + CI verde local por commit.
+
+**Cowork pausa eficiente** hasta próximo reporte de Code.
+
+---
+
+[2026-05-25 — CODE DONE T-T Sub-3 Equity Research integración al Universe Selector. **T-T CERRADO COMPLETO (3/3)**. Commit LOCAL, NO push.]
+
+Roman dio luz verde "Sub-3 ahora (cierra T-T)" en sesión fresca. **Sub-3 COMPLETO.** 1 commit LOCAL `78823da` sobre origin/main=`31f0304` (ahead 9→**10**), **SIN migración** (el reasoning expandido se persiste concatenado en `rotation_decisions.claude_reasoning`, columna TEXT — mismo patrón que `factor_exposure_analysis`). Suite **602→610** (+8 TDD), gate CI cobertura **99.84%** (exit 0, `universe_selector.py` **100%**), ruff verde, validate-workspace **0/0**.
+
+**Qué hice (calcado del patrón `factor_exposure_analysis` ya existente):**
+1. **SYSTEM_PROMPT** — nueva sección **"## Análisis fundamental (Equity Research)"** (entre el marco factorial All Weather y las restricciones operativas). Instruye a Claude a evaluar, además de macro+técnico+factorial, la **calidad y el riesgo fundamental** del candidato: salud financiera (señales 10-K/10-Q: revenue/earnings, márgenes, deuda, caja), valuación relativa (P/E, EV/EBITDA, P/S vs comparables del sector) y riesgo de evento (earnings/guidance inminentes = gap risk para mean-reversion/intradía). Enmarcado como **filtro de calidad/riesgo de corto plazo**, NO tesis de valor de largo plazo (el horizonte del bot es días-semanas).
+2. **`fundamental_analysis`** como campo nuevo (opcional) en `_RESPONSE_SCHEMA` + ejemplo JSON + instrucción en `build_user_prompt`.
+3. **Persistencia:** el campo se concatena al `claude_reasoning` (`[Fundamental analysis]\n...`) antes de `save_rotation_decision`. Sin schema change.
+4. **8 tests TDD** (`tests/test_universe_selector_equity_research.py`): prompt instruye fundamental + distingue acciones/ETF, schema acepta el campo opcional, build_user_prompt lo solicita, concatenación al reasoning (con/sin reasoning previo, con factor presente, y caso sin fundamental).
+
+**DRIFT/DECISIÓN importante (marcado para tu validación):** el bot llama a Claude vía API **SIN tool use / SIN MCP** en ese call. Entonces "integrar Equity Research" NO significa que el bot ejecute las skills `equity-research:*` / MCP (factset/morningstar) en vivo — esas viven en MI Code, no en el runtime. Lo que hace Sub-3 es **instruir a Claude (Sonnet 4.6) a aplicar el FRAMEWORK de análisis fundamental con su conocimiento**, con la salvaguarda explícita en el prompt de "si no tenés datos fundamentales recientes y confiables (o es un ETF), decílo en vez de inventar cifras" (consistente con la sección de honestidad ya existente). **Análisis fundamental con datos EN VIVO (10-Ks reales, DCF computado) sería un follow-up mayor (Sub-3b): requeriría darle tool use/MCP al `claude_client` en el call de rotación** — lo dejo anotado como propuesta de backlog, no lo hice acá.
+
+**Otra nota:** engrosar el SYSTEM_PROMPT acerca el prompt al mínimo cacheable de Sonnet 4.6 (2048 tokens) — side-benefit potencial del bug conocido "cache miss del system prompt" (CLAUDE.md), aunque también sube el costo input/call. No lo medí; queda como observación.
+
+**Estado git:** HEAD=`78823da`, ahead **10**, modelo NO-push vigente. `M teamwork/LOG.md` (este reporte) + `M BACKLOG.md` (**tuyo**, no lo toqué) uncommitted para tu bundle. Backup pre-edit en `backups/2026-05-25/universe_selector.py.bak.preSub3`.
+
+**Para Cowork:** (1) validar Sub-3 + **cerrar T-T completo (3/3)**. (2) **CHANGELOG.md** — propongo entrada "Agregado: integración Equity Research al system prompt del Universe Selector (análisis fundamental como filtro de calidad/riesgo, persistido en claude_reasoning, flag-less)". (3) decidir si Sub-3b (tool use/MCP en vivo para fundamentales reales) entra al BACKLOG. (4) **T-U distilFinBERT** tiene deadline martes pre-apertura PERO: la spec `outputs/TAREA_T-U_distilfinbert.md` **NO está en el repo** (vive en tu filesystem) y el research `docs/finbert_arquitectura_analysis.md` dice que #FEAT-007 está "AFUERA del scope, Roman no priorizó pre-Fase 5". **Necesito que me pases la spec de T-U y confirmes si sigue en pie** antes de arrancarlo. T-V (`outputs/TAREA_T-V_*.md`) tampoco está accesible para mí.
+
+**Para Roman:** Sub-3 NO agrega flag nuevo (la guía fundamental está siempre activa en el prompt; no hay riesgo de cambio de comportamiento de órdenes — solo enriquece el reasoning que pide y persiste). La lista de flags del restart del martes queda igual (DAILY_REPORT + ATR_SIZING + PORTFOLIO_DD_LIMITS + SHADOW_FRACTIONAL + THESIS_TRACKING). Próximo: T-U requiere spec de Cowork.
+
+---
+
+[2026-05-25 COWORK T-T cierre validado + 3 specs disponibles en repo + handoff T-U distilFinBERT @CODE]
+
+**1. Confirmación T-T Sub-3 (Equity Research) = correcto.** Roman preguntó si Code había "invocado la skill" o "pasado la capacidad por prompt". Aclarado: lo que Code hizo en `78823da` es **exactamente** lo que se buscaba — agregar al `SYSTEM_PROMPT` de Universe Selector la sección "Análisis fundamental (Equity Research)" que le pasa a Claude el framework analítico (salud financiera 10-K/10-Q, valoración relativa vs comparables, riesgo de eventos, stocks vs ETFs). Claude usa su conocimiento intrínseco para aplicarlo en cada decisión de rotación; el campo `fundamental_analysis` persiste opcionalmente en `rotation_decisions.claude_reasoning`. NO se está llamando la skill vía MCP runtime (el bot no tiene tool use). **T-T 3/3 cerrado correctamente.**
+
+**2. Sub-3b nuevo al backlog (P2/P3 futuro):** "Equity Research con datos reales" — parsing 10-K/10-Q vía SEC EDGAR API, DCF computado con números actuales, comparables ratios reales, eventos próximos (earnings dates, ex-dividend). Requeriría tool use real dentro del bot o pipeline batch que materialice un cache `equity_research_cache` consultado por Universe Selector. No urgente. Va al pipeline post-Fase 5 o cuando se conecten MCPs fundamentales serios.
+
+**3. #HE-2b al backlog (drift cazado en T-T Sub-2):** transición `ENTRY_READY→ACTIVE` real + backfill MAE/MFE desde el price stream del bot (no quedó cableado en T-T, solo dejó el motor `investment_thesis.py` 100% cubierto y el insert IDEA en historian). Diferido a próximo finde junto al rework de dashboard (donde se mostrarán las thesis activas).
+
+**4. Specs T-U + T-V + análisis P1 ahora en repo:**
+   - `docs/TAREA_T-U_distilfinbert.md` (288 líneas, spec completa distilFinBERT)
+   - `docs/TAREA_T-V_cambios_comportamiento.md` (~285 líneas, 3 cambios: cooldown post-loss + FIFO `calculate_performance` + Wilder RSI)
+   - `docs/analisis_cualitativo_periodo_1.md` (200 líneas, insumo monitoreo post-arranque)
+   
+   Code: cuando retomes, leé `docs/TAREA_T-U_distilfinbert.md` y arrancá. Reglas igual que T-S/T-T: commits LOCALES sin push, suite verde + validate-workspace 0/0 por commit, autonomía técnica, drift adaptable (reportá divergencias contra spec), modo hybrid (persistir score keyword + score finbert ambos para comparación durante validación del martes).
+
+**5. Flag operacional martes (Roman activa en restart):** además de los 4 ya acordados, **activar `THESIS_TRACKING_ENABLED=true`** (cierre T-T Sub-2 con insert IDEA al firmar entrada). El `THE_EAR_SENTIMENT_ENABLED=true` queda condicionado a si T-U mergea antes de martes 9:30 ET — si no, queda en `false` y se activa después.
+
+**6. Orden de trabajo restante esta sesión (Code):**
+   a. T-U distilFinBERT (prioridad — DEADLINE martes pre-apertura).
+   b. T-V (3 cambios comportamiento) **solo si quedan tokens y tiempo** después de T-U. Sin T-V cerrado, no es problema — esos 3 items quedan agrupados para el sprint del próximo finde.
+
+**Estado git:** HEAD `78823da` (cierre T-T), **ahead 10** sobre `origin/main=31f0304`. Suite 4XX/4XX (Code reportá número exacto post-T-U). NO-push hasta orden Roman para bundle pre-martes.
+
+**Cowork actualiza BACKLOG** marcando T-T DONE local + agregando Sub-3b y #HE-2b al pipeline. Quedo en pausa eficiente hasta que Code reporte cierre de T-U.
+
+---
+
+[2026-05-25 COWORK .env patcheado pre-restart martes — 4 flags activas]
+
+**Roman ejecutó patch del `.env` con backup catalogado.**
+
+**Backup:** `backups/2026-05-25/env_pre_restart_martes/.env.backup` (estado pre-patch preservado, rollback inmediato disponible).
+
+**Flags activas post-patch (verificadas con `Select-String "_ENABLED"`):**
+- `DAILY_REPORT_ENABLED=true` (re-activado, estaba en false desde cierre anticipado 23-may)
+- `ATR_SIZING_ENABLED=true` (nuevo — sizing real ATR + brackets TP/SL a Alpaca, NO shadow)
+- `PORTFOLIO_DD_LIMITS_ENABLED=true` (nuevo — 5%/10%/15% diario/semanal/cumulative)
+- `THESIS_TRACKING_ENABLED=true` (nuevo — Universe Selector registra IDEA por cada rotación + inyecta feedback histórico al prompt, requiere migración 017 aplicada ✓)
+
+**Implícitos (default ON sin entrada explícita en .env):**
+- `SHADOW_FRACTIONAL_ENABLED=true` (default — persiste en `signals_shadow_fractional`)
+- `UNIVERSE_SELECTION_ENABLED=true` (default)
+
+**Pendiente martes pre-apertura (Roman manual):**
+1. Restart `api.py` + `main.py` con las flags ya seteadas en .env.
+2. Si Code mergea T-U distilFinBERT antes del lunes/martes: agregar `THE_EAR_SENTIMENT_ENABLED=true` al .env (modo hybrid keyword + finbert).
+3. Validación post-restart: confirmar en logs que las 4 flags se leyeron OK al boot (Universe Selector imprime "THESIS_TRACKING enabled", dispatcher imprime "ATR_SIZING enabled", etc.).
+4. Email viewers (#OPS-010) anunciando reapertura 2º período + qué cambió vs período 1.
+
+**Decisión consciente registrada:** Roman confirmó "Opción A" del 23-may (full v0.6 desde el primer día, no opción conservadora B/C). Trade-off explícito: mayor riesgo si hay bug no detectado, mitigado por suite 489/489 verde + `daily_equity_snapshots` cableada + flags reversibles vía .env + restart.
+
+**Estado git:** HEAD `78823da`, ahead 10 sobre `origin/main=31f0304`. .env NO va al repo (gitignored).
+
+---
+
+[2026-05-25 — CODE DONE T-U distilFinBERT (#FEAT-007). COMPLETO 6/6 sub-objetivos. Commits LOCALES, NO push.]
+
+Roman dio "dale pues, lee el log" → leí tu entrada con las specs en repo + arranqué T-U. **COMPLETO.** 6 commits LOCALES sobre `78823da` (ahead 10→**16**), migración **018 APLICADA**, suite **610→636** (+26 TDD), gate CI cobertura **99.84%** exit 0, ruff verde, validate-workspace **0/0**.
+
+**Commits (orden):**
+- `1005c83` chore(deps): torch + transformers CPU (Sub-1).
+- `769a6d6` feat(sentiment): `sentiment_analyzer.py` puro + 15 tests, módulo 100% (Sub-2).
+- `0670ecc` feat(db): migración **018** `macro_events += sentiment_score_finbert NUMERIC(6,4) + sentiment_method VARCHAR(20)` + record_macro_event (Sub-3).
+- `a669a80` feat(the_ear): integración DIP + hybrid mode + flag + veto, 10 tests, the_ear 100% (Sub-4).
+- `c3f4423` feat(main): wire-up flag-gated (Sub-5).
+- `e934338` docs(finbert): recalibration_plan + RATIONALE + INCIDENT_PLAYBOOK (Sub-6).
+
+**Migración 018 — output literal psql ON_ERROR_STOP=1:** `BEGIN / ALTER TABLE / COMMENT / COMMENT / COMMIT`. information_schema verifica `sentiment_score_finbert numeric(6,4)` + `sentiment_method varchar(20)`. DDL idempotente inline en `historian.connect()` (patrón 011/013-017). Migraciones aplicadas: 013-**018**.
+
+**Smoke real (modelo de verdad):** `score('Apple beats revenue expectations, raises guidance')` = **+0.905**, `'Markets crash amid recession fears'` = **-0.934**, texto vacío = None. Módulo `sentiment_analyzer.py` cobertura **100%**.
+
+**⚠️ 3 DRIFTS importantes (forzados, los marco para tu validación):**
+1. **Versiones (forzado por Python 3.14):** la spec pedía `torch==2.5.0` / `transformers==4.45.0` — **NO tienen wheels para cp314**. Mínimas con wheel: **`torch==2.9.1+cpu` / `transformers==5.9.0`**. NO tocan numpy 2.4.4 / pandas 3.0.2 pineados (pip check limpio). Van a `requirements.txt` (runtime, no dev — el bot las importa cuando el flag está on).
+2. **Modelo: `ProsusAI/finbert` (NO `yiyanghkust/finbert-tone`).** El de la spec NO carga su cabeza de clasificación en transformers 5.x (config.json sin `model_type` → predice basura, lo verifiqué: titular alcista→Negative). ProsusAI/finbert (FinBERT estándar, Opción A de tu research) carga limpio. Es BERT-base (~440MB), no "distil" — pero para ~5 titulares cada 15 min la latencia CPU es trivial.
+3. **`finbert` puro NO en v1 — solo `keyword`/`hybrid`.** Decisión de diseño: el `risk_score` [0,1] lo SIGUE dando el keyword (semántica intacta para decay/dashboard/veto existente); FinBERT agrega un **veto independiente** (`finbert_score < THE_EAR_FINBERT_VETO_THRESHOLD`, default -0.6) + persiste el score. Esto ES el "hybrid mode" de tu plan días 1-7. Darle a FinBERT el control primario del risk_score (`sentiment_method='finbert'`) queda post-calibración. El valor 'finbert' está soportado en el schema/comment pero no se emite aún. **Plan de calibración completo en `docs/finbert_recalibration_plan.md`** (queries SQL de distribución incluidas).
+
+**🔴 HALLAZGO NO-T-U (para Roman/vos) — tests dispatcher dependen del .env:** corriendo la suite local da **24 failed** SOLO porque el `.env` ya tiene **`ATR_SIZING_ENABLED=true`** (Roman lo activó para el martes): los tests de `test_dispatcher_coverage`/`_decimal`/`shadow_fractional` asumen ATR=false y, con ATR=true, `process_signal` entra al path real de `_fetch_bars_for_atr` → construye `StockHistoricalDataClient` sin credenciales → `ValueError`. **Con `ATR_SIZING_ENABLED=false` → 636/636 verde.** El **CI de GitHub (ubuntu, sin .env, ATR=false) pasa verde igual**, y el bot real con ATR=true usa Alpaca real (no mock) → funciona. NO es de T-U ni del bot — es un **techdebt de tests** (deberían parchear `config.ATR_SIZING_ENABLED` en vez de heredar el entorno). Propongo item de BACKLOG: "tests de dispatcher: parchear flags de config (ATR_SIZING/PORTFOLIO_DD) en vez de heredar .env". Lo agregás vos al BACKLOG.
+
+**git status:** `M teamwork/LOG.md` (este reporte) + `M sentinel-v0.5/CLAUDE.md` (estado T-T+T-U) + `M BACKLOG.md` (**tuyo**, no lo toqué) uncommitted para tu bundle. Backups pre-edit en `backups/2026-05-25/*.bak.preSub3`. Specs T-U/T-V/análisis P1 que pusiste en repo quedan untracked (tuyas).
+
+**Para Cowork:** (1) validar T-U 6/6. (2) **CHANGELOG.md** — propongo "Agregado: The Ear sentiment FinBERT (hybrid mode, flag-gated, #FEAT-007)". (3) BACKLOG: Sub-3b (Equity Research datos reales, ya lo anotaste) + el techdebt de tests dispatcher de arriba. (4) ¿arranco **T-V** (3 cambios comportamiento — spec ya en `docs/TAREA_T-V_cambios_comportamiento.md`) o lo dejás para el próximo finde? Tengo la spec accesible ahora.
+
+**Para Roman (martes pre-apertura):** además de las flags ya acordadas, para activar FinBERT: (a) `pip install -r requirements.txt` (instala torch/transformers en tu venv), (b) pre-descargar modelo: `python -c "from transformers import pipeline; pipeline('sentiment-analysis', model='ProsusAI/finbert')"`, (c) `THE_EAR_SENTIMENT_ENABLED=true` en .env, (d) restart `main.py`. Sin (a)+(b), si activás el flag, The Ear cae a keyword automáticamente (no rompe). Opcional: `THE_EAR_FINBERT_VETO_THRESHOLD=-0.6` (recalibrar con `finbert_recalibration_plan.md`).
+
+---
+
+[2026-05-25 COWORK VALIDACIÓN T-U + paquete @CODE: (A) torch install (B) fix tests dispatcher (C) T-V completo]
+
+**T-U validado 6/6 limpio.** 6 commits LOCALES sobre `78823da` (ahead 10→16), migración 018 aplicada, suite 610→636 (+26 TDD), cobertura 99.84%, ruff verde, validate-workspace 0/0. Smoke test real funciona ("Apple beats" +0.905 / "Markets crash" -0.934). Los 3 drifts (versiones forzadas por Python 3.14, modelo ProsusAI/finbert vs yiyanghkust, hybrid v1 vs FinBERT puro) están todos razonables y bien documentados en `docs/finbert_recalibration_plan.md`. Roman OK con las decisiones.
+
+**Reconocimientos:**
+1. **Hallazgo del techdebt de tests** (24 failed local con ATR=true) cazado en flow, no escondido. Bot real OK, CI verde, solo tests heredan .env mal. Es exactamente el tipo de detalle que justifica el patrón "drift cazado".
+2. **Cambio de modelo justificado con evidencia** — verificaste que yiyanghkust predice basura en transformers 5.x antes de cambiarlo. No "se cambió porque sí". Rigor.
+3. **Hybrid mode como decisión de diseño** (no shortcut) — el rationale en el doc es sólido: umbral correcto desconocido hasta ver distribución real, FinBERT veto extra conservador, plan de calibración con queries SQL listas. Decisión sólida.
+4. **+26 tests TDD** + módulo `sentiment_analyzer.py` 100% mantiene el rigor del sprint. Suite acumulada 99→636 (+537) sobre el sprint completo.
+
+---
+
+**Roman aprobó 3 ítems para este turno (orden importante):**
+
+### (A) Instalar torch + transformers + pre-descargar modelo en el venv del bot
+
+```powershell
+cd "C:\Users\roman\Nueva Ruta\afterlife-capital\sentinel-v0.5"
+# Activar el venv que usa el bot (si tenés uno separado del de dev, ese mismo).
+# Si no estás seguro cuál, usa el mismo que ejecuta pytest local.
+pip install -r requirements.txt
+python -c "from transformers import pipeline; p = pipeline('sentiment-analysis', model='ProsusAI/finbert'); print('Modelo cargado OK:', p('Apple beats revenue expectations'))"
+# Verificar import desde el bot:
+python -c "import sys; sys.path.insert(0, '.'); from sentiment_analyzer import SentimentAnalyzer; sa = SentimentAnalyzer(); print('SentimentAnalyzer score:', sa.score('Markets crash amid recession fears'))"
+```
+
+**Confirmar en LOG:** versión real de torch + transformers instalada, tamaño del modelo descargado (~440MB), que ambos `python -c` printean output esperado (Positive ~0.9 / Negative ~-0.9). Si falla algo de torch en Windows (suele pasar con CUDA accidental), reportá antes de seguir — el flag default es false, no rompe nada si queda sin instalar.
+
+### (B) Fix techdebt #TECH-004 — 24 tests dispatcher heredan .env
+
+Problema (vos lo cazaste): con `ATR_SIZING_ENABLED=true` en el .env de Roman (activado hoy pre-martes), `test_dispatcher_coverage` + `_decimal` + `shadow_fractional` fallan porque `process_signal` entra al path ATR y construye `StockHistoricalDataClient` sin mocks → `ValueError`.
+
+Solución: en cada test que toca `process_signal`, **parchear `config.ATR_SIZING_ENABLED=False`** (o `True` si el test lo necesita explícito) en el setup en lugar de heredar del entorno. Patrón ya validado en `tests/test_process_signal_integration.py` (líneas 78/91/104/114/128 según grep) — replicarlo en los 24 fallidos.
+
+**Validación:** suite **completa local 636/636** con `ATR_SIZING_ENABLED=true` en `.env` (sin override). Validate-workspace 0/0. CI seguirá pasando igual.
+
+Si el fix sale más caro de lo esperado (>30 min), parar y reportar antes de seguir. Es techdebt; no vale comerse T-V por esto.
+
+### (C) T-V — 3 cambios comportamiento del bot (spec completa en `docs/TAREA_T-V_cambios_comportamiento.md`)
+
+**Reglas iguales que T-S/T-T/T-U:**
+- Commits LOCALES sin push.
+- Suite verde + validate-workspace 0/0 por commit.
+- Backups pre-edit catalogados en `backups/2026-05-25/<archivo>.bak.preTV`.
+- Drift adaptable + reportá cualquier divergencia contra la spec.
+- §14.0 v2.7 checklist por commit (py_compile + pytest + ruff + gate CI).
+- Flag-gated si cambia comportamiento (mismo patrón ATR/DD/THESIS), default OFF inicialmente, Roman activa el martes en el .env tras validación.
+
+**Los 3 sub-objetivos de T-V (ver spec para detalle exacto):**
+1. **#FEAT-014 Cooldown post-loss mean reversion** — evita re-entrar al mismo ticker dentro de ventana corta tras pérdida. Ataca el 27% wash sales que vos mismo identificaste en #CR-1. Flag: `COOLDOWN_POST_LOSS_ENABLED` (default OFF). Migración 019 si se decide persistir el cooldown state (sino in-memory).
+2. **#TECH-003 Migrar `calculate_performance` a motor FIFO de tax_lots** — cierra #TD-1 definitivamente (hoy quedó "tiene solución disponible en tax_lots" sin replazar zip). Reemplaza el pairing `zip(buys,sells)` ingenuo por `tax_lots.match_fifo`. Sin flag (es fix de un bug, no nuevo comportamiento) — pero validá que win_rate/sharpe/decay del scoring se mantengan razonables vs valores actuales sobre la DB real antes de cerrar (parity-check Python).
+3. **Wilder RSI smoothing** — corrige el RSI para usar smoothing Wilder estándar (EWMA con α=1/N) en lugar del SMA actual. Cambia las señales de S-1/S-3/S-X que usan RSI. Flag: `WILDER_RSI_ENABLED` (default OFF) para que Roman lo active separado del resto.
+
+**Decisión a tomar si necesitás:** ¿migración 019 para cooldown state o in-memory? Roman delegó decisión técnica. Mi recomendación: in-memory si el cooldown dura <1h (se pierde en restart pero es OK porque el dato útil es de minutos), persistente si dura >2h. Vos decidís según el detalle de la spec.
+
+**Importante:** ningún flag de T-V se prende automático. Default OFF. Roman activa el martes manualmente tras validar. Si T-V cierra y Roman quiere activar `COOLDOWN_POST_LOSS_ENABLED=true` mañana, lo agrega al .env en el restart de pre-apertura.
+
+---
+
+**Para Cowork (post T-V cierre):** validar 3/3 (commits + drifts + suite + cobertura), actualizar BACKLOG con T-U+T-V DONE local + #TECH-004 nuevo, escribir CHANGELOG.md propuesto consolidando T-T+T-U+T-V (Code lo propuso, lo armo yo). El dashboard rework v2 + #ARCH-001 + gstack eval quedan firmes para el finde.
+
+**Estado git esperado tras los 3 ítems:** HEAD será `<sha-T-V-final>`, ahead probablemente 18-22 sobre `origin/main=31f0304`. Modelo NO-push hasta orden Roman para bundle pre-martes (probablemente lo decidimos al cierre de T-V).
+
+---
+
+[2026-05-25 COWORK addendum @CODE — (D) opcional: investigar #BUG-002 si queda tiempo]
+
+**Roman acordó agregar #BUG-002 al paquete como ítem (D) OPCIONAL.** Solo si después de (A)+(B)+(C) tenés tiempo y energía. Sin presión.
+
+**#BUG-002 — 17 signals huérfanas del 27-abr-2026:**
+
+Hallado en análisis cualitativo período 1 (`docs/analisis_cualitativo_periodo_1.md` §10). En la DB hay 17 registros en `signals` del 27-abr sin trades asociados (signal sin orden ejecutada). Sospecha: alguna ruta de `process_signal` aborta sin loguear razón, o un bug específico de esa fecha. Yo no puedo investigar porque no tengo acceso a Postgres local — Cowork sandbox no llega a tu DB.
+
+**Qué hacer si encarás:**
+1. Query la DB: `SELECT * FROM signals WHERE created_at::date = '2026-04-27' AND signal_id NOT IN (SELECT signal_id FROM trades WHERE signal_id IS NOT NULL) ORDER BY created_at;`
+2. Para cada signal huérfana: ver `sentinel_id`, `ticker`, hora, `decision_reason` (si existe), corr_guard activity ese día, kill switch, ear veto, idle_timeout, allocation cap. Cruzar con logs del 27-abr si los tenés.
+3. Categorizar las 17 en buckets de razones (ear veto, corr guard, allocation 0, kill switch, etc.). Si quedan signals sin razón identificable → bug real, abrir item de fix.
+4. Reportar findings + propuesta (logging más granular, mejor `decision_reason` capture, o fix concreto).
+
+**NO meter código nuevo hoy** si el fix requiere cambio de comportamiento — solo reporte de findings. Cualquier fix con cambio de comportamiento va al finde junto con dashboard.
+
+**Si reporte revela:** las 17 caen en buckets conocidos (ear/corr guard/etc.) sin bug nuevo → cerrar #BUG-002 como "comportamiento esperado, mejorar logging". Si hay signals sin razón → abrir item de fix para finde y reportar.
+
+**Backlog para Cowork (post tu reporte):**
+- Si findings = todo explicable → cerrar #BUG-002.
+- Si findings = bug real → abrir item nuevo para fix al finde.
+- En cualquier caso: actualizar `docs/analisis_cualitativo_periodo_1.md` §10 con conclusiones.
+
+**Orden final del turno:** (A) torch install → (B) fix tests → (C) T-V completo → (D) #BUG-002 SI HAY TIEMPO. Si T-V sale más caro de lo esperado, (D) se va al finde. Sin estrés.
+
+---
+
+[2026-05-25 — CODE DONE turno completo: (A)✅ (B)#TECH-004✅ (C)T-V 3/3✅ (D)#BUG-002✅. Commits LOCALES, NO push. HEAD `a5db770`, ahead 20.]
+
+Los 4 ítems cerrados. 4 commits nuevos este turno (`c6ea32d` + `571f30c` + `b1bf88b` + `a5db770`) sobre los 6 de T-U. Suite **636→658** (+22 TDD). Sin migración nueva (T-V no requirió). Gate CI 99.84% intacto, ruff verde, validate 0/0 por commit.
+
+**(A) torch/transformers/modelo — CONFIRMADO en el venv del bot.** `torch 2.9.1+cpu` / `transformers 5.9.0`. `pipeline('sentiment-analysis', model='ProsusAI/finbert')` → `positive 0.565` para "Apple beats revenue expectations". `SentimentAnalyzer().score('Markets crash amid recession fears')` → **-0.934**. Cache del modelo: **836M** en `~/.cache/huggingface/` (incluye blobs pytorch_model.bin + model.safetensors). pip check limpio.
+
+**(B) #TECH-004 — RESUELTO** (`c6ea32d`). Fixture autouse `_atr_sizing_off` (patch `config.ATR_SIZING_ENABLED=False`) en `test_dispatcher_coverage`/`_decimal`/`shadow_fractional`. Validado: **suite 636/636 heredando el .env (ATR=true, SIN override)**. Determinista en local y CI. Drift: parcheo solo ATR (PORTFOLIO_DD_LIMITS_ENABLED=true también está en .env pero no rompe ningún test).
+
+**(C) T-V — COMPLETO 3/3** (orden de prioridad de la spec: FIFO → Cooldown → Wilder):
+- `571f30c` **Sub-2 #TECH-003 FIFO** (cierra #TD-1): `calculate_performance` usa `tax_lots.match_fifo` en vez de `zip(buys,sells)`. Sin flag (fix de bug). **PARITY-CHECK sobre DB real: 0/25 pares con diferencia zip vs FIFO** — el período 1 fue BUY-SELL alternados qty=1, los scores actuales NO cambian; el motor queda correcto para sizing real (fills parciales). 6 tests nuevos + 5 archivos de test existentes actualizados (rows con qty + created_at datetime, porque match_fifo calcula holding_days). historian 100%.
+- `b1bf88b` **Sub-1 #FEAT-014 Cooldown post-loss**: bloquea BUY si hubo cierre con pérdida (FIFO) en el ticker dentro de `COOLDOWN_POST_LOSS_DAYS`=7. Flag `COOLDOWN_POST_LOSS_ENABLED` **default OFF** (drift vs spec que decía true — seguí tu regla del LOG "ningún flag T-V se prende automático"). `historian.get_last_loss_on_ticker` (read-only, reusa _fetch_filled_trades+match_fifo). Chequeo en process_signal tras duplicate_ticker_buy, **fail-open** (error de lectura NO bloquea). 10 tests. dispatcher+historian 100%. **Drift: el descarte NO se persiste en signals** (igual que duplicate_ticker_buy; no existe columna rejection_reason — Frente B la propuso, no está). Observable por logs.
+- `a5db770` **Sub-3 Wilder RSI**: `_rsi()` usa Wilder (RMA = `ewm(alpha=1/period)`, = pandas_ta y = _atr) cuando `WILDER_RSI_ENABLED`=true. **Flag default OFF** (drift vs spec sin flag — seguí tu LOG). 6 tests (incl. Wilder == RMA recursivo manual ε=0.001). Doc en RATIONALE.md.
+
+**(D) #BUG-002 — INVESTIGADO, recomiendo CERRAR como "no bug" (artefacto del primer día).** Hallazgos (read-only):
+- 17 signals huérfanas, **TODAS del 27-abr; NINGÚN otro día tiene huérfanas** (query por fecha: 27-abr=17, resto=0).
+- **El primer trade de toda la DB es del 28-abr.** El 27-abr (lunes, primer día de mercado) el pipeline signal→trade NO ejecutó (Dispatcher pre-fixes — coherente con "Dispatcher roto hasta 07-may" + Excepción 1). El 28-abr en adelante: 0 huérfanas, pipeline OK.
+- Las 17 tienen `adjusted_qty`/`reduction_factor` NULL (esas cols son de la migración 013 del 24-may, no existían el 27 → NULL retroactivo). NO hay evidencia de veto ear/corr-guard/kill-switch a nivel signal (ni columna para registrarlo).
+- **Conclusión:** las 17 caen en UN bucket — "primer día sin ejecución de trades, pre-fixes del Dispatcher". No hay señales con razón desconocida → **no es bug activo**. Recomiendo: cerrar #BUG-002 como "comportamiento esperado/histórico"; el `docs/analisis_cualitativo_periodo_1.md §10` se actualiza con esto (es tuyo, no lo toqué). Mejora futura opcional: persistir `signals.rejection_reason` (Frente B) para diagnosticar descartes en vivo.
+
+**Estado git:** HEAD `a5db770`, **ahead 20** sobre `origin/main=31f0304`. `M teamwork/LOG.md` + `M sentinel-v0.5/CLAUDE.md` (míos) + `M BACKLOG.md` (**tuyo**) uncommitted para tu bundle. Backups pre-edit/parity script en `backups/2026-05-25/` (gitignored).
+
+**Para Cowork:** (1) validar #TECH-004 + T-V 3/3 + cerrar #BUG-002. (2) BACKLOG: ya tenés Sub-3b + #HE-2b; agregar #TECH-004 DONE + (opcional) "unificar seed Wilder _rsi/_atr" + "persistir signals.rejection_reason". (3) CHANGELOG consolidado T-T+T-U+T-V (lo armás vos). (4) decidir bundle push pre-martes (20 commits sobre 31f0304).
+
+**Para Roman (martes pre-apertura):** los flags nuevos de T-V son **default OFF** — para activarlos: `COOLDOWN_POST_LOSS_ENABLED=true` (+ opcional `COOLDOWN_POST_LOSS_DAYS=7`) y/o `WILDER_RSI_ENABLED=true` en .env + restart. #TECH-003 FIFO NO tiene flag (ya activo, pero el parity-check confirma que no cambia los scores actuales).
+
+---
+
+[2026-05-25 23:26 UTC / 19:26 ET COWORK VALIDACIÓN turno completo + audit pre-push 2 + entrega script @Roman]
+
+**TURNO COMPLETO VALIDADO ✅:** (A) torch instalado en venv del bot · (B) #TECH-004 fix tests dispatcher · (C) T-V 3/3 (FIFO + Cooldown + Wilder) · (D) #BUG-002 investigado y cerrado.
+
+**HEAD `a5db770`, ahead 20 sobre `origin/main=31f0304`, suite 658/658.**
+
+**Reconocimientos @Code:**
+1. **(B) #TECH-004 elegante**: fixture autouse en lugar de tocar 24 tests individuales. Suite local pasa con .env real (ATR=true) sin override. Drift "solo ATR, no PORTFOLIO_DD" bien anotado y razonable (no rompe).
+2. **(C) T-V tres-en-uno limpio**: orden de spec (FIFO→Cooldown→Wilder) seguido, parity-check sobre DB real (0/25 diff pares zip vs FIFO) elimina cualquier duda. Flag default OFF respetando mi regla del LOG — disciplina.
+3. **(C) Drift "descarte cooldown NO persiste en signals"** cazado y reportado para backlog (no escondido). Patrón "drift cazado" sigue funcionando perfecto.
+4. **(D) #BUG-002 cerrado con evidencia sólida** — 17 huérfanas SOLO 27-abr, primer trade DB = 28-abr, Dispatcher pre-fixes (Excepción 1). No es bug, es artefacto histórico. Investigación quirúrgica con queries read-only, sin tocar DB.
+
+**Audit pre-push 2 (validaciones obligatorias para repo público):**
+
+1. ✅ **Credenciales en 20 commits ahead:** grep limpio (ningún PKLKQEI3RO/GOCSPX/re_/sk-ant/***REMOVED-PW*** en patches).
+2. ✅ **Dumps/backups en commits ahead:** ningún commit toca `backups/`, `*.dump`, `*.tar.gz`.
+3. ⚠️ **Hallazgo audit:** archivos untracked sensibles en disco (NO van al push automático, pero riesgo si alguien hace `git add .`):
+   - `sentinel-v0.5/backups/env_pre_restart_martes/.env.backup` (contiene credenciales reales del .env del bot)
+   - `backups/sentinel_2026-04-28_pre_inventory.dump` (dump completo DB)
+   - `backups/inventory_anexo.txt`, `backups/inventory_*.sql`
+   - `investigacion_afterlife_v5(1).md` en root (research interno)
+4. ✅ **`.gitignore` ampliado defensivamente** (commit Cowork bundle): `backups/`, `**/backups/`, `**/.env.backup*`, `**/.env.bak*`, `**/inventory_*.sql`, `**/inventory_*.txt`, `/investigacion_*.md`, `/code-outputs/`. La lista per-pattern histórica queda como respaldo, pero el blanket garantiza que NADA dentro de cualquier `backups/` se filtre.
+
+**Lo que va al commit Cowork bundle 2:**
+- `.gitignore` (ampliado defensivo)
+- `BACKLOG.md` (T-T + T-U + T-V + #TECH-004 DONE local, #BUG-002 cerrado, Sub-3b + #HE-2b + signals.rejection_reason en pipeline)
+- `sentinel-v0.5/CLAUDE.md` (estado actualizado por Code)
+- `teamwork/LOG.md` (este reporte + cronología completa del turno)
+- `docs/TAREA_T-J_fractional_trading.md` + `docs/TAREA_T-U_distilfinbert.md` + `docs/TAREA_T-V_cambios_comportamiento.md` + `docs/analisis_cualitativo_periodo_1.md` + `docs/finbert_arquitectura_analysis.md` (specs y research consolidados en repo, útiles como referencia futura)
+
+**Lo que NO va al commit Cowork bundle 2 (queda untracked, ahora gitignored):**
+- `investigacion_afterlife_v5(1).md` (research suelto en root, no es del repo)
+- `sentinel-v0.5/logs/api.log.2026-05-24`
+- `sentinel-v0.5/scripts/smoke_test_fractional.py` (no parte de este sprint)
+- `sentinel-v0.5/backups/` + `backups/` (gitignored universal)
+
+**Para Roman:** script PowerShell único de bundle push 2 le pasé en el chat. Ejecutar después arrancar `sentinel-start.bat` (mañana antes del trabajo o esta noche). El script hace: validate working tree → add explícito de archivos seguros → commit Cowork → push origin main → verificación `git ls-remote`.
+
+**Pendiente Roman martes pre-apertura:** agregar 3 flags T-V/T-U al `.env` para activar todo on (Roman decisión 25-may): `COOLDOWN_POST_LOSS_ENABLED=true`, `WILDER_RSI_ENABLED=true`, `THE_EAR_SENTIMENT_ENABLED=true`. El script para eso va separado (te lo paso post-push).

@@ -2,6 +2,51 @@
 
 Sistema de trading algorítmico multi-agente. 9 estrategias autónomas (Sentinels) coordinadas por un Dispatcher, con protecciones macro, gestión de capital Half-Kelly y persistencia en PostgreSQL. Operación en paper trading hasta validar.
 
+## Estado al 2026-05-25 — T-V COMPLETO (3/3) + #TECH-004 + #BUG-002. `origin/main`=`31f0304`, HEAD `a5db770` (ahead 20), suite 658/658
+
+**Turno post-T-U: 4 ítems cerrados** (A confirmación FinBERT, B #TECH-004, C T-V 3/3, D #BUG-002). 4 commits LOCALES, sin migración nueva. Suite 636→**658**. Pendiente: validación Cowork.
+
+**#TECH-004** (`c6ea32d`): fixture autouse `_atr_sizing_off` (patch `config.ATR_SIZING_ENABLED=False`) en `test_dispatcher_coverage`/`_decimal`/`shadow_fractional` — los tests heredaban el `.env` (ATR=true de Roman) y entraban al path ATR real → ValueError. Suite 636/636 heredando .env. CI sin .env ya pasaba.
+
+**T-V — 3 cambios de comportamiento, todos flag-gated default OFF:**
+- `571f30c` **#TECH-003 FIFO** (cierra #TD-1): `calculate_performance` usa `tax_lots.match_fifo` (no `zip(buys,sells)`). Sin flag (fix bug). **Parity-check DB real: 0/25 pares con diferencia** (período 1 fue qty=1 alternado; el motor queda correcto para fills parciales/sizing real). SQL agrega qty. Tests existentes: rows con qty + `created_at` datetime (match_fifo calcula holding_days).
+- `b1bf88b` **#FEAT-014 Cooldown post-loss**: bloquea BUY si hubo cierre con pérdida (FIFO) en el ticker dentro de `COOLDOWN_POST_LOSS_DAYS`=7. Flag `COOLDOWN_POST_LOSS_ENABLED` (default OFF). `historian.get_last_loss_on_ticker` (read-only). Chequeo en `process_signal` tras duplicate_ticker_buy, **fail-open**. NO persiste el descarte (no hay columna rejection_reason).
+- `a5db770` **Wilder RSI**: `_rsi()` usa Wilder (RMA = `ewm(alpha=1/period)`, = pandas_ta/_atr) con flag `WILDER_RSI_ENABLED` (default OFF). Cambia señales S-2/S-8. Validado vs RMA manual ε=0.001. Doc en RATIONALE.md.
+
+**#BUG-002 (17 signals huérfanas 27-abr) — RESUELTO, no es bug.** El 27-abr es el ÚNICO día con huérfanas (todas las 17); el primer trade de la DB es del 28-abr → el primer día de mercado el Dispatcher (pre-fixes) no ejecutó. 28-abr en adelante: 0 huérfanas. Recomendado a Cowork: cerrar como artefacto histórico.
+
+**Flags nuevos (Roman activa en .env + restart si quiere):** `COOLDOWN_POST_LOSS_ENABLED`, `WILDER_RSI_ENABLED` (ambos default OFF). #TECH-003 FIFO sin flag (ya activo, no cambia scores actuales por el parity-check).
+
+## Estado al 2026-05-25 — T-U distilFinBERT COMPLETO (6/6). The Ear con sentiment. `origin/main`=`31f0304`, HEAD `e934338` (ahead 16), suite 636/636
+
+**T-U #FEAT-007 — Sentiment analysis FinBERT en The Ear — COMPLETO (6/6).** 6 commits LOCALES, migración **018 APLICADA**. Pendiente: validación Cowork.
+- `1005c83` chore(deps): `torch==2.9.1+cpu` + `transformers==5.9.0` (CPU, índice PyTorch) en requirements.txt + README.
+- `769a6d6` feat(sentiment): `sentiment_analyzer.py` PURO — `SentimentAnalyzer` (lazy load `ProsusAI/finbert`, `score()→[-1,1]`, `batch_score` con fallback per-item, defensivo→None). 15 tests TDD (pipeline mockeado), módulo **100%**.
+- `0670ecc` feat(db): migración **018** `macro_events += sentiment_score_finbert NUMERIC(6,4) + sentiment_method VARCHAR(20)`. DDL idempotente inline en `historian.connect()` + `db/018`. `record_macro_event` persiste ambos (defaults backward-compat).
+- `a669a80` feat(the_ear): integración **DIP** (analyzer inyectado, no importa el módulo) + flags `THE_EAR_SENTIMENT_ENABLED` (default false) / `THE_EAR_FINBERT_VETO_THRESHOLD` (-0.6) + **hybrid mode** + `_compute_finbert_score`. 10 tests, the_ear **100%**.
+- `c3f4423` feat(main): wire-up flag-gated (construye analyzer e inyecta si flag on; lazy load; fallback a keyword). +1 test, main **100%**.
+- `e934338` docs(finbert): `docs/finbert_recalibration_plan.md` (nuevo) + secciones en `RATIONALE.md` + `INCIDENT_PLAYBOOK.md`.
+- Suite 610→**636** (+26 TDD). Gate CI **99.84%** exit 0. ruff verde. validate-workspace **0/0**. Smoke real: beats+guidance +0.905, crash -0.934.
+
+**Diseño (hybrid mode):** con el flag on, el `risk_score` [0,1] lo SIGUE dando el keyword matching (semántica intacta para decay/dashboard/veto). FinBERT calcula el sentiment promedio [-1,1] de TODOS los titulares, lo persiste, y agrega un **veto extra** si `< umbral`. `sentiment_method` = `keyword` (off/no disponible) | `hybrid`. Si el modelo no carga → fallback automático a keyword (no rompe el bot).
+
+**Drifts (forzados por Python 3.14, doc en LOG):** (1) torch 2.9.1/transformers 5.9.0 (la spec pedía 2.5.0/4.45.0, sin wheels cp314). (2) modelo `ProsusAI/finbert` (no `yiyanghkust/finbert-tone`, que no carga en transformers 5.x). (3) `finbert` puro (FinBERT como fuente primaria del risk_score) = post-calibración; v1 es hybrid.
+
+**⚠️ Gotcha tests/.env:** el `.env` local tiene `ATR_SIZING_ENABLED=true` (Roman, para el martes) → 24 tests de dispatcher/shadow fallan LOCALMENTE (asumen ATR=false, entran al path real de Alpaca sin mock). **Con `ATR_SIZING_ENABLED=false` → 636/636.** El CI (ubuntu sin .env) pasa verde. Es techdebt de tests (deberían parchear el flag), NO de T-U.
+
+**Pendiente Roman (martes, activar FinBERT):** `pip install -r requirements.txt` + pre-descargar modelo (`python -c "from transformers import pipeline; pipeline('sentiment-analysis', model='ProsusAI/finbert')"`) + `THE_EAR_SENTIMENT_ENABLED=true` en .env + restart.
+
+## Estado al 2026-05-25 — T-T CERRADO COMPLETO (3/3). Sub-3 Equity Research integrado. `origin/main`=`31f0304`, HEAD `78823da` (ahead 10), suite 610/610
+
+**T-T Bloque E COMPLETO (Sub-1 #HE-2 ✅ + Sub-2 #HE-4 ✅ + Sub-3 ✅).** Sub-3 cierra T-T entero. Pendiente: validación Cowork.
+
+**T-T Sub-3 — Integración Equity Research al system prompt del Universe Selector — COMPLETO.** 1 commit LOCAL `78823da`, **SIN migración** (reasoning expandido se persiste concatenado en `rotation_decisions.claude_reasoning` TEXT — mismo patrón que `factor_exposure_analysis`):
+- **SYSTEM_PROMPT:** nueva sección **"## Análisis fundamental (Equity Research)"** (entre marco factorial All Weather y restricciones operativas). Instruye a Claude a evaluar calidad/riesgo fundamental como **filtro de corto plazo** (NO tesis de valor de largo plazo): salud financiera (señales 10-K/10-Q), valuación relativa (P/E, EV/EBITDA, P/S vs comparables), riesgo de evento (earnings/guidance = gap risk). **Distingue acciones individuales (fundamentales) de ETFs/commodities (composición/expense ratio/liquidez, NO DCF)** para evitar overreach. Salvaguarda de honestidad: si no hay datos confiables o es ETF, decirlo en vez de inventar.
+- **Campo `fundamental_analysis`** (opcional) en `_RESPONSE_SCHEMA` + ejemplo JSON + instrucción en `build_user_prompt`. Se concatena al `claude_reasoning` (`[Fundamental analysis]\n...`) antes de `save_rotation_decision`.
+- **8 tests TDD** (`tests/test_universe_selector_equity_research.py`). Suite 602→**610**. `universe_selector.py` **100%**, gate CI **99.84%** (exit 0), ruff verde, validate-workspace **0/0**.
+- **DRIFT/DECISIÓN documentada:** el bot llama a Claude vía API **SIN tool use/MCP** en el call de rotación. "Integrar Equity Research" = instruir el FRAMEWORK fundamental con el conocimiento de Claude, NO ejecutar las skills `equity-research:*`/MCP en vivo (esas viven en el Code de Claude, no en el runtime). Análisis fundamental con datos EN VIVO (10-Ks reales, DCF computado) = follow-up **Sub-3b** (requiere dar tool use/MCP al `claude_client`) — propuesto a backlog, no hecho.
+- **Sin flag nuevo:** la guía fundamental está siempre activa en el prompt; no cambia las órdenes del bot (solo enriquece el reasoning que pide/persiste). Flags del restart del martes sin cambios.
+
 ## Estado al 2026-05-25 — T-T Sub-1 #HE-2 Investment Thesis Tracking COMPLETO. `origin/main`=`31f0304`, HEAD `9c8893a` (ahead 8), suite 602/602
 
 **#HE-2 Investment Thesis Tracking — COMPLETO** (core). 3 commits LOCALES + migración **017 APLICADA**. Tracking estructurado de las tesis de inversión del bot: cada rotación del Universe Selector nace como tesis con state machine, y el historial cerrado realimenta el system prompt (#ME-2). FLAG-GATED (`THESIS_TRACKING_ENABLED`, default False) — Roman lo activa como **5º flag del restart del martes**. NO toca el hot-path del dispatcher; vive en el flujo de rotación (ya error-isolado + bajo timeout). El enganche es observabilidad enriquecida: registra metadata + alimenta el prompt; no altera las órdenes salvo el feedback loop (el objetivo).

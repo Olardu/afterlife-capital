@@ -92,3 +92,17 @@ templetes-correo/templetes-correo.zip
 .coverage.*
 htmlcov/
 coverage.xml
+
+# === Backups universales (defensivo, sesión 25-may bundle push 2)
+# La lista per-pattern de arriba es histórica y frágil; este blanket
+# garantiza que NADA dentro de backups/ se pushea, sin excepciones.
+backups/
+**/backups/
+**/.env.backup*
+**/.env.bak*
+**/inventory_*.sql
+**/inventory_*.txt
+
+# === Reportes/análisis sueltos en root (no del repo)
+/investigacion_*.md
+/code-outputs/
