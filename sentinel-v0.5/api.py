@@ -494,6 +494,9 @@ async def api_status():
         # #CR-3 — fees simulados de las ventas de hoy (SEC + FINRA TAF + exchange).
         # Alpaca paper no cobra; esto acerca el P&L/Sharpe de paper al de live.
         simulated_costs_today = await historian.get_simulated_costs_today(_owner_id)
+        # #CR-1 — reporte fiscal simulado (FIFO + holding + wash sales) acumulado.
+        # Solo el summary (liviano) va al status; los disposals se derivan aparte.
+        tax_report_summary = (await historian.get_tax_report(_owner_id))["summary"]
         return {
             "system":           "ONLINE",
             "sentinels_active": stats["sentinels_active"],
@@ -512,6 +515,8 @@ async def api_status():
             "claude_cost_today_by_sentinel": claude_cost_by_sentinel,
             # #CR-3 — fees simulados de las ventas de hoy (desglose + total USD).
             "simulated_costs_today": simulated_costs_today,
+            # #CR-1 — resumen fiscal acumulado (realized/short/long/wash sales/neto).
+            "tax_report_summary": tax_report_summary,
             # #TD-6 follow-up — visible si NEWS_API_KEY falta (The Ear queda ciego
             # a noticias). True = sin key configurada.
             "the_ear_news_disabled":   not bool(NEWS_API_KEY),

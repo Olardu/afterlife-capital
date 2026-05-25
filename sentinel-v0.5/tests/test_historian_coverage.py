@@ -15,6 +15,7 @@ Mock del pool asyncpg (sin DB real). Correr:
 import asyncio
 import os
 import sys
+from datetime import datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -475,6 +476,42 @@ def test_get_simulated_costs_today_con_datos_vacio_y_pgerror():
     conn3.fetch = AsyncMock(side_effect=_pg())
     with pytest.raises(asyncpg.PostgresError):
         _run(_hist(conn3).get_simulated_costs_today(uuid4()))
+
+
+def test_get_tax_report_con_datos_vacio_y_pgerror():
+    # #CR-1: FIFO + holding + wash sale on-the-fly sobre los FILLED del owner.
+    # BUY 10@100 (ene-1) / SELL 10@90 (ene-11, pérdida -100) / BUY 10@92 (ene-21)
+    # → 1 disposal LONG short-term con wash sale; realized -100, neto 0.
+    conn = _conn()
+    conn.fetch = AsyncMock(return_value=[
+        {"ticker": "AAA", "side": "BUY",  "qty": Decimal("10"),
+         "filled_price": Decimal("100"), "created_at": datetime(2026, 1, 1)},
+        {"ticker": "AAA", "side": "SELL", "qty": Decimal("10"),
+         "filled_price": Decimal("90"),  "created_at": datetime(2026, 1, 11)},
+        {"ticker": "AAA", "side": "BUY",  "qty": Decimal("10"),
+         "filled_price": Decimal("92"),  "created_at": datetime(2026, 1, 21)},
+    ])
+    out = _run(_hist(conn).get_tax_report(uuid4()))
+    assert out["summary"]["n_disposals"] == 1
+    assert out["summary"]["realized_gain"] == -100.0
+    assert out["summary"]["wash_sale_count"] == 1
+    assert out["summary"]["net_realized_gain"] == 0.0
+    d = out["disposals"][0]
+    # disposals JSON-safe: fechas ISO (str), montos float, flags nativos.
+    assert isinstance(d["opened_at"], str) and isinstance(d["closed_at"], str)
+    assert d["term"] == "short" and d["direction"] == "LONG"
+    assert d["wash_sale"] is True and d["disallowed_loss"] == 100.0
+    # vacío → summary en cero, sin disposals
+    conn2 = _conn()
+    conn2.fetch = AsyncMock(return_value=[])
+    empty = _run(_hist(conn2).get_tax_report(uuid4()))
+    assert empty["summary"]["n_disposals"] == 0
+    assert empty["disposals"] == []
+    # pgerror se propaga
+    conn3 = _conn()
+    conn3.fetch = AsyncMock(side_effect=_pg())
+    with pytest.raises(asyncpg.PostgresError):
+        _run(_hist(conn3).get_tax_report(uuid4()))
 
 
 # ═══════════════════════ § 8 — macro events ═══════════════════════

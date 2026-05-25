@@ -24,6 +24,7 @@ from config import (
     DB_POOL_MAX,
 )
 from simulated_costs import calculate_fees
+from tax_lots import compute_tax_report
 
 logger = logging.getLogger("sentinel.historian")
 
@@ -1171,6 +1172,70 @@ class Historian:
             "exchange_fee": float(exch_r),
             "total": float(sec_r + finra_r + exch_r),
         }
+
+    async def get_tax_report(self, owner_id: UUID) -> dict:
+        """
+        Reporte fiscal simulado (#CR-1) sobre TODOS los trades FILLED del owner
+        (la obligación fiscal es ACUMULATIVA, no de hoy). El pareo FIFO + holding
+        period + wash sales se calcula on-the-fly con tax_lots.compute_tax_report
+        a partir de (ticker, side, qty, filled_price, created_at) ya persistidos —
+        sin columna nueva ni migración (mismo patrón que get_simulated_costs_today
+        / #CR-3).
+
+        El pareo es a nivel CUENTA (por owner, por ticker, cruzando Sentinels),
+        que es como la IRS trata las disposiciones de un security — no por
+        Sentinel. Cierra de paso #TD-1 (el zip(buys,sells) ingenuo de
+        calculate_performance) usando FIFO por cantidad exacta.
+
+        Returns {"summary": {...}, "disposals": [...]} ya JSON-safe (Decimals a
+        float redondeados a centavos, fechas a ISO). El summary es liviano; la
+        lista de disposals puede crecer con el historial.
+        """
+        sql = """
+            SELECT ticker, side, qty, filled_price, created_at
+            FROM trades
+            WHERE owner_id = $1
+              AND status = 'FILLED'
+              AND qty IS NOT NULL
+              AND filled_price IS NOT NULL
+            ORDER BY created_at ASC
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(sql, owner_id)
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error en get_tax_report ({owner_id}): {e}")
+            raise
+
+        trades = [
+            {
+                "ticker": r["ticker"],
+                "side": r["side"],
+                "qty": r["qty"],
+                "price": r["filled_price"],
+                "dt": r["created_at"],
+            }
+            for r in rows
+        ]
+        report = compute_tax_report(trades)
+        disposals = [
+            {
+                "ticker": d["ticker"],
+                "direction": d["direction"],
+                "qty": float(d["qty"]),
+                "proceeds": round(float(d["proceeds"]), 2),
+                "cost_basis": round(float(d["cost_basis"]), 2),
+                "gain": round(float(d["gain"]), 2),
+                "opened_at": d["opened_at"].isoformat(),
+                "closed_at": d["closed_at"].isoformat(),
+                "holding_days": d["holding_days"],
+                "term": d["term"],
+                "wash_sale": d["wash_sale"],
+                "disallowed_loss": round(float(d["disallowed_loss"]), 2),
+            }
+            for d in report["disposals"]
+        ]
+        return {"summary": report["summary"], "disposals": disposals}
 
     # ═══════════════════════════ § 8 — Macro events ═══════════════════════════
     async def record_macro_event(
