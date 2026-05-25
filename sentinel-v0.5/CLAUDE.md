@@ -364,7 +364,7 @@ Cambios:
 
 #### 5. Anomalías documentadas pendientes de acción
 
-- **`***REMOVED-EMAIL***` sigue en `users`** (creado 2026-04-28 11:15:31). Roman dijo que fue eliminado hoy por incidente de seguridad — la eliminación NO se ejecutó en DB. Próxima sesión: ejecutar el DELETE vía panel admin o script controlado.
+- **`viewer-2@example.com` sigue en `users`** (creado 2026-04-28 11:15:31). Roman dijo que fue eliminado hoy por incidente de seguridad — la eliminación NO se ejecutó en DB. Próxima sesión: ejecutar el DELETE vía panel admin o script controlado.
 - **17 signals huérfanas del 27-abr** que nunca llegaron al dispatcher. Verificable revisando logs de ese día (fuera de scope hoy).
 
 ## Próximos pasos
@@ -374,7 +374,7 @@ Cambios:
 ✅ **Operativo y corriendo**:
 - API + Cloudflare Tunnel + main.py corriendo. Primer ciclo real con mercado abierto fue lunes 2026-04-27.
 - DB con 9 Sentinels (5% allocation cada uno, 45% total). 27 tickers en `sentinel_tickers`.
-- Auth Google OAuth con roles ADMIN/VIEWER. Único ADMIN: `***REMOVED-EMAIL***`. Único VIEWER: `goorale@gmail.com`.
+- Auth Google OAuth con roles ADMIN/VIEWER. Único ADMIN: `owner@example.com`. Único VIEWER: `viewer-1@example.com`.
 - Kill switch operacional: botón DETENER/INICIAR del dashboard dispara halt/resume vía DB flag, poller cada 5s en `main.py` ejecuta `activate_kill_switch`/`deactivate_kill_switch`.
 - Panel admin en `/admin` (ADMIN-only): CRUD de usuarios con welcome/removal email automático vía Resend desde `noreply@afterlifecapital.co` (dominio verificado).
 - Universe Selection automática habilitada con Claude Sonnet 4.6.
@@ -495,7 +495,7 @@ Nota importante: estos endpoints técnicamente "exponen datos que ya existen" (n
 
 ### Acciones operativas pendientes (no son features)
 
-- **Eliminar `***REMOVED-EMAIL***` de `users`** — eliminación falló hoy 2026-04-28, sigue en DB con `created_at = 2026-04-28 11:15:31`. Ejecutar via panel admin (`DELETE /api/admin/users/{user_id}`) o script controlado.
+- **Eliminar `viewer-2@example.com` de `users`** — eliminación falló hoy 2026-04-28, sigue en DB con `created_at = 2026-04-28 11:15:31`. Ejecutar via panel admin (`DELETE /api/admin/users/{user_id}`) o script controlado.
 - Investigar por qué las **17 signals del 27-abr nunca llegaron al dispatcher** (logs de ese día — `logs/sentinel.log`).
 - Roman pendiente: rotar credenciales OAuth de Claude Code en meridian (incidente 25-abr, tokens viejos siguen vivos).
 
@@ -516,7 +516,7 @@ Nota importante: estos endpoints técnicamente "exponen datos que ya existen" (n
 
 ## Seguridad
 
-- Multi-tenant: todo dato lleva `owner_id`. Owner actual: `roman` / `***REMOVED-EMAIL***` (UUID `***REMOVED-UUID***`).
+- Multi-tenant: todo dato lleva `owner_id`. Owner actual: `<owner-username>` / `owner@example.com` (UUID `<owner-uuid>`).
 - `.env`, `client_secret_*.json`, `.claude/` excluidos de git y de Drive sync.
 - NEWS_API_KEY enviado en header `X-Api-Key` (nunca en URL params).
 - Kill switch: `dispatcher.activate_kill_switch("CONFIRMAR")` requiere passphrase exacta. Disparable desde `/api/system/halt` (ADMIN-only) o desde el botón DETENER del dashboard.

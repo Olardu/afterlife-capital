@@ -75,7 +75,7 @@ Devuelve el usuario autenticado actual.
 **Response 200:**
 ```json
 {
-  "email": "***REMOVED-EMAIL***",
+  "email": "owner@example.com",
   "role": "ADMIN",
   "user_id": "uuid-string"
 }
@@ -790,7 +790,7 @@ Lista todos los usuarios registrados.
 [
   {
     "user_id": "uuid-string",
-    "email": "***REMOVED-EMAIL***",
+    "email": "owner@example.com",
     "role": "ADMIN",
     "username": "roman",
     "created_at": "2026-04-20T10:00:00.000000"
@@ -1022,7 +1022,7 @@ Revierte una rotación ejecutada (restaura el ticker anterior).
 {
   "status": "rolled_back",
   "decision_id": "uuid-string",
-  "by": "***REMOVED-EMAIL***"
+  "by": "owner@example.com"
 }
 ```
 

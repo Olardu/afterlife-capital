@@ -154,12 +154,12 @@ El dashboard renderiza correctamente en vista COMPLETA:
 
 | Email | Rol | Último login |
 |---|---|---|
-| ***REMOVED-EMAIL*** | ADMIN | 2 mayo 10:56 |
-| ***REMOVED-EMAIL*** | VIEWER | 1 mayo 09:41 |
-| goorale@gmail.com | VIEWER | 26 abril 13:48 |
-| evyta.cas@gmail.com | VIEWER | 27 abril 18:17 |
-| c.i.cusanllc@gmail.com | VIEWER | 30 abril 09:29 |
-| said.pezo2006@gmail.com | VIEWER | No ha ingresado aún |
+| owner@example.com | ADMIN | 2 mayo 10:56 |
+| viewer-2@example.com | VIEWER | 1 mayo 09:41 |
+| viewer-1@example.com | VIEWER | 26 abril 13:48 |
+| viewer-3@example.com | VIEWER | 27 abril 18:17 |
+| viewer-4@example.com | VIEWER | 30 abril 09:29 |
+| viewer-5@example.com | VIEWER | No ha ingresado aún |
 
 ---
 

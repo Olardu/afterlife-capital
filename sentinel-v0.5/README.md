@@ -114,6 +114,6 @@ Setup (una vez, tras `pip install -r requirements.txt`):
 
 ## Autor
 
-Diseñado y arquitectado por Roman Olarte.
+Diseñado y arquitectado por el equipo de Afterlife Capital.
 Código generado con asistencia de IA.
-Proyecto Afterlife Capital — Cambio de Ruta.
+Proyecto Afterlife Capital.

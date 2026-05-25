@@ -8,7 +8,7 @@
   'use strict';
 
   // ----- CONFIG -----
-  const OWNER_EMAIL = '***REMOVED-EMAIL***';
+  const OWNER_EMAIL = 'owner@example.com';
   const API_BASE = '/api/admin/users';
 
   // ----- DOM -----
@@ -27,7 +27,7 @@
   //              NO si la API devuelve 4xx/5xx). Útil para previsualizar el
   //              diseño en static hosts. En producción siempre llega data real. ============
   const DEMO_USERS = [
-    { id: 'u_001', email: '***REMOVED-EMAIL***', role: 'ADMIN', created_at: '2025-08-12T10:24:00Z' },
+    { id: 'u_001', email: 'owner@example.com', role: 'ADMIN', created_at: '2025-08-12T10:24:00Z' },
     { id: 'u_002', email: 'analyst@afterlife.capital', role: 'VIEWER', created_at: '2025-09-03T14:18:00Z' },
     { id: 'u_003', email: 'ops@afterlife.capital', role: 'ADMIN', created_at: '2025-10-21T09:02:00Z' },
     { id: 'u_004', email: 'observer@partner.io', role: 'VIEWER', created_at: '2026-01-15T11:47:00Z' },

@@ -78,77 +78,70 @@
 
 | ID | Título | Tipo | Prio | Status |
 |---|---|---|---|---|
-| **#FEAT-007** | **distilFinBERT integration al The Ear (T-U)** | **FEAT-CORE** | **P0** | **⏳ TODO — spec lista, DEADLINE martes** |
-| #OPS-009 | Restart api.py martes con 4 flags (incluido `THE_EAR_SENTIMENT_ENABLED=true`) | OPS | P0 | TODO (Roman) |
-| #OPS-010 | Email viewers reapertura 2º período | OPS | P1 | TODO (Roman) |
-| #OPS-011 | Testing manual dashboard al levantar | OPS | P1 | TODO (Roman) |
-| #OPS-012 | Restart main.py pre-lunes 9:30 ET (activar heartbeat) | OPS | P0 | TODO (Roman) |
-| #TD-26 | Validación Half-Kelly (research DONE, falta auditoría externa) | TECH-BLOCK | P0 | ⚠️ PARCIAL |
-| #ARCH-001 | Refactor patrón Broker | ARCH | P2 | TODO |
-| #FEAT-014 | Cooldown post-loss mean reversion (evita 27% wash sales de #CR-1) | FEAT-CORE | P1 | TODO |
-| #TECH-003 | Migrar `calculate_performance` a motor FIFO de tax_lots (cierra #TD-1) | TECH-BLOCK | P2 | TODO |
-| #TECH-002 | Limpieza HTMLs viejos dashboard (15 min) | TECH-DRIFT | P3 | TODO |
-| #HE-2 / #HE-4 / Equity Research framework | T-T cerrado en `78823da` (DONE local, no push) | FEAT-CORE | P2 | ✅ DONE local |
-| #HE-2b | Transición ENTRY_READY→ACTIVE + MAE/MFE backfill desde price stream | FEAT-NICE | P2 | TODO próximo finde |
-| #FEAT-EquityResearch-real | Sub-3b: parsing 10-K/EDGAR + DCF computado + comparables ratios reales (vs framework por prompt actual) | FEAT-NICE | P3 | TODO post-Fase 5 |
-| #HE-3 | Alpaca MCP conversacional (Roman instala) | FEAT-NICE | P2 | TODO Roman |
+| #OPS-009 | Ejecutar script flags T-V/T-U (3 nuevas) + sentinel-start.bat | OPS | P0 | TODO (Roman, esta noche o mañana temprano) |
+| #OPS-010 | Email viewers reapertura 2º período | OPS | P1 | TODO (Roman, martes) |
+| #OPS-011 | Testing manual dashboard cuando vuelva del trabajo | OPS | P1 | TODO (Roman, martes noche) |
+| #TD-26 | Validación Half-Kelly (research DONE, falta auditoría externa) | TECH-BLOCK | P0 | ⚠️ PARCIAL — research DONE, falta IA independiente |
+| #ARCH-001 | Refactor patrón Broker (abstracción Alpaca para portabilidad IBKR) | ARCH | P2 | TODO finde |
+| #TECH-002 | Limpieza HTMLs viejos dashboard | TECH-DRIFT | P3 | 🔄 EN CURSO (cleanup hoy) |
+| #HE-2b | Transición ENTRY_READY→ACTIVE + MAE/MFE backfill desde price stream | FEAT-NICE | P2 | TODO finde |
+| #FEAT-EquityResearch-real | Sub-3b: parsing 10-K/EDGAR + DCF computado (vs framework por prompt actual) | FEAT-NICE | P3 | TODO post-Fase 5 |
+| Signals.rejection_reason | Persistir razón de descarte (cooldown/duplicate hoy solo en logs) | TECH-DRIFT | P2 | TODO finde |
+| #HE-3 | Alpaca MCP conversacional (Roman instala desde Cowork app) | FEAT-NICE | P2 | TODO Roman |
 | #HE-5 | Wealth Management plugin (Roman instala) | FEAT-NICE | P2 | TODO Roman |
-| #TD-13 | API versionado `/api/v1/` (breaking frontend) | TECH-DRIFT | P2 | DIFERIDO (coordinar Design) |
-| #DOC-005 | Revisión manual titulares The Ear período 1 | DOC | P1 | DIFERIDO (Cowork, falta DB) |
-| #BUG-002 | 17 signals huérfanas 27-abr (referida en análisis P1 §10) | BUG-FUNC | P1 | DIFERIDO (Cowork, falta DB) |
-| **Hallazgos análisis P1** | Pending rate >65% en S-1/S-4/S-5/S-6 + concentración SPY (7/9) + S-2 monopolio (55%) | OBS | P1 | Monitoreo período 2 |
+| #TD-13 | API versionado `/api/v1/` (breaking frontend) | TECH-DRIFT | P2 | DIFERIDO (coordinar Design en sprint finde) |
+| #DOC-005 | Revisión manual titulares The Ear período 1 | DOC | P1 | DIFERIDO (re-evaluar con data hybrid mode post-arranque) |
+| TIMESTAMPTZ migración | Estructural DB (T-R sub-8 diferido) | TECH-DRIFT | P2 | TODO finde |
+| gstack evaluation | Toolkit Garry Tan/YC (28 slash commands) — evaluar si suma | ARCH | P3 | TODO finde |
+| **Hallazgos análisis P1 a monitorear** | Pending rate >65% S-1/S-4/S-5/S-6 + concentración SPY (7/9) + S-2 monopolio (55%) + distribución FinBERT post-arranque | OBS | P1 | Monitoreo período 2 |
 
 ---
 
 ## P0 — Crítico (gate Fase 5 live)
 
-- **#FEAT-007 distilFinBERT integration** — T-U planeada, spec lista, entra al martes con el bot. Decisión Roman 2026-05-25.
-- **#TD-26 Validación Half-Kelly** — research Cowork DONE (`docs/half_kelly_validation_analysis.md`). Falta auditoría externa formal pre-Fase 5.
-- **#FASE2-NEW-5 Gate pre-live checklist** — DONE en `docs/gate_pre_live_checklist.md` (160 líneas, 64 checkboxes).
-- **#OPS-009** Restart `api.py` martes con `THE_EAR_SENTIMENT_ENABLED=true` + 3 flags previos.
-- **#OPS-012** Restart `main.py` pre-lunes 9:30 ET (heartbeat).
+- **#OPS-009** Ejecutar script flags T-V/T-U (3 nuevas) + arrancar sentinel-start.bat (Roman, esta noche o mañana temprano).
+- **#TD-26 Validación Half-Kelly** — research Cowork DONE (`docs/half_kelly_validation_analysis.md`). Falta auditoría externa formal pre-Fase 5 (IAs independientes).
 
 ---
 
 ## P1 — Importante (2º período o pre-Fase 5)
 
-- **#FEAT-014 Cooldown post-loss** — insumo crítico: 27% disposals wash sales en #CR-1. Sin cooldown, bot re-entra rápido y difiere pérdidas masivamente con sizing real.
-- **#DOC-005 Revisión titulares The Ear período 1** — DIFERIDO Cowork (falta DB). Re-evaluar post-arranque con datos hybrid mode.
-- **#BUG-002 17 signals huérfanas** — DIFERIDO (falta DB). Nota: análisis cualitativo §10 marca acción si reaparece en período 2 (logging detallado).
-- **#OPS-010 Email viewers** — Roman manual martes.
-- **#OPS-011 Testing manual dashboard** — Roman martes.
+- **#OPS-010 Email viewers** — Roman manual martes anunciando reapertura 2º período.
+- **#OPS-011 Testing manual dashboard** — Roman martes noche al volver del trabajo.
+- **#DOC-005 Revisión titulares The Ear período 1** — DIFERIDO Cowork. Re-evaluar post-arranque con datos hybrid mode FinBERT.
 - **Hallazgos análisis P1 a monitorear post-arranque:**
-  - **Pending rate** en S-1/S-4/S-5/S-6 (>65% en período 1, sus limit prices son demasiado estrictos).
+  - **Pending rate** en S-1/S-4/S-5/S-6 (>65% en período 1, limit prices estrictos).
   - **CorrelationGuard activity** (ahora persiste — esperar >10% señales con acción).
   - **S-2 monopolio** (55% de la actividad en período 1 — observar si se mantiene).
-  - **Distribución FinBERT score** post-arranque para recalibrar threshold.
+  - **Distribución FinBERT score** post-arranque para recalibrar threshold (plan en `docs/finbert_recalibration_plan.md`).
   - **Sharpe per-trade post-B.2** — verificar ningún Sentinel produce |Sharpe|>5.
+  - **Cooldown post-loss activity** — esperar reducción del 27% wash sales observado en período 1.
 
 ---
 
 ## P2 — Robustez técnica (no bloquea fase live inicial)
 
-- **#ARCH-001 Patrón Broker** (abstracción Alpaca).
-- **#TECH-003** Migrar `calculate_performance` a motor FIFO de `tax_lots.py` (cierra #TD-1 completamente).
-- **#HE-2 / #HE-4 / Equity Research integration** — en curso en T-T.
+- **#ARCH-001 Patrón Broker** (abstracción Alpaca, sprint finde).
+- **#HE-2b** Transición ENTRY_READY→ACTIVE + MAE/MFE backfill (sprint finde).
+- **Signals.rejection_reason** persistir razón de descarte (drift T-V, sprint finde).
 - **#HE-3 Alpaca MCP** + **#HE-5 Wealth Management** — Roman instala desde Cowork app.
-- **#TD-13** `/api/v1` prefix — DIFERIDO (breaking, coordinar Design).
-- **Diferidos T-R** (Wilder smoothing RSI, TIMESTAMPTZ migración grande, dashboard #TD-18-21, dataclasses config) — post-período-2.
-- **Nota matutina** estructurada (complemento The Ear).
-- **Directrices diseño emails.**
+- **#TD-13** `/api/v1` prefix — DIFERIDO (breaking, coordinar Design en sprint finde).
+- **TIMESTAMPTZ migración** (diferido T-R sub-8) — estructural DB, sprint finde.
+- **dashboard #TD-18-21** — post-Dashboard rework v2.
+- **Nota matutina** + **directrices diseño emails** (Bloque I sprint finde).
 
 ---
 
 ## P3 — Futuro (post-Fase 5)
 
+- **#FEAT-EquityResearch-real (Sub-3b)** Parsing 10-K/EDGAR + DCF computado con datos reales (vs framework por prompt actual).
+- **gstack evaluation** — Toolkit Garry Tan/YC (28 slash commands). Re-evaluar si suma en sprint finde.
 - Leverage escalonado (1.25x condicionado).
 - Risk budgeting jerárquico intra-Sentinel.
 - Reactivar S-10 RegimeClassifier.
 - #TM-3 Trailing stops por software.
 - #HE-6 Riskfolio-Lib.
-- #TD-1 FIFO multi-ticker (cubierto por #TECH-003 indirectamente).
 - #TD-25 Position dataclass (cosmético).
-- **#TECH-002 Limpieza HTMLs viejos** dashboard (mejora stats GitHub).
 
 ---
 
@@ -190,9 +183,18 @@
 - **T-S Bloque C Compliance + Slippage** — 5/5 cerrado (#ME-1 + #ME-4 + #CR-3 + #CR-1 + #CR-2). 14 commits Code + commit Cowork. Suite 489/489. 3 módulos nuevos al 100% (`simulated_costs`, `tax_lots`, `corporate_actions`). Cero migraciones SQL (on-the-fly).
 - #TD-1 con caveat: motor FIFO en `tax_lots.py`. `calculate_performance` sigue zip ingenuo → seguimiento en #TECH-003.
 
-### Sprint 25 may noche (DONE local, NO-push, ahead 10 sobre `31f0304`):
-- **T-T Plugins externos Bloque E** — `78823da` cierre 3/3. Sub-1 #HE-2 (módulo `investment_thesis.py` 100% + insert IDEA en historian + migración 017 aplicada). Sub-2 #HE-4 (no aplica — fees ya cubiertos en T-S #CR-3). Sub-3 Equity Research framework integrado al `SYSTEM_PROMPT` de Universe Selector (no es invocación de skill — es framework pasado por prompt para que Claude lo aplique con su conocimiento intrínseco). Flag operacional martes: agregar `THESIS_TRACKING_ENABLED=true`.
-- Specs T-U / T-V / análisis cualitativo P1 movidas de `outputs/` a `docs/` (Roman ejecutó Copy-Item).
+### Sprint 25 may noche (pusheados en `d168559`, bundle push 2):
+- **T-T Plugins externos Bloque E** — `78823da` cierre 3/3. Sub-1 #HE-2 (módulo `investment_thesis.py` 100% + insert IDEA en historian + migración 017 aplicada). Sub-2 #HE-4 (no aplica — fees ya cubiertos en T-S #CR-3). Sub-3 Equity Research framework integrado al `SYSTEM_PROMPT` de Universe Selector. Flag operacional `THESIS_TRACKING_ENABLED=true`.
+- **T-U distilFinBERT (#FEAT-007)** — 6 commits `1005c83` → `e934338` cierre 6/6. Módulo `sentiment_analyzer.py` (ProsusAI/finbert, no yiyanghkust por incompat transformers 5.x) + migración 018 + integración The Ear hybrid mode + flag `THE_EAR_SENTIMENT_ENABLED` + plan calibración en `docs/finbert_recalibration_plan.md`. Suite 610→636. torch 2.9.1+cpu + transformers 5.9.0 instalados en venv del bot.
+- **#TECH-004 fix tests dispatcher** — `c6ea32d`. Fixture autouse parchea `config.ATR_SIZING_ENABLED=False` para que tests sean independientes del .env. Suite 636/636 verde con .env actual (ATR=true).
+- **T-V 3 cambios comportamiento** — 3 commits cierre 3/3:
+  - `571f30c` Sub-2 #TECH-003 FIFO: `calculate_performance` usa `tax_lots.match_fifo` (cierra #TD-1). Sin flag (fix de bug). Parity-check 0/25 diff zip vs FIFO sobre DB real.
+  - `b1bf88b` Sub-1 #FEAT-014 Cooldown post-loss: bloquea BUY si cierre con pérdida ±7d. Flag `COOLDOWN_POST_LOSS_ENABLED` default OFF.
+  - `a5db770` Sub-3 Wilder RSI: smoothing correcto cuando flag `WILDER_RSI_ENABLED` activo (default OFF).
+- **#BUG-002 CERRADO** — investigación read-only Code: 17 signals huérfanas TODAS del 27-abr, primer trade DB = 28-abr → artefacto histórico Dispatcher pre-fixes (Excepción 1 conocida). No es bug.
+- Specs T-U / T-V / análisis cualitativo P1 / research FinBERT consolidadas en `docs/` (Roman Copy-Item).
+- `.gitignore` ampliación defensiva (`backups/`, `**/backups/`, `**/.env.backup*`, `inventory_*`, `/investigacion_*.md`).
+- Bundle push 2: `31f0304` → `d168559` (+21 commits, 20 Code + 1 Cowork).
 
 ### Trabajo Cowork DONE (en `docs/` listo para push):
 - **#FASE2-NEW-5** Gate pre-live checklist — `docs/gate_pre_live_checklist.md`.

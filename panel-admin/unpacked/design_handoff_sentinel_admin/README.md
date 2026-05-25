@@ -20,7 +20,7 @@ usuarios — solo accesible para administradores.
    `← VOLVER AL DASHBOARD` (link a `/`).
 2. **Título** — `USER CONTROL` (cyan / magenta) con descriptor.
 3. **Sección "Usuarios registrados"** — tabla con columnas:
-   - `EMAIL` (con tag `OWNER` para `***REMOVED-EMAIL***`)
+   - `EMAIL` (con tag `OWNER` para `owner@example.com`)
    - `ROL` (badge de color: ADMIN = magenta, VIEWER = cyan)
    - `FECHA DE REGISTRO`
    - `ACCIONES` — botón `ELIMINAR` (rojo). El owner muestra `— OWNER —`
@@ -41,7 +41,7 @@ Devuelve la lista de usuarios. Respuestas aceptadas:
 
 ```json
 [
-  { "id": "u_001", "email": "***REMOVED-EMAIL***", "role": "ADMIN",  "created_at": "2025-08-12T10:24:00Z" },
+  { "id": "u_001", "email": "owner@example.com", "role": "ADMIN",  "created_at": "2025-08-12T10:24:00Z" },
   { "id": "u_002", "email": "viewer@example.com",  "role": "VIEWER", "created_at": "2025-09-03T14:18:00Z" }
 ]
 ```
@@ -105,7 +105,7 @@ header `Authorization: Bearer ...`, hay que inyectarlo en
 
 ## Owner protegido
 
-La constante `OWNER_EMAIL` en `admin-app.js` (`'***REMOVED-EMAIL***'`)
+La constante `OWNER_EMAIL` en `admin-app.js` (`'owner@example.com'`)
 es el dueño del sistema. Para esa fila:
 
 - Se muestra el tag `OWNER` junto al email.

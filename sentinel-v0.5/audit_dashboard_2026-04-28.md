@@ -1,7 +1,7 @@
 # Auditoría READ-ONLY — Conexión backend ↔ frontend del dashboard Sentinel
 
 **Fecha:** 2026-04-28
-**Autorizada por:** Roman Olarte (***REMOVED-EMAIL***, OWNER)
+**Autorizada por:** Bot Owner (owner@example.com, OWNER)
 **Tipo:** Diagnóstico estático. Cero modificaciones de código, DB ni procesos.
 **Vigente bajo:** OBSERVATION_PERIOD.md — categoría "observabilidad read-only".
 
@@ -366,7 +366,7 @@ Tres frentes paralelizables, en orden de impacto vs esfuerzo:
 
 ## 7. Resoluciones aplicadas — 2 de Mayo 2026
 
-> Auditoría de corrección autorizada por Roman Olarte.
+> Auditoría de corrección autorizada por Bot Owner.
 > Todos los cambios son read-only (endpoints nuevos) o de presentación (frontend).
 > No se modificaron thresholds, prompts ni lógica de agentes.
 

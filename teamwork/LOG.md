@@ -455,7 +455,7 @@ Cowork va a aplicar `[COWORK BLOQ]` automático si:
 
 **Input:** `sentinel-v0.5/scripts/queries_balance_observacion.sql` (recién copiado al repo en este commit Cowork). 13 queries en 4 secciones (§3 Sentinels, §4 Universe Selector, §5 The Ear, §6 CorrelationGuard). 269 líneas, TODAS SELECT, ninguna mutación.
 
-**Owner ID a usar:** `***REMOVED-UUID***` (Roman, ADMIN — está documentado en el header del SQL). Si el SQL ya lo tiene parametrizado con ese valor, usar literal.
+**Owner ID a usar:** `<owner-uuid>` (ADMIN del sistema — está documentado en el header del SQL). Si el SQL ya lo tiene parametrizado con ese valor, usar literal.
 
 **Output esperado:** 1 CSV por query (13 CSVs) en `backups/2026-05-24/balance_data/`. Naming convention:
 - `q3_1_resumen_sentinels.csv`
@@ -637,7 +637,7 @@ q5_2_eventos_por_dia.csv       25 filas  1004 B
 q5_3_titulares_matched.csv      0 filas    13 B   ← NINGÚN macro_event con risk_score>0.5 en todo el período
 qB_1_usuarios.csv               2 filas   171 B   (1 ADMIN + 5 VIEWER por rol)
 qB_2_migraciones.csv            0 filas    13 B   (migration_log VACÍA)
-qB_3_olarteduarte.csv           1 fila    126 B   (sigue pendiente de eliminación)
+qB_3_viewer2.csv                1 fila    126 B   (sigue pendiente de eliminación)
 ```
 Observaciones para §4/§5: las 23 rotaciones son TODAS `trigger_reason=decay_confirmed`, `status=executed` (no hubo `warning` ni `recovery_discard`). The Ear nunca superó risk_score 0.5 (q5_3 vacía) → vetos por riesgo macro = 0 en el período.
 
@@ -4280,3 +4280,64 @@ Los 4 ítems cerrados. 4 commits nuevos este turno (`c6ea32d` + `571f30c` + `b1b
 **Para Roman:** script PowerShell único de bundle push 2 le pasé en el chat. Ejecutar después arrancar `sentinel-start.bat` (mañana antes del trabajo o esta noche). El script hace: validate working tree → add explícito de archivos seguros → commit Cowork → push origin main → verificación `git ls-remote`.
 
 **Pendiente Roman martes pre-apertura:** agregar 3 flags T-V/T-U al `.env` para activar todo on (Roman decisión 25-may): `COOLDOWN_POST_LOSS_ENABLED=true`, `WILDER_RSI_ENABLED=true`, `THE_EAR_SENTIMENT_ENABLED=true`. El script para eso va separado (te lo paso post-push).
+
+---
+
+[2026-05-25 23:55 UTC / 19:55 ET COWORK INCIDENTE PII + Fase 1 cleanup + TAREA @CODE Fase 2]
+
+**Incidente:** Roman cazó email del owner + rol ADMIN expuestos en `API_REFERENCE.md` (visible en GitHub público) después del bundle push 2. Audit pre-push 2 fue INCOMPLETO — solo grep busqué credenciales API/secrets, NO PII (email/nombre/UUID). Mi error. La regla `feedback_public_repo_audit` se amplió.
+
+**Audit extenso encontró 6 emails reales expuestos + nombre + UUID (todos redactados acá usando placeholders para no re-introducirlos en repo):**
+- 1 email owner → reemplazado por `owner@example.com`
+- 5 emails viewers (familiares/amigos del proyecto) → reemplazados por `viewer-1..5@example.com`
+- Nombre completo del owner → reemplazado por `Bot Owner`
+- UUID owner real → reemplazado por `<owner-uuid>`
+
+**Fase 1 — Cowork hizo (Edits aplicados):**
+- `API_REFERENCE.md` — 3 ocurrencias del email owner → `owner@example.com`
+- `AUDITORIA_SISTEMA_2026-05-02.md` — 6 emails → placeholders genéricos
+- `sentinel-v0.5/CLAUDE.md` — 3 emails + UUID + username → placeholders
+- `sentinel-v0.5/audit_dashboard_2026-04-28.md` — nombre + email → `Bot Owner` + `owner@example.com`
+- `sentinel-v0.5/README.md` — atribución de autor → "equipo de Afterlife Capital"
+- `dashboard/admin-app.js` — `OWNER_EMAIL` const + mock data → `owner@example.com`
+- `panel-admin/unpacked/.../admin-app.js` + `README.md` (handoff Design) → `owner@example.com`
+- `teamwork/LOG.md` — UUID línea 458 + nombre archivo CSV → genéricos
+
+**Decisión Roman sobre historia git:** ACEPTAR fuga histórica (el repo no ha tenido más actividad que la nuestra, no hay forks/clones externos confirmados). NO rewrite history. Foco en NO subir más info sensible adelante.
+
+**Fase 2 — TAREA @CODE (sesión fresca, importante pero no bloquea operación martes):**
+
+Mover hardcodes de PII en código Python a variables de entorno. Lista exacta:
+
+1. **`sentinel-v0.5/historian.py`:**
+   - L48: `_OWNER_EMAIL` hardcoded → leer de `os.environ.get("OWNER_EMAIL")`
+   - L411-414: UPDATE statement con email hardcoded → parametrizar
+   - L1722: comentario menciona email → genérico
+
+2. **`sentinel-v0.5/email_service.py`:**
+   - L577: `_PERIOD_CLOSE_REPLY_TO` hardcoded → env var
+   - L594, L723: plantilla email firma con nombre real → env var `OWNER_NAME` o leer config
+
+3. **`sentinel-v0.5/scripts/queries_*.sql`** (corporate_actions, tax_report, balance_observacion, signals_breakdown): UUID hardcoded en header/comments → comentar como placeholder o variable psql.
+
+4. **`sentinel-v0.5/scripts/run_balance_queries.py`** y **`adopt_orphan_positions.py`**: revisar y mover a env.
+
+5. **`sentinel-v0.5/db/migrate_retroactive.sql`**: si tiene `roman` username u owner UUID, parametrizar.
+
+6. **`sentinel-v0.5/tests/test_historian_coverage.py`**: tests probablemente assertean email hardcoded → mockear con `monkeypatch.setenv("OWNER_EMAIL", "test@example.com")` o fixture similar.
+
+**Env vars nuevas a agregar al `.env`** (Roman las completa con valores reales en su máquina, gitignored):
+- `OWNER_EMAIL=<email-real-del-owner>` (uso real del bot)
+- `OWNER_NAME=<nombre-real-del-owner>` (firma de emails al owner)
+- `OWNER_UUID=<uuid-real-del-owner-en-DB>` (referencia owner en DB)
+- `OWNER_USERNAME=<username>` (ya existe en .env línea 7)
+
+**Validación post-fix:**
+- Suite tests verde con env vars seteadas
+- Grep en repo con el patrón de PII conocido (email owner + viewers + nombre + UUID) debe ser 0 matches fuera de logs/ untracked
+- Bot arranca con .env correcto y comportamiento idéntico
+- CI verde
+
+**No es bloqueante para martes** — el bot funciona idéntico con hardcodes mientras los env vars existan. Es trabajo de higiene del repo público.
+
+**Estado git post-Fase 1 Cowork:** HEAD `d168559` (último push), `M` en .gitignore + 8 archivos limpiados PII. Pendiente: commit Cowork con limpieza + push.
