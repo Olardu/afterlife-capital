@@ -23,6 +23,7 @@ from config import (
     DB_POOL_MIN,
     DB_POOL_MAX,
 )
+from corporate_actions import build_corporate_actions_report
 from simulated_costs import calculate_fees
 from tax_lots import compute_tax_report
 
@@ -1173,6 +1174,60 @@ class Historian:
             "total": float(sec_r + finra_r + exch_r),
         }
 
+    async def _fetch_filled_trades(self, owner_id: UUID) -> list[dict]:
+        """
+        Trae los fills (ticker, side, qty, filled_price, created_at) de TODOS los
+        trades FILLED del owner, tipados como dicts {ticker, side, qty, price, dt}
+        para alimentar los motores puros tax_lots / corporate_actions. Base común
+        de get_tax_report (#CR-1) y get_corporate_actions_report (#CR-2).
+        """
+        sql = """
+            SELECT ticker, side, qty, filled_price, created_at
+            FROM trades
+            WHERE owner_id = $1
+              AND status = 'FILLED'
+              AND qty IS NOT NULL
+              AND filled_price IS NOT NULL
+            ORDER BY created_at ASC
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(sql, owner_id)
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error en _fetch_filled_trades ({owner_id}): {e}")
+            raise
+        return [
+            {
+                "ticker": r["ticker"],
+                "side": r["side"],
+                "qty": r["qty"],
+                "price": r["filled_price"],
+                "dt": r["created_at"],
+            }
+            for r in rows
+        ]
+
+    @staticmethod
+    def _serialize_tax_disposals(disposals) -> list[dict]:
+        """Convierte los disposals de tax_lots a JSON-safe (Decimals→float, fechas→ISO)."""
+        return [
+            {
+                "ticker": d["ticker"],
+                "direction": d["direction"],
+                "qty": float(d["qty"]),
+                "proceeds": round(float(d["proceeds"]), 2),
+                "cost_basis": round(float(d["cost_basis"]), 2),
+                "gain": round(float(d["gain"]), 2),
+                "opened_at": d["opened_at"].isoformat(),
+                "closed_at": d["closed_at"].isoformat(),
+                "holding_days": d["holding_days"],
+                "term": d["term"],
+                "wash_sale": d["wash_sale"],
+                "disallowed_loss": round(float(d["disallowed_loss"]), 2),
+            }
+            for d in disposals
+        ]
+
     async def get_tax_report(self, owner_id: UUID) -> dict:
         """
         Reporte fiscal simulado (#CR-1) sobre TODOS los trades FILLED del owner
@@ -1191,51 +1246,42 @@ class Historian:
         float redondeados a centavos, fechas a ISO). El summary es liviano; la
         lista de disposals puede crecer con el historial.
         """
-        sql = """
-            SELECT ticker, side, qty, filled_price, created_at
-            FROM trades
-            WHERE owner_id = $1
-              AND status = 'FILLED'
-              AND qty IS NOT NULL
-              AND filled_price IS NOT NULL
-            ORDER BY created_at ASC
-        """
-        try:
-            async with self.pool.acquire() as conn:
-                rows = await conn.fetch(sql, owner_id)
-        except asyncpg.PostgresError as e:
-            logger.error(f"Error en get_tax_report ({owner_id}): {e}")
-            raise
-
-        trades = [
-            {
-                "ticker": r["ticker"],
-                "side": r["side"],
-                "qty": r["qty"],
-                "price": r["filled_price"],
-                "dt": r["created_at"],
-            }
-            for r in rows
-        ]
+        trades = await self._fetch_filled_trades(owner_id)
         report = compute_tax_report(trades)
-        disposals = [
-            {
-                "ticker": d["ticker"],
-                "direction": d["direction"],
-                "qty": float(d["qty"]),
-                "proceeds": round(float(d["proceeds"]), 2),
-                "cost_basis": round(float(d["cost_basis"]), 2),
-                "gain": round(float(d["gain"]), 2),
-                "opened_at": d["opened_at"].isoformat(),
-                "closed_at": d["closed_at"].isoformat(),
-                "holding_days": d["holding_days"],
-                "term": d["term"],
-                "wash_sale": d["wash_sale"],
-                "disallowed_loss": round(float(d["disallowed_loss"]), 2),
-            }
-            for d in report["disposals"]
-        ]
-        return {"summary": report["summary"], "disposals": disposals}
+        return {
+            "summary": report["summary"],
+            "disposals": self._serialize_tax_disposals(report["disposals"]),
+        }
+
+    async def get_corporate_actions_report(
+        self, owner_id: UUID, corporate_actions: dict
+    ) -> dict:
+        """
+        Reporte de corporate actions simulado (#CR-2) sobre los trades FILLED del
+        owner: income por dividendos en efectivo + ajuste por splits del reporte
+        fiscal. `corporate_actions` es {"splits": [...], "dividends": [...]} ya
+        normalizado por corporate_actions.normalize_alpaca_ca — se INYECTA (lo
+        trae el endpoint desde la API de Alpaca), así historian no se acopla a la
+        red y queda 100% testeable (DIP, §3.5 del manual).
+
+        Reusa el motor FIFO de #CR-1: el tax_report se calcula sobre los trades ya
+        ajustados por splits, de modo que cierra correcto post-split. En los datos
+        del período no hay splits que afecten lotes (el único, XLU 2:1, es
+        pre-período) ⇒ el tax_report coincide con el de get_tax_report (no-regresión).
+
+        Returns {"dividends": {...}, "splits": [...],
+                 "tax_report": {"summary": {...}, "disposals": [...]}} JSON-safe.
+        """
+        trades = await self._fetch_filled_trades(owner_id)
+        report = build_corporate_actions_report(trades, corporate_actions)
+        return {
+            "dividends": report["dividends"],
+            "splits": report["splits"],
+            "tax_report": {
+                "summary": report["tax_report"]["summary"],
+                "disposals": self._serialize_tax_disposals(report["tax_report"]["disposals"]),
+            },
+        }
 
     # ═══════════════════════════ § 8 — Macro events ═══════════════════════════
     async def record_macro_event(

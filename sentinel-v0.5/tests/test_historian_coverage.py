@@ -15,7 +15,7 @@ Mock del pool asyncpg (sin DB real). Correr:
 import asyncio
 import os
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -512,6 +512,37 @@ def test_get_tax_report_con_datos_vacio_y_pgerror():
     conn3.fetch = AsyncMock(side_effect=_pg())
     with pytest.raises(asyncpg.PostgresError):
         _run(_hist(conn3).get_tax_report(uuid4()))
+
+
+def test_get_corporate_actions_report_dividendo_split_y_pgerror():
+    # #CR-2: CA inyectadas (DIP). AAPL: compra 1 (nunca vende) → long en ex_date
+    # 2026-05-11 ⇒ income 1*0.27. Split XLU pre-período no afecta (sin trades pre-ex).
+    conn = _conn()
+    conn.fetch = AsyncMock(return_value=[
+        {"ticker": "AAPL", "side": "BUY", "qty": Decimal("1"),
+         "filled_price": Decimal("200"), "created_at": datetime(2026, 4, 28)},
+    ])
+    ca = {
+        "splits": [{"symbol": "XLU", "ex_date": date(2025, 12, 5), "ratio": Decimal("2")}],
+        "dividends": [{"symbol": "AAPL", "ex_date": date(2026, 5, 11),
+                       "rate": Decimal("0.27"), "special": False}],
+    }
+    out = _run(_hist(conn).get_corporate_actions_report(uuid4(), ca))
+    assert out["dividends"]["total_income"] == 0.27
+    assert out["dividends"]["items"][0]["shares"] == 1.0
+    assert out["splits"][0]["affected_trades"] is False  # XLU pre-período
+    # tax_report viene serializado (summary + disposals JSON-safe)
+    assert "summary" in out["tax_report"] and isinstance(out["tax_report"]["disposals"], list)
+    # CA vacías → income 0, sin splits, tax_report coherente
+    conn2 = _conn()
+    conn2.fetch = AsyncMock(return_value=[])
+    empty = _run(_hist(conn2).get_corporate_actions_report(uuid4(), {"splits": [], "dividends": []}))
+    assert empty["dividends"]["total_income"] == 0.0 and empty["splits"] == []
+    # pgerror del fetch se propaga
+    conn3 = _conn()
+    conn3.fetch = AsyncMock(side_effect=_pg())
+    with pytest.raises(asyncpg.PostgresError):
+        _run(_hist(conn3).get_corporate_actions_report(uuid4(), {"splits": [], "dividends": []}))
 
 
 # ═══════════════════════ § 8 — macro events ═══════════════════════
