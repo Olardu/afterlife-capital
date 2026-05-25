@@ -88,6 +88,9 @@ class RegimeClassifier:
             Lista de etiquetas ['BULL'|'NEUTRAL'|'BEAR'] para filas 0..N-6.
         """
         df = bars_df.copy()
+        # #TD: verificado sin off-by-one. pct_change(5)[i] = close[i]/close[i-5]-1;
+        # shift(-5) lo mueve a forward_return[i] = close[i+5]/close[i]-1 (retorno de los
+        # PRÓXIMOS 5 bars). Las últimas 5 filas quedan NaN y se dropean → etiquetas 0..N-6.
         df["forward_return"] = df["close"].pct_change(5).shift(-5)
         df_clean = df.dropna(subset=["forward_return"])
 
@@ -258,6 +261,9 @@ class RegimeClassifier:
         # =====================================================================
         return "NEUTRAL"
 
+        # #TD-22: TODO el bloque de abajo queda INALCANZABLE mientras S-10 esté
+        # desactivado (el return de arriba corta). Se conserva a propósito — es la
+        # lógica real de clasificación que se reactiva al quitar el early return.
         if self.model is None:
             logger.warning("RegimeClassifier sin modelo entrenado. Retornando NEUTRAL.")
             return "NEUTRAL"
