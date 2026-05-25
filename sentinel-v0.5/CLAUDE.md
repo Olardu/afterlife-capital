@@ -2,6 +2,13 @@
 
 Sistema de trading algorítmico multi-agente. 9 estrategias autónomas (Sentinels) coordinadas por un Dispatcher, con protecciones macro, gestión de capital Half-Kelly y persistencia en PostgreSQL. Operación en paper trading hasta validar.
 
+## Estado al 2026-05-24 — T-P EN CURSO (3/9 módulos a 100%). 15 commits LOCALES, `origin/main`=`0242eb2`, HEAD `84f97e5`, suite 173/173
+
+**T-P (cobertura ≥95% módulos críticos) — parcial.** Modelo NO-push vigente. Cobertura por módulo:
+- ✅ **market_clock 0%→100%** (`76db0e0`, 18 tests) · ✅ **claude_client 18%→100%** (`4949540`, 15) · ✅ **the_ear 29%→100%** (`84f97e5`, 25 nuevos).
+- ⏳ Pendientes: main.py (16%), historian (27%), universe_selector (43%), dispatcher (44%), correlation_guard (44%), gate CI `--cov-fail-under=95`.
+- Patrón: bloques `if __name__=="__main__"` ejecutables → `# pragma: no cover`. Suite 115→173.
+
 ## Estado al 2026-05-24 — T-O COMPLETA. 11 commits LOCALES (modelo NO-push), `origin/main`=`0242eb2`, suite 115/115
 
 Sesión T-K→T-O con Cowork. **Modelo desde LOG 04:45: commits LOCALES, sin push** hasta un bundle ordenado por Roman. 10 commits locales sobre `origin/main`=`0242eb2` (HEAD `ce3480d`).
