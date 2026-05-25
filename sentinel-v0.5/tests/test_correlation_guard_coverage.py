@@ -1,0 +1,221 @@
+"""Tests T-P — cobertura de correlation_guard.py.
+
+Complementa test_correlation_guard_decimal.py y _persistence.py (que mockean la
+correlación) cubriendo lo que faltaba: calculate_correlation (matemática pura),
+fetch_bars / _fetch_bars_sync (Alpaca mockeado), y las ramas de evaluate_signal
+no ejercitadas (fetch_bars falla, incoming sin barras, posición==incoming,
+posición sin barras, sin correlaciones, avg ≤ threshold).
+
+Correr:
+  venv\\Scripts\\python.exe -m pytest tests/test_correlation_guard_coverage.py -v
+"""
+import asyncio
+import os
+import sys
+from decimal import Decimal
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import correlation_guard
+from correlation_guard import CorrelationGuard
+
+
+def _run(coro):
+    return asyncio.run(coro)
+
+
+# =============================================================================
+# calculate_correlation (Pearson puro)
+# =============================================================================
+
+def test_correlacion_perfecta_positiva():
+    cg = CorrelationGuard()
+    assert cg.calculate_correlation([1, 2, 3], [2, 4, 6]) == pytest.approx(1.0)
+
+
+def test_correlacion_perfecta_negativa():
+    cg = CorrelationGuard()
+    assert cg.calculate_correlation([1, 2, 3], [6, 4, 2]) == pytest.approx(-1.0)
+
+
+def test_correlacion_serie_constante_es_cero():
+    cg = CorrelationGuard()
+    # std_a = 0 → denominador 0 → 0.0
+    assert cg.calculate_correlation([5, 5, 5], [1, 2, 3]) == 0.0
+
+
+def test_correlacion_longitudes_distintas_es_cero():
+    cg = CorrelationGuard()
+    assert cg.calculate_correlation([1, 2], [1, 2, 3]) == 0.0
+
+
+def test_correlacion_vacia_es_cero():
+    cg = CorrelationGuard()
+    assert cg.calculate_correlation([], []) == 0.0
+
+
+# =============================================================================
+# fetch_bars / _fetch_bars_sync
+# =============================================================================
+
+def test_fetch_bars_exito_delega_en_sync():
+    cg = CorrelationGuard()
+    with patch.object(cg, "_fetch_bars_sync", return_value={"SPY": [1.0, 2.0, 3.0]}):
+        res = _run(cg.fetch_bars(["SPY"], 3))
+    assert res == {"SPY": [1.0, 2.0, 3.0]}
+
+
+def test_fetch_bars_timeout_se_convierte_en_runtimeerror():
+    cg = CorrelationGuard()
+    # to_thread mockeado a sync MagicMock para no dejar una corutina huérfana
+    # (el arg de wait_for se evalúa aunque wic_for esté mockeado).
+    with patch.object(correlation_guard.asyncio, "to_thread",
+                      new=MagicMock(return_value=MagicMock())), \
+         patch.object(correlation_guard.asyncio, "wait_for",
+                      side_effect=asyncio.TimeoutError()), \
+         pytest.raises(RuntimeError, match="timeout"):
+        _run(cg.fetch_bars(["SPY"], 3))
+
+
+# --- Fakes mínimos para el DataFrame de Alpaca (bars_df.loc[t]["close"].tolist())
+class _Closes:
+    def __init__(self, closes):
+        self._c = closes
+
+    def tolist(self):
+        return self._c
+
+
+class _TickerBars:
+    def __init__(self, closes):
+        self._c = closes
+
+    def __getitem__(self, key):  # ["close"]
+        return _Closes(self._c)
+
+
+class _Loc:
+    def __init__(self, data):
+        self._d = data
+
+    def __getitem__(self, ticker):
+        if ticker not in self._d:
+            raise KeyError(ticker)
+        return _TickerBars(self._d[ticker])
+
+
+class _FakeBarsDF:
+    def __init__(self, data):
+        self.loc = _Loc(data)
+
+
+def _patch_alpaca(bars_data=None, get_raises=False):
+    """Patchea StockHistoricalDataClient para devolver bars_data sin red."""
+    client = MagicMock()
+    if get_raises:
+        client.get_stock_bars.side_effect = RuntimeError("alpaca down")
+    else:
+        client.get_stock_bars.return_value = MagicMock(df=_FakeBarsDF(bars_data or {}))
+    return patch("alpaca.data.historical.StockHistoricalDataClient",
+                 return_value=client)
+
+
+def test_fetch_bars_sync_incluye_ticker_con_suficientes_barras():
+    cg = CorrelationGuard()
+    with _patch_alpaca({"SPY": [1.0, 2.0, 3.0]}):
+        res = cg._fetch_bars_sync(["SPY"], window=3)
+    assert res == {"SPY": [1.0, 2.0, 3.0]}
+
+
+def test_fetch_bars_sync_excluye_ticker_sin_datos():
+    cg = CorrelationGuard()
+    with _patch_alpaca({"SPY": [1.0, 2.0, 3.0]}):  # QQQ ausente → KeyError → excluido
+        res = cg._fetch_bars_sync(["SPY", "QQQ"], window=3)
+    assert "QQQ" not in res and "SPY" in res
+
+
+def test_fetch_bars_sync_excluye_ticker_con_pocas_barras():
+    cg = CorrelationGuard()
+    with _patch_alpaca({"SPY": [1.0, 2.0]}):  # solo 2 < window 3 → excluido
+        res = cg._fetch_bars_sync(["SPY"], window=3)
+    assert res == {}
+
+
+def test_fetch_bars_sync_alpaca_falla_levanta_runtimeerror():
+    cg = CorrelationGuard()
+    with _patch_alpaca(get_raises=True), \
+         pytest.raises(RuntimeError, match="fetch_bars"):
+        cg._fetch_bars_sync(["SPY"], window=3)
+
+
+# =============================================================================
+# evaluate_signal — ramas no cubiertas por los tests _decimal
+# =============================================================================
+
+def test_evaluate_signal_fetch_bars_falla_aprueba_con_warning():
+    cg = CorrelationGuard()
+    with patch.object(cg, "fetch_bars", side_effect=RuntimeError("boom")):
+        res = _run(cg.evaluate_signal(
+            "SPY", Decimal("10"),
+            open_positions=[{"ticker": "QQQ", "qty": 1}], performance_scores=[],
+        ))
+    assert res["approved"] is True and res["reason"] == "approved"
+    assert res["adjusted_qty"] == Decimal("10")
+
+
+def test_evaluate_signal_incoming_sin_barras_aprueba():
+    cg = CorrelationGuard()
+    with patch.object(cg, "fetch_bars", return_value={"QQQ": [1.0, 2.0]}):
+        res = _run(cg.evaluate_signal(
+            "SPY", Decimal("10"),
+            open_positions=[{"ticker": "QQQ", "qty": 1}], performance_scores=[],
+        ))
+    assert res["approved"] is True and res["avg_correlation"] == 0.0
+
+
+def test_evaluate_signal_posicion_igual_a_incoming_cuenta_1():
+    """pos_ticker == incoming → correlación 1.0 → avg alto → descarta."""
+    cg = CorrelationGuard()
+    with patch.object(cg, "fetch_bars", return_value={"SPY": [1.0, 2.0, 3.0]}):
+        res = _run(cg.evaluate_signal(
+            "SPY", Decimal("10"),
+            open_positions=[{"ticker": "SPY", "qty": 1}], performance_scores=[],
+        ))
+    # avg_corr 1.0 > 0.75 → reduction_factor 0 → adjusted < MIN → descarta
+    assert res["reason"] == "discarded_high_correlation"
+    assert res["avg_correlation"] == pytest.approx(1.0)
+
+
+def test_evaluate_signal_posicion_sin_barras_se_omite_y_aprueba():
+    """Posición abierta sin barras → omitida; sin correlaciones → avg 0 → aprueba."""
+    cg = CorrelationGuard()
+    with patch.object(cg, "fetch_bars", return_value={"SPY": [1.0, 2.0, 3.0]}):
+        res = _run(cg.evaluate_signal(
+            "SPY", Decimal("10"),
+            open_positions=[{"ticker": "XLU", "qty": 1}],  # XLU no está en bars
+            performance_scores=[],
+        ))
+    assert res["approved"] is True
+    assert res["reason"] == "approved"
+    assert res["avg_correlation"] == 0.0
+
+
+def test_evaluate_signal_correlacion_baja_aprueba_sin_cambios():
+    cg = CorrelationGuard()
+    with patch.object(cg, "fetch_bars",
+                      return_value={"SPY": [1.0, 2.0, 3.0], "TLT": [3.0, 2.0, 1.0]}), \
+         patch.object(cg, "calculate_correlation", return_value=0.1):
+        res = _run(cg.evaluate_signal(
+            "SPY", Decimal("10"),
+            open_positions=[{"ticker": "TLT", "qty": 1}], performance_scores=[],
+        ))
+    assert res["approved"] is True
+    assert res["reason"] == "approved"
+    assert res["adjusted_qty"] == Decimal("10")
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-v"]))
