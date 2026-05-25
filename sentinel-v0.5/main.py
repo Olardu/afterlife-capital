@@ -34,6 +34,7 @@ from config import (
     MARKET_OPEN,
     MIN_CAPITAL_PER_SENTINEL,
     OWNER_USERNAME,
+    THE_EAR_SENTIMENT_ENABLED,
     TIMEZONE,
     UNIVERSE_SELECTION_CYCLE_TIMEOUT_SECONDS,
     UNIVERSE_SELECTION_ENABLED,
@@ -175,7 +176,18 @@ async def initialize() -> dict:
     await regime_classifier.initialize()
 
     # 4. TheEar y CorrelationGuard
-    the_ear           = TheEar(historian=historian)
+    # #FEAT-007: si el flag está activo, construir el SentimentAnalyzer (FinBERT)
+    # e inyectarlo en The Ear (DIP). El modelo se carga lazy al primer uso; si no
+    # carga, The Ear cae al keyword matching solo. Flag off → analyzer None.
+    sentiment_analyzer = None
+    if THE_EAR_SENTIMENT_ENABLED:
+        from sentiment_analyzer import SentimentAnalyzer
+        sentiment_analyzer = SentimentAnalyzer()
+        logger.info("FinBERT habilitado (THE_EAR_SENTIMENT_ENABLED=true) — "
+                    "el modelo se cargará lazy al primer ciclo de The Ear.")
+    else:
+        logger.info("FinBERT deshabilitado — The Ear usa keyword matching.")
+    the_ear           = TheEar(historian=historian, sentiment_analyzer=sentiment_analyzer)
     correlation_guard = CorrelationGuard()
 
     # 5. Dispatcher — requiere owner_id desde DB

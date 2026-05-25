@@ -314,6 +314,18 @@ def test_initialize_sentinels_desde_db_filtra_invalidos():
     hist.connect.assert_awaited()
 
 
+def test_initialize_finbert_flag_on_construye_analyzer():
+    """#FEAT-007: con THE_EAR_SENTIMENT_ENABLED=true, initialize construye el
+    SentimentAnalyzer y lo inyecta (rama if del wire-up)."""
+    hist = _make_historian([_row("sma_crossover", "S-A", ["SPY"])])
+    with _init_env(hist), \
+         patch.object(main, "THE_EAR_SENTIMENT_ENABLED", True), \
+         patch("sentiment_analyzer.SentimentAnalyzer", return_value=MagicMock()) as MSA:
+        system = _run(main.initialize())
+    MSA.assert_called_once()
+    assert "the_ear" in system
+
+
 def test_initialize_fallback_cuando_get_active_falla():
     """get_active_sentinels lanza → active=[] → inserta S-1 fallback en DB."""
     hist = _make_historian([], get_active_raises=True)
