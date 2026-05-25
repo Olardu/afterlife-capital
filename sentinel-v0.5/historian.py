@@ -387,6 +387,20 @@ class Historian:
                 "ON investment_theses(created_at DESC)"
             )
 
+            # =================================================================
+            # SENTIMENT FinBERT (#FEAT-007) — migración 018: The Ear con
+            # sentiment finance-tuned. En hybrid mode se persisten el score
+            # FinBERT y el método usado junto al risk_score. Idempotente.
+            # =================================================================
+            await conn.execute(
+                "ALTER TABLE macro_events "
+                "ADD COLUMN IF NOT EXISTS sentiment_score_finbert NUMERIC(6,4)"
+            )
+            await conn.execute(
+                "ALTER TABLE macro_events "
+                "ADD COLUMN IF NOT EXISTS sentiment_method VARCHAR(20)"
+            )
+
             # Asegurar email + role=ADMIN del owner (#H-1). La columna `email`
             # ya existe en schema.sql desde la creación de la DB (multi-tenant
             # base). Este UPDATE solo corre cuando el email persistido no
@@ -1530,6 +1544,8 @@ class Historian:
         spy_change_15min: Optional[float],
         circuit_breaker_triggered: bool,
         news_titles: Optional[list[dict]] = None,
+        sentiment_score_finbert: Optional[float] = None,
+        sentiment_method: str = "keyword",
     ) -> UUID:
         """
         Inserta un registro de estado macro en macro_events.
@@ -1539,6 +1555,11 @@ class Historian:
         al risk_score actual (#FIX-007). Cada dict tiene la forma
         {title, source, published_at, matched_keywords}. Si None, se persiste
         []. Sirve para auditar por qué se redujo el trading en un momento dado.
+
+        sentiment_score_finbert / sentiment_method (#FEAT-007): score FinBERT
+        [-1,1] (None si el modelo no estaba disponible) y el método con que se
+        calculó el risk_score ('keyword' | 'finbert' | 'hybrid'). En hybrid mode
+        se persiste el score FinBERT aunque el risk_score lo decida el keyword.
 
         Returns:
             event_id del registro insertado.
@@ -1550,8 +1571,9 @@ class Historian:
         sql = """
             INSERT INTO macro_events
                 (risk_score, vix_level, spy_change_15min,
-                 circuit_breaker_triggered, news_titles)
-            VALUES ($1, $2, $3, $4, $5::jsonb)
+                 circuit_breaker_triggered, news_titles,
+                 sentiment_score_finbert, sentiment_method)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
             RETURNING event_id
         """
         try:
@@ -1559,6 +1581,7 @@ class Historian:
                 row = await conn.fetchrow(
                     sql, risk_score, vix_level, spy_change_15min,
                     circuit_breaker_triggered, titles_json,
+                    sentiment_score_finbert, sentiment_method,
                 )
             event_id = row["event_id"]
             logger.info(
