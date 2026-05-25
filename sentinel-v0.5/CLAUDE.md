@@ -2,6 +2,13 @@
 
 Sistema de trading algorítmico multi-agente. 9 estrategias autónomas (Sentinels) coordinadas por un Dispatcher, con protecciones macro, gestión de capital Half-Kelly y persistencia en PostgreSQL. Operación en paper trading hasta validar.
 
+## Estado al 2026-05-25 — T-Q + T-R COMPLETOS (TECHDEBT Bloque F 9/9). 35 commits LOCALES, `origin/main`=`0242eb2`, HEAD `157f363`, suite 431/431
+
+**T-R cerrado** (9 commits por archivo, plan ejecutivo Cowork): api (`f271742`) · dispatcher (`86c197e`) · main (`2f4fc0b`) · historian + migración 016 is_warmup (`82b6f45`) · config (`15bd719`) · correlation_guard (`57a5b8f`) · sentinels (`1782da2`) · infra TimedRotatingFileHandler (`513a8f9`) · regime+misc (`157f363`). Los 3 jobs CI verdes (test 431/431, lint limpio, coverage 99.83%). Migraciones DB aplicadas: 013/014/015/**016**.
+- Comportamiento cambiado (aprobado): dispatcher #TD-2/#TD-7, correlation_guard #TD-3 (no_data→rechaza)/#TD-4 (duplicado→veto). historian get_trade_history eliminado (dead-code).
+- **Diferidos:** Wilder RSI, #TD-12 TIMESTAMPTZ, dashboard #TD-18-21, #TD-13 /api/v1 (post-período-2 / Design). #TECH-001→WONTFIX (recomendado a Cowork).
+- **T-Q hecho:** rename S-2 (ya estaba, UPDATE idempotente).
+
 ## Estado al 2026-05-24 — T-P CERRADO + lint verde (9/9 a 100%, gate CI 95). 25 commits LOCALES, `origin/main`=`0242eb2`, HEAD `f56f174`, suite 431/431
 
 **Update:** `f56f174` `style(ruff)` resolvió los 15 errores ruff preexistentes (F401/F541) → **los 3 jobs del CI pasan local** (test 431/431, lint "All checks passed!", coverage exit 0 / 99.83%). Backups en `backups/2026-05-24/*_pre_ruff`. Sin bloqueadores de CI; falta solo el bundle (Cowork commitea su parte + orden de Roman).
