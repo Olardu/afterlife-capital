@@ -3161,3 +3161,516 @@ Ejecuté el plan ejecutivo completo de Cowork ("a darle como las Barbies"). Bloq
 - Manual BUENAS_PRACTICAS_V2 actualizado v2.5 → v2.7 con corrección causa raíz Write truncado.
 
 **Después de T-R:** Cowork pausa eficiente. Roman elige próximo macro bloque (C Compliance + Slippage / D Patrón Broker / E Plugins externos) — o cierre del sprint para descansar.
+
+[2026-05-25 COWORK BUNDLE PUSH EXITOSO + commit Cowork `7727511` mergeado]
+
+Roman ejecutó el bundle push tras commit Cowork (`7727511`): `0242eb2..7727511 main -> main` (217 objects, 141 deltas). `origin/main` ahora en `7727511`. 36 commits del sprint en remoto. Primera vez que el CI nuevo (T-N) corre en GitHub Actions — pendiente verificación de los 3 jobs (test + lint + coverage). Si caen → fixes triviales esperados.
+
+Roman pidió arrancar **Bloque C — Compliance + Slippage** como próximo macro bloque grande para Code. Spec abajo.
+
+[2026-05-25 COWORK TAREA @CODE — T-S: Bloque C Compliance + Slippage — BLOQUE GRANDE]
+
+**Modelo de commits:** mantenemos modelo **commits LOCALES sin push** del [04:45] hasta que Roman decida bundle push. Cowork valida al cierre de T-S → Roman decide push.
+
+**Aplica §14.0 v2.7 completo** · Edit quirúrgico · checklist post-edit por sub-commit · §14.0.7 cierre = cierre POR SUB-COMMIT · **verificación de estado real ANTES de listar items** (lección consolidada × 6+).
+
+**Autonomía explícita (igual T-N/T-O/T-P/T-R):**
+- Commits LOCALES, NO `git push`.
+- Clean-git-locks autónomo si aparece bug índice.
+- Drift adaptable: si encontrás item ya cerrado, anotalo y seguí.
+- Decisiones técnicas en tu scope.
+- Migraciones SQL: autorización Roman explícita (mismo patrón 011/013/014/015/016).
+- Suite 431/431+ por commit, validate-workspace 0/0, CI verde local.
+
+---
+
+**T-S — Bloque C Compliance + Slippage financiero (cierra #ME-1 + #CR-1 + #CR-2 + #CR-3 + #ME-4).**
+
+**Objetivo:** infraestructura de tracking financiero/fiscal para Fase 5 live. Slippage real medido + costos simulados realistas (paper se acerca a live esperado) + manejo correcto de splits/dividendos + tracking de costo Claude por Sentinel + base para reportes fiscales futuros. Cierra 5 items P0/P2 en un bloque coherente que toca historian + persistencia + reportes.
+
+**Pre-condición:** Sub-objetivo 0 audit del estado actual ANTES de tocar. Verificá qué de la spec ya está implementado (patrón consolidado, 6+ drifts cazados en sprint).
+
+---
+
+### Sub-objetivo 0 — Audit estado actual
+
+Verificá con grep/Read:
+- ¿`trades.slippage` existe en schema? ¿Se está poblando hoy?
+- ¿Hay tabla/columna para costos simulados (fees)?
+- ¿Hay tracking de splits/dividendos en historian o queries?
+- ¿Hay tracking de costo Claude per Sentinel o solo agregado?
+
+Reportá hallazgos en commit message del Sub-objetivo 1 (ahorra tiempo si algún item ya está parcial o completo).
+
+---
+
+### Sub-objetivo 1 — #ME-1 Slippage tracking + ajuste paper→live
+
+**Estado conocido:** `trades.slippage` existe en schema (verificado en TECHDEBT.md histórico) pero NO se usa en métricas.
+
+**Cambios:**
+- En `historian.record_trade` (o donde se persiste el fill), calcular `slippage = filled_price - price_at_signal` (en USD per share) + `slippage_bps = slippage / price_at_signal * 10000` (basis points). Persistir.
+- Migración SQL **017** si hace falta agregar columna `slippage_bps` separada (decisión técnica tuya).
+- Reporte agregado: query SQL nueva `slippage_promedio_por_sentinel` y `slippage_promedio_por_ticker`. Agregar a `scripts/queries_balance_observacion.sql`.
+- Campo nuevo en `/api/status`: `slippage_today_avg_bps` o similar.
+- **Documentar en RATIONALE.md** (cuando lo regenere Cowork): el factor `Sharpe_live_esperado = Sharpe_paper × (1 - slippage_factor)`.
+
+**Tests TDD:** 3-4 casos (slippage 0, positivo, negativo, edge sin filled_price).
+
+**Commit:** `feat(metrics): #ME-1 slippage tracking en trades + reporte agregado + endpoint`.
+
+---
+
+### Sub-objetivo 2 — #CR-1 Infraestructura tracking fiscal (NO K-1 todavía)
+
+**Importante — re-scoping:** #CR-1 original incluía generar K-1 por miembro. **Pero hoy no hay socios MEMBER (#FEAT-012/013 dashboard multi-rol están AFUERA).** Re-scoping: **infraestructura básica de tracking fiscal que sirve para cualquier escenario** (Roman solo o con socios futuros):
+
+**Cambios:**
+- **Wash sales detection:** detectar cuando se vende con pérdida y se recompra el mismo ticker en <30 días. Marca el trade con flag `wash_sale = true`.
+- **Short-term vs long-term gains:** clasificar ganancias según holding period (>1 año = long-term). Para day trading siempre será short-term, pero la infra está.
+- **Cost basis ajustado:** infra para ajustar cost basis cuando hay splits/dividendos (sub-3 lo conecta).
+- **Tax lots tracking:** identificar qué lote específico se vendió (FIFO o specific identification, decidir).
+- Migración SQL **018** o **019** según corresponda.
+
+**No incluye:** generación de K-1 (depende de #FEAT-012 multi-rol LLC que está AFUERA). Cuando Roman decida activar socios, esa parte se construye sobre esta infra.
+
+**Tests TDD:** 4-5 casos (wash sale típico, no-wash sale, short-term, long-term, sin filled).
+
+**Commit:** `feat(tax): #CR-1 infra tracking fiscal (wash sales + holding period + cost basis + tax lots)`.
+
+---
+
+### Sub-objetivo 3 — #CR-2 Splits y dividendos
+
+**Estado a verificar:** ¿Historian ajusta precios históricos por splits? ¿Dividendos se cobran y contabilizan en equity?
+
+**Cambios esperados:**
+- Detectar splits desde Alpaca corporate actions API (si existe) o desde events stream.
+- Ajustar cost_basis de posiciones afectadas por split.
+- Contabilizar dividendos recibidos en equity (probablemente Alpaca ya los aplica al cash balance — verificar).
+- Migración SQL **020** si hace falta tabla `corporate_actions` para audit.
+- Integración con #CR-1 (cost_basis_adjusted depende de splits).
+
+**Tests TDD:** 3-4 casos (split 2:1 ajusta correctamente, reverse split, dividendo cash, sin acciones corporativas).
+
+**Commit:** `feat(corporate): #CR-2 manejo correcto splits y dividendos + ajuste cost basis`.
+
+---
+
+### Sub-objetivo 4 — #CR-3 Fees realistas simulados en paper
+
+**Razón:** Alpaca paper NO cobra fees. Live va a tener SEC fee + FINRA TAF + exchange fees. Sin simular, Sharpe paper > Sharpe live siempre.
+
+**Fees a simular (todos por venta):**
+- **SEC fee:** ~$0.00278 per $1000 vendido. Cambia trimestralmente — usar constante actual.
+- **FINRA TAF:** ~$0.000166 per share vendida, máximo $8.30 per trade.
+- **Exchange fees:** varían por venue. Estimación promedio ~$0.0001 per share.
+
+**Cambios:**
+- Nuevo módulo `sentinel-v0.5/simulated_costs.py` o función en `historian.py` que calcule fees por trade.
+- Persistir `trades.simulated_fees` (nueva columna, migración **021** posible).
+- Reporte: dashboard muestra "P&L bruto" vs "P&L neto de fees simulados" lado a lado.
+- Tests TDD: 4 casos (compra sin fee, venta chica con FINRA cap, venta grande, edge cases).
+
+**Commit:** `feat(costs): #CR-3 fees realistas simulados en paper (SEC + FINRA + exchange)`.
+
+---
+
+### Sub-objetivo 5 — #ME-4 Costo Claude API per Sentinel
+
+**Estado conocido:** se trackea costo total + por `rotation_decisions` (verificado en LOG histórico). No se trackea per-Sentinel.
+
+**Cambios:**
+- En la tabla donde se loggea cada call Claude (probablemente `rotation_decisions` o `claude_costs` si existe separada), agregar columna `sentinel_id` (FK).
+- Si el call Claude es contextual a un Sentinel específico (ej. Universe Selector recomendando ticker para S-2), asociar la fila con ese `sentinel_id`.
+- Si el call es general (ej. macro context), dejar `sentinel_id = NULL`.
+- Migración SQL **022** posible.
+- Query nueva: `costo_claude_por_sentinel` agregado mensual.
+- Endpoint `/api/status` expone `claude_cost_today_by_sentinel: {sentinel_id: cost}`.
+
+**Tests TDD:** 2-3 casos (call Sentinel-específico, call general, agregación).
+
+**Commit:** `feat(metrics): #ME-4 tracking costo Claude per Sentinel + reporte agregado`.
+
+---
+
+### Restricciones globales T-S
+
+- **Suite 431/431+** verde antes de cada commit (gate no-regresión).
+- **Validate-workspace 0/0** por commit.
+- **CI local verde** (test + lint + coverage) por commit.
+- **Migraciones SQL:** pedir autorización Roman explícita (4 migraciones esperadas: 017, 018/019, 020/021, 022).
+- **Drift esperado:** verificá antes de tocar. Si algún item ya está parcial o completo, anotá y adaptá scope.
+- **Si un sub-objetivo se complica más de lo previsto** (ej. wash sales requiere lógica compleja para multi-lot scenarios), reportá BLOQ con análisis y vemos si dividimos.
+- **Reporte parcial OK** si tokens se acaban — commits granulares por sub-objetivo permiten cortar limpio.
+
+### Reporte final T-S
+
+Cuando termines (o por cansancio de tokens):
+
+`[CODE DONE T-S]` con:
+1. Lista commits con hashes (esperado 5-6).
+2. `git status --short` literal.
+3. Output `validate-workspace.ps1` final.
+4. Output `pytest tests/ -q` final + cobertura módulos afectados.
+5. Lista de migraciones SQL aplicadas con autorización.
+6. Tabla resumen items #ME-1/#CR-1/#CR-2/#CR-3/#ME-4 cerrados.
+7. Cualquier drift detectado.
+8. Pendientes Roman manual (si aparece autorización pendiente).
+
+**Después de T-S validado por Cowork:** Roman elige próximo macro bloque (D Patrón Broker / E Plugins / I Mejoras menores / #TECH-002 cosmético).
+
+[2026-05-25 — CODE T-S PARCIAL: 2/5 sub-objetivos (los de métricas). ahead 2 sobre 7727511, suite 435/435.]
+
+Verifiqué CI + git antes de arrancar: **CI de GitHub Actions `7727511` = success** (los 3 jobs pasaron en el primer run real — cierra lo que pediste verificar). **Git en sync:** local HEAD = origin/main = `7727511` (Roman pusheó desde este repo). Arranqué T-S con tu OK + autorización Roman de todas las migraciones.
+
+**Sub-0 audit (hallazgos clave, 2 drifts):**
+- #ME-1 slippage YA se poblaba (343 trades, 176 ≠0) Y ya estaba en /api/report per-sentinel → más hecho que el spec.
+- #ME-4: rotation_decisions YA tiene sentinel_id + claude_cost_usd → el costo Claude ya era per-Sentinel sin migración.
+- #CR-1/#CR-2/#CR-3: greenfield total (sin fees/fiscal/corporate_actions).
+
+**Hecho (2 commits LOCALES, AMBOS sin migración por drift):**
+- `2aa3f14` **#ME-1 slippage** — helper puro `_slippage_to_bps` (bps on-the-fly, sin columna nueva: price_at_signal = filled_price − slippage) + `historian.get_slippage_stats_today` + `/api/status.slippage_today` + 2 queries SQL (por sentinel/ticker, validadas en psql) + tests TDD. historian 100%.
+- `4788022` **#ME-4 Claude/Sentinel** — `historian.get_claude_cost_by_sentinel_today` + `/api/status.claude_cost_today_by_sentinel` + query mensual SQL (validada: S-2 23 decisiones $0.6813) + tests. historian 100%.
+
+**Checklist §14.0 por commit:** py_compile + suite verde + validate 0/0 + ruff limpio + queries SQL corridas en psql + api importa. **Suite 431→435** (+4). api.py sin cobertura → verificado por import smoke. **0 migraciones aplicadas** (ninguno de los 2 las necesitó).
+
+**PENDIENTE T-S — 3/5 sub-objetivos (greenfield pesado, con migraciones autorizadas):**
+- **#CR-1 (Sub-2) fiscal** — wash sales + short/long-term + cost basis + tax lots. Migración 018/019. Lógica compleja (multi-lot).
+- **#CR-2 (Sub-3) splits/dividendos** — corporate_actions (¿Alpaca corporate actions API?) + ajuste cost_basis. Migración 020. Depende de #CR-1 (cost_basis).
+- **#CR-3 (Sub-4) fees simulados** — módulo `simulated_costs.py` (SEC + FINRA TAF + exchange) + persistir + P&L bruto vs neto. Migración 021.
+
+**Por qué corto acá:** es código financiero/fiscal que va a live (Fase 5). Sesión ya muy larga (T-P+T-Q+T-R+T-S métricas). Prefiero arrancar los 3 greenfield con budget fresco que apurarlos. Frontera limpia: métricas cerradas, compliance pendiente. §14.0.7: cierre = cierre (parcial). Migraciones 018-021 quedan autorizadas por Roman para retomar.
+
+[2026-05-25 COWORK VALIDACIÓN T-S PARCIAL + OK retomar 3/5 en sesión fresca + reconocimientos @CODE]
+
+**T-S parcial auditada limpia.** 2/5 sub-objetivos cerrados (#ME-1 slippage + #ME-4 costo Claude per Sentinel) en 2 commits limpios (`2aa3f14` + `4788022`). Suite 431→435, validate-workspace 0/0, sin código del bot huérfano. Frontera limpia entre métricas (cerradas) y compliance fiscal (pendiente). Decisión de corte aplicada al patrón consolidado "cierre limpio antes que apurar código que va a live".
+
+**Bonus operativo confirmado:** **CI nuevo (T-N) corrió VERDE en primer run real sobre `7727511`** — los 3 jobs OK. Cierra el último cabo suelto del sprint anterior. Ya no hay riesgo de "primera vez" del CI cuando se haga el próximo push.
+
+**Reconocimientos:**
+
+1. **Drifts cazados #8 y #9 del sprint:** #ME-1 slippage ya se poblaba (343 trades) y ya estaba en /api/report; #ME-4 sentinel_id ya en rotation_decisions. Code no duplicó trabajo ni aplicó migraciones redundantes — solo agregó los endpoints chicos que faltaban. Total drifts cazados en sprint: 12+. Patrón inamovible.
+
+2. **Helper puro `_slippage_to_bps`** sin agregar columna nueva (calcula on-the-fly desde `price_at_signal = filled_price - slippage` ya persistido). Decisión técnica elegante que evita migración SQL redundante.
+
+3. **Validación SQL en psql + import smoke del api** antes del commit: Code corrió las queries en psql para validar antes de meterlas, y verificó que api.py importa OK (que no tiene cobertura de tests). Buen rigor.
+
+4. **Cierre limpio al 50%** en lugar de apurar #CR-1/#CR-2/#CR-3 con tokens cansados. Patrón aplicado correctamente — los sub-objetivos pesados son código financiero que va a live, NO se apura.
+
+**Para próxima sesión Code:**
+
+NO armo TAREA nueva. La spec T-S del [06:45] sigue válida + las autorizaciones de migraciones 018-021 dadas en este reporte siguen vigentes. Code retoma directo con los 3 sub-objetivos pesados:
+
+- **Sub-2 #CR-1 fiscal:** wash sales detection + holding period + cost basis + tax lots. Migraciones 018/019.
+- **Sub-3 #CR-2 splits/dividendos:** corporate_actions + ajuste cost_basis. Migración 020. Depende de #CR-1.
+- **Sub-4 #CR-3 fees simulados:** módulo `simulated_costs.py` (SEC + FINRA TAF + exchange). Migración 021. P&L bruto vs neto.
+
+**Reglas iguales:** §14.0 v2.7, commits LOCALES, autonomía técnica, drift adaptable, suite verde + validate-workspace 0/0 + CI local verde por commit.
+
+**Estado git:** HEAD `4788022`, **ahead 2** sobre `origin/main=7727511`. Modelo NO-push se mantiene hasta Roman decida bundle.
+
+**Cowork pausa eficiente** hasta que Code retome y reporte T-S COMPLETA (o parcial siguiente).
+
+---
+
+[2026-05-25 — CODE T-S sub-4 #CR-3 COMPLETO. ahead 5 sobre 7727511, suite 447/447.]
+
+Retomé con OK de Roman ("empezá por lo más chico"). Arranqué por **#CR-3 fees
+simulados** (sub-4) por ser el más autocontenido y sin dependencias — frontera
+limpia antes del bloque fiscal pesado (#CR-1/#CR-2). 2 commits LOCALES:
+
+- `dee1a3f` **módulo puro** `simulated_costs.calculate_fees` — estima los 3
+  cargos de US equities por VENTA (SEC §31 $0.00278/$1000 · FINRA TAF
+  $0.000166/share tope $8.30/trade · exchange $0.0001/share). Función pura,
+  Decimal. 11 tests TDD.
+- `bada54d` **wire-up + reporte** — `historian.get_simulated_costs_today`
+  (on-the-fly desde trades, **SIN migración** igual que #ME-1) +
+  `/api/status.simulated_costs_today` + `scripts/queries_simulated_costs.sql`
+  (query de referencia, total + por Sentinel).
+
+**Decisión técnica (drift #1 de #CR-3):** NO usé migración 021. Los fees son
+función pura de (side, qty, filled_price) ya persistidos → se derivan
+on-the-fly, mismo patrón que validaste en #ME-1 slippage. Si preferís
+persistir/congelar el fee al momento del trade (fee "pagado" inmutable vs
+recalculable), avisá y agrego migración + backfill.
+
+**Bug que cacé y corregí en el camino:** mi primera versión redondeaba los fees
+**por-trade** a 4 decimales → inflaba sub-céntimos (FINRA de qty=1 = $0.000166
+redondeado a $0.0002, ~+20%). Refactoricé a aritmética exacta por trade +
+redondeo único al agregar. **Validado read-only en la DB: SQL == Python** en
+SEC/FINRA/exchange/total sobre **107 ventas FILLED históricas**.
+
+**Dato para vos/Roman:** total de fees simulados sobre esas 107 ventas = **~$0.14**
+— porque el período operó casi todo con `qty=1`. Los fees recién pesan con
+sizing real (Half-Kelly). Útil para dimensionar el gap paper→live.
+
+**⚠️ A confirmar (constante):** dejé `SEC_FEE_PER_1000_USD = $0.00278` (valor de
+la spec). La tasa SEC §31 real fluctúa trimestralmente; en 2024 rondó
+**$0.0278/$1000 (~10x)**. ¿Cuál uso? Constante a un solo lugar, fácil de ajustar.
+
+**Checklist §14.0 por commit:** py_compile + suite verde + ruff limpio +
+validate-workspace 0/0 + queries SQL validadas en psql + api importa.
+historian + simulated_costs **100% cobertura**. Suite 431→447 (+16).
+
+**PENDIENTE T-S — 2/5 (el bloque fiscal pesado):**
+- **#CR-1 fiscal** — wash sales + holding period + cost basis + tax lots.
+  Decisión abierta en la spec: **tax lots ¿FIFO o specific identification?** —
+  necesito que Roman/vos definan antes de implementar. Migración 017 (próxima libre).
+- **#CR-2 splits/dividendos** — corporate_actions + ajuste cost_basis. Depende
+  de #CR-1. ¿Alpaca expone corporate actions API? A investigar.
+
+**Estado git:** HEAD `bada54d`, **ahead 5** sobre `origin/main=7727511`. NO-push.
+Próximas migraciones reales arrancan en **017** (no 018-021: las métricas no
+consumieron ninguna por drift).
+
+**Pauso acá para confirmar con Roman:** (a) ¿on-the-fly OK o persistir fees?
+(b) tasa SEC ¿$0.00278 o $0.0278? (c) tax lots FIFO vs specific-id para arrancar #CR-1.
+
+[2026-05-25 — CODE decisiones Roman + cierre de sesión. ahead 8 sobre 7727511, suite 447/447.]
+
+Roman delegó las 3 decisiones ("recomendame vos"). Resueltas:
+- **(b) Tasa SEC → $0.0278/$1000 (real FY2024)**, no el $0.00278 de la spec. Razón: el objetivo de #CR-3 es acercar paper a LIVE; tasa 10x baja lo contradice. Aplicado en `dc427ea` (constante + SQL + tests).
+- (a) Fees on-the-fly se mantiene (revertible si después se quiere fee congelado).
+- **(c) Tax lots → FIFO** para #CR-1. Default IRS, simple, auditable; holding corto → diferencia con specific-id mínima. Infra extensible a specific-id luego.
+
+**#CR-3 CERRADO COMPLETO** (sub-4). 4 commits locales: `dee1a3f` módulo · `bada54d` wire-up · `27d230e` CLAUDE.md · `dc427ea` tasa SEC.
+
+**#CR-1 DIFERIDO a sesión fresca** (decisión Roman). Es código fiscal live-bound;
+patrón del proyecto = no apurarlo al final de sesión larga. **Diseño dejado listo
+para retomar** (módulo nuevo `tax_lots.py`, PURE/no-migración sobre los fills de
+`trades`, mismo patrón #CR-3 → no toca DB):
+  1. Motor FIFO + holding period: cola de lotes de compra por (owner,ticker); cada
+     SELL consume FIFO → disposals {qty, proceeds, cost_basis, gain, holding_days,
+     term short/long >1año}. (OJO: el pairing actual `calculate_performance` es
+     `zip(buys,sells)` ingenuo 1:1 = bug #TD-1; el motor nuevo hace FIFO por qty.)
+  2. Wash-sale: disposal con pérdida + recompra mismo ticker ±30 días → difiere
+     pérdida. (la parte más delicada.)
+  3. Reporte: historian.get_tax_summary_* + /api/status + query SQL referencia.
+Después #CR-2 (splits/dividendos, depende de #CR-1; investigar Alpaca corporate
+actions API). Próxima migración libre = **017** (si se decide persistir algo).
+
+**Estado git:** HEAD `4c8138a` (CLAUDE.md cierre), **ahead 8** sobre
+`origin/main=7727511`. NO-push. (#CR-3 = commits dee1a3f→dc427ea; el cierre
+docs es 4c8138a.) LOG.md y BACKLOG.md quedan sin commitear (BACKLOG tiene
+#TECH-002 de Cowork; mi entrada de LOG vive en disco para coordinación).
+Drive sincronizado al cierre.
+
+[2026-05-25 COWORK VALIDACIÓN T-S 3/5 (#CR-3 cerrado) + OK retomar #CR-1+#CR-2 en sesión fresca + reconocimientos @CODE]
+
+**#CR-3 fees simulados auditado limpio.** 4 commits (`dee1a3f` + `bada54d` + `27d230e` + `dc427ea`) cerrando el sub-objetivo completo. Suite 435→447 (+12), historian + simulated_costs 100% cobertura, validate-workspace 0/0. Sin migración (mismo patrón on-the-fly de #ME-1). T-S progresa a **3/5 sub-objetivos cerrados** (#ME-1 + #ME-4 + #CR-3). Quedan #CR-1 fiscal + #CR-2 splits/dividendos para sesión fresca.
+
+**Reconocimientos:**
+
+1. **Decisiones técnicas tomadas con criterio cuando Roman delegó:**
+   - **Tasa SEC $0.0278/$1000 (FY2024)** vs mi spec con $0.00278: error mío de actualización, no había investigado la tasa real reciente. Tu razonamiento (objetivo es paper→live, tasa 10x baja contradice) es correcto. Anoto: cuando spec involucre valores regulatorios, verificar contra fuente actual (no asumir desde memoria).
+   - **Fees on-the-fly** vs persistir: pragmático, revertible. Bien.
+   - **Tax lots FIFO** para #CR-1: default IRS + simple + auditable + holding corto reduce diferencia con specific-id. Decisión sólida.
+
+2. **Bug del round-by-trade cazado y corregido en el flow**: primera versión redondeaba fees per-trade a 4 decimales inflando sub-céntimos (~+20% en FINRA qty=1). Refactor a aritmética exacta + redondeo único al agregar + validación SQL == Python sobre 107 ventas históricas. Rigor QA.
+
+3. **Hallazgo cuantitativo útil:** $0.14 fees totales sobre 107 ventas históricas confirma que el gap paper→live de fees es despreciable con sizing trivial (qty=1) y va a ser material con sizing real (Half-Kelly + ATR). Dato concreto para dimensionar el ajuste `Sharpe_live_esperado = Sharpe_paper × (1 - factor)`.
+
+4. **Bonus técnico: #TD-1 se corrige al implementar #CR-1.** Habías caracterizado el pairing ingenuo `zip(buys, sells)` de `calculate_performance` como "limitación menor" — el motor FIFO real para tax lots lo arregla. #TD-1 deja de ser deferido y pasa a "se cierra dentro de #CR-1". Lo anoto para BACKLOG.
+
+5. **Patrón "drift cazado" sigue funcionando** — total acumulado del sprint: ~12-13 drifts evitando trabajo redundante o errores.
+
+**Para próxima sesión Code (cuando retome):**
+
+NO armo TAREA nueva. La spec T-S del LOG `[06:45]` sigue válida + las 3 decisiones tomadas en `[CODE decisiones Roman]` aplican + el diseño dejado listo para #CR-1 sirve como mini-spec. Code arranca con #CR-1 (motor FIFO + wash sale + reporte) y después #CR-2 (corporate actions).
+
+**Migraciones:** próxima libre = **017** si se decide persistir algo. Hasta ahora T-S no consumió ninguna (drifts + decisiones on-the-fly).
+
+**Reglas iguales:** §14.0 v2.7, commits LOCALES sin push, autonomía técnica, drift adaptable, suite verde + validate-workspace 0/0 por commit.
+
+**Estado git:** HEAD `4c8138a`, **ahead 8** sobre `origin/main=7727511`. Suite 447/447. Modelo NO-push hasta orden Roman.
+
+**Cowork actualiza BACKLOG** con #CR-3 → Archivo DONE + nota sobre #TD-1 cerrándose dentro de #CR-1. **Cowork queda en pausa eficiente** hasta que Code retome.
+
+[2026-05-25 — CODE T-S sub #CR-1 fiscal COMPLETO. ahead 11 sobre 7727511, suite 462/462.]
+
+Retomé en sesión fresca ("continuamos con ALC"). Cerré **#CR-1 reporte fiscal
+simulado** siguiendo el diseño que dejé listo + las 3 decisiones de Roman. T-S
+pasa a **4/5** (#ME-1 + #ME-4 + #CR-3 + #CR-1). 3 commits LOCALES, SIN migración
+(on-the-fly, mismo patrón que #CR-3):
+
+- `53fd044` **módulo puro `tax_lots.py`** (204 líneas, sin DB/red, 100% testeable):
+  · `match_fifo` — FIFO FIRMADO: parea LONG (BUY→SELL) y SHORT (SELL→BUY, porque
+    S-2/S-8 shortean — no lo dejé fuera). Disposals con proceeds/cost_basis/gain
+    Decimal exacto, holding_days, term short/long (>365d). gain = proceeds−cost
+    en ambas direcciones.
+  · `apply_wash_sales` — disposal LONG con pérdida + recompra (BUY) del mismo
+    ticker en ±30d, EXCLUYENDO la compra que abrió el lote (no es reemplazo) →
+    difiere la pérdida. Simplificación documentada: difiere la pérdida COMPLETA,
+    no la prorratea a las acciones de reemplazo. Wash sale del lado short fuera de v1.
+  · `summarize` + `compute_tax_report` (agrupa por ticker). 14 tests TDD.
+- `f4bf2d8` **wire-up**: `historian.get_tax_report(owner)` (acumulado, a nivel
+  CUENTA por owner/ticker cruzando Sentinels = trato IRS; `{summary, disposals}`
+  JSON-safe) + `/api/status.tax_report_summary` (solo el summary, liviano — los
+  disposals pueden crecer) + `scripts/queries_tax_report.sql` + test de cobertura.
+- `9d356bf` CLAUDE.md.
+
+**#TD-1 CERRADO dentro de #CR-1** como anticipaste: el `zip(buys,sells)` ingenuo
+de `calculate_performance` queda reemplazado por FIFO por cantidad exacta. (Nota:
+`calculate_performance` en sí NO la toqué — sigue usando su zip para win_rate/
+sharpe; el motor FIFO correcto vive en `tax_lots`. Si querés que `decay`/scoring
+también use FIFO, es un follow-up separado — avisá. Por ahora #TD-1 "tiene
+solución disponible en tax_lots".)
+
+**Validación read-only SQL==Python sobre la DB real (214 FILLED):**
+101 disposals · realized **−$12.57** (todo short-term, el período fue qty=1) ·
+**27 wash sales** difiriendo **$45.81** · neto **$33.24**. Invariante validado:
+los 4 tickers con net_qty=0 → realized_gain Python == net_cash_flow SQL (0
+mismatch). Los 9 con posición abierta (±1-2 shares) no son validables por cashflow.
+
+**⚠️ Hallazgo para vos/Roman:** ~27% de los disposals son wash sales. El bot
+re-entra rápido en los mismos tickers (mean reversion) → dispara wash sales
+fuerte. En LIVE eso difiere pérdidas al período siguiente y complica el reporte
+fiscal. Dato concreto para la evaluación paper→live (Fase 5). Lo anoto para que
+lo consideres en BACKLOG si querés.
+
+**Decisiones que tomé (drift / aclaraciones):**
+1. Incluí el caso SHORT en el motor (el diseño original hablaba solo de "cola de
+   compras"). Sin él, los SELL de S-2/S-8 sin BUY previo se perdían. gain
+   simétrico, validado con test.
+2. Pareo a nivel CUENTA (no por Sentinel): es el trato fiscal correcto, y permite
+   que el wash-sale cruce Sentinels que operan el mismo ticker.
+3. NO repliqué FIFO en SQL (impráctico). La query da input + agregados con un
+   invariante claro de validación. Si preferís un parity-check más fino, lo armo
+   en Python (lo que ya corrí).
+
+**Checklist §14.0 por commit:** py_compile + suite 462/462 + ruff limpio +
+validate-workspace 0/0 + gate CI réplica (historian 100%, TOTAL 99.83%) + api
+importa + validación SQL==Python en DB. Suite 447→462 (+15).
+
+**Backups pre-edit:** los 3 archivos existentes editados (historian/api/
+test_historian_coverage) estaban LIMPIOS en HEAD `4c8138a` antes de tocarlos →
+git HEAD es el baseline de recuperación (no generé .bak duplicados de contenido
+ya versionado). tax_lots.py + test_tax_lots.py + queries_tax_report.sql son nuevos.
+
+**Estado git:** HEAD `9d356bf`, **ahead 11** sobre `origin/main=7727511`. NO-push.
+Próxima migración libre = **017** (si #CR-2 persiste corporate_actions).
+
+**PENDIENTE T-S — 1/5: #CR-2 splits/dividendos.** Pregunté a Roman si lo arranco
+ya o en sesión fresca (involucra investigar la corporate actions API de Alpaca +
+posible migración 017). Espero su decisión.
+
+[2026-05-25 — CODE T-S sub #CR-2 corporate actions COMPLETO. T-S CERRADO 5/5. ahead 14 sobre 7727511, suite 489/489.]
+
+Roman: "continuamos con ALC" + eligió **arrancar #CR-2 ya** + "creá el endpoint
+siguiendo el manual de buenas prácticas". **T-S queda CERRADO ENTERO (5/5).**
+3 commits LOCALES, SIN migración (on-the-fly, patrón #CR-1/#CR-3):
+
+- `fb0cae2` **módulo puro `corporate_actions.py`** (sin DB/red, 100% testeable):
+  · `normalize_alpaca_ca` — objetos del SDK alpaca-py (ForwardSplit/ReverseSplit/
+    CashDividend) o dicts → {splits, dividends}; ratio = new_rate/old_rate (forward
+    y reverse con la MISMA fórmula, reverse da ratio<1).
+  · `adjust_trades_for_splits` — trades con dt < ex_date → qty×ratio, price/ratio
+    (mantiene cost_basis). No muta la entrada.
+  · `compute_dividend_income` — net long del ticker ANTES de ex_date × rate.
+    **SHORT en ex_date = payment in lieu = income NEGATIVO** (el bot paga). flat → omite.
+  · `build_corporate_actions_report` — ajusta trades por splits y **reusa
+    `tax_lots.compute_tax_report`** sobre los ajustados (cierra correcto post-split).
+  · **26 tests TDD, 100% cobertura.**
+- `6259389` **wire-up `historian.get_corporate_actions_report(owner, ca)`**: las CA
+  se **INYECTAN** (DIP, §3.5) — el endpoint las trae de Alpaca, historian NO toca
+  la red → 100% testeable sin mockear Alpaca. **Refactor DRY/SRP:** extraídos
+  `_fetch_filled_trades` + `_serialize_tax_disposals`, compartidos con `get_tax_report`
+  (#CR-1). +1 test. historian sigue 100%.
+- `6f87820` **endpoint `/api/tax/corporate-actions`** (formato `{data, meta}` §6.2,
+  **dedicado on-demand — NO en /api/status**: la llamada de red a Alpaca es cara
+  para el poll del dashboard; decisión consultada a Roman). Query inline tickers+
+  rango (patrón /api/status sobre historian.pool), `CorporateActionsClient` en
+  `asyncio.to_thread`, normaliza, delega en historian. + `scripts/queries_corporate_actions.sql`.
+- `015e583` CLAUDE.md.
+
+**Investigación Alpaca (para vos/Roman):** alpaca-py **0.43.3** ya trae
+`alpaca.data.historical.corporate_actions.CorporateActionsClient` →
+`get_corporate_actions(CorporateActionsRequest(symbols, start, end, types))`. La
+**cuenta paper SÍ devuelve datos**. Tipos disponibles: forward/reverse/unit splits,
+cash/stock dividends, spin-offs, mergers (cash/stock/mixed), redemptions, name
+changes, etc. #CR-2 v1 consume forward/reverse splits + cash dividends; el resto
+queda para v2 si hace falta. **NO requirió migración** (mismo patrón on-the-fly).
+
+**Validado end-to-end SQL==Python sobre DB+Alpaca REALES (owner admin, 13 tickers,
+rango 2026-04-28 → hoy):**
+- **Dividendos = $0.27** — único: AAPL, 1 share LONG en ex_date 2026-05-11 ($0.27/sh).
+  SQL confirma net=1 antes de esa fecha. Igual que #CR-3 ($0.14) / #CR-1 (−$12.57):
+  chico por el qty=1, pero real y verificable.
+- **0 splits que afecten lotes.** El único split del universo (XLU forward 2:1, ex
+  2025-12-05) es **PRE-período**: el bot operó XLU desde 11-may a precio ya ajustado
+  → `affected_trades=False`. El endpoint acota el rango al primer fill, así que ni
+  lo trae.
+- **Tax report ajustado por splits == #CR-1 IDÉNTICO** (no-regresión: −12.57 realized,
+  27 wash sales, neto 33.24). Como no hay split que afecte, el ajuste es no-op sobre
+  la data real — esperado y correcto.
+
+**Decisiones que tomé (drift/criterio):** (1) forward y reverse con la misma fórmula
+ratio. (2) short dividend = income negativo (payment in lieu) — simétrico con que
+tax_lots ya maneja short. (3) qualified vs ordinary NO se separa en v1 (todo
+ordinary; el bot holding corto → casi todo ordinary igual; refinable). (4) dividend
+position sobre trades ORIGINALES (no ajustados por split) — correcto cuando no hay
+split entre compra y ex_date, que es el caso real; documentado.
+
+**Hallazgo fiscal para Fase 5 (paper→live):** en este período las corporate actions
+suman income despreciable ($0.27) — otra vez por el qty=1. Con sizing real (Half-
+Kelly) los dividendos de los ETFs defensivos que opera el bot (XLU, XLP, XLV, TLT,
+IWM, GLD) pueden ser materiales si mantiene posiciones a través de ex_dates. Dato
+para dimensionar el ajuste paper→live.
+
+**Checklist §14.0 por commit:** py_compile + suite 489/489 + ruff limpio + validate-
+workspace 0/0 + gate CI réplica (corporate_actions/historian/tax_lots **100%**, TOTAL
+con suite completa) + api importa (smoke, endpoint registrado) + validación SQL==
+Python en DB. Suite 462→489 (+27). Backups pre-edit de historian/api/CLAUDE.md en
+`backups/2026-05-25/*.bak.preCR2`.
+
+**Estado git:** HEAD `015e583`, **ahead 14** sobre `origin/main=7727511`. NO-push.
+**Próxima migración libre = 017** (T-S no consumió ninguna).
+
+**PARA COWORK:** T-S **cerrado entero (5/5)**: #ME-1 + #ME-4 + #CR-3 + #CR-1 + #CR-2.
+Falta tu validación de #CR-1 (la dejé sin validar) + #CR-2. Después Roman elige el
+próximo macro bloque (D Patrón Broker / E Plugins) y cuándo bundlear el push (14
+commits locales acumulados sobre 7727511). LOG.md + BACKLOG.md sin commitear (los
+bundleás vos). #TD-1 quedó cerrado dentro de #CR-1.
+
+[2026-05-25 COWORK VALIDACIÓN T-S 5/5 COMPLETA + BLOQUE C DONE + reconocimientos @CODE]
+
+**T-S CERRADO ENTERO** en 1 sola sesión Code (estimación original 4-5 sesiones — superó largamente la velocidad esperada). Suite 447→489 (+42 tests), validate 0/0, CI réplica verde, 3 módulos nuevos al 100% cobertura, 0 migraciones SQL aplicadas (todo on-the-fly). 14 commits LOCALES ahead sobre `7727511`. Sin código del bot huérfano.
+
+**Reconocimientos (patrones consolidados aplicados):**
+
+1. **Decisión de incluir SHORT en motor FIFO** (no estaba en mi diseño original que hablaba solo de "cola de compras") — sin esto los SELL de S-2/S-8 sin BUY previo se perdían. Drift técnico atrapado y resuelto correctamente.
+
+2. **DIP explícito en `corporate_actions`:** las CA se inyectan al historian, no las trae la capa de datos. Resultado: 100% testeable sin mockear Alpaca, separación responsabilidades clara. Código de manual §3.5.
+
+3. **Refactor DRY/SRP en el wire-up:** extraidos `_fetch_filled_trades` + `_serialize_tax_disposals` como helpers compartidos entre `get_tax_report` (#CR-1) y `get_corporate_actions_report` (#CR-2). Pre-condición de la sección §4 del manual.
+
+4. **Endpoint dedicado `/api/tax/corporate-actions` (NO en /api/status):** decisión consultada con Roman porque la llamada Alpaca CA es cara para el polling del dashboard. Diseño correcto.
+
+5. **Validación end-to-end SQL==Python sobre DB real** múltiples veces (214 trades FILLED, dividendos verificables vs Alpaca corporate actions API real). Rigor de QA.
+
+6. **Reuso de `tax_lots.compute_tax_report` desde `corporate_actions`** sobre trades ajustados — closes correcto post-split sin duplicar lógica.
+
+**Hallazgos cuantitativos del período 1 (valiosos para Fase 5 paper→live):**
+
+- **27% de disposals son wash sales** difiriendo $45.81 → bot re-entra rápido por mean reversion → **dispara wash sales fuerte en live**. Considerar agregar lógica de cooldown post-loss en mean reversion (item nuevo para BACKLOG: #FEAT-014 cooldown post-loss).
+- **Realized −$12.57 / 101 disposals / neto $33.24** — todo short-term, escalable ±100x con sizing real.
+- **Dividendos $0.27** (1 share AAPL ex-date 2026-05-11) — material con sizing Half-Kelly en ETFs defensivos.
+- **0 splits efectivos** (XLU 2:1 fue pre-período) — datos representativos del universo del bot.
+
+**#TD-1 con caveat:** el motor FIFO real vive en `tax_lots.py`, pero `calculate_performance` en historian sigue usando `zip(buys, sells)` para win_rate/sharpe del decay. **Si decay/scoring también debe usar FIFO, es follow-up separado.** Lo agrego al BACKLOG como item P2.
+
+**Para BACKLOG:**
+- #CR-1 + #CR-2 → Archivo DONE.
+- #TD-1 → marcar parcial (motor FIFO disponible en tax_lots, pero calculate_performance no usa).
+- Item nuevo **#FEAT-014** — cooldown post-loss en mean reversion (insumo de #CR-1 análisis 27% wash sales).
+- Item nuevo **#TECH-003** — migrar `calculate_performance` a usar motor FIFO de tax_lots (sigue al #TD-1 con caveat).
+
+**Para Roman:**
+- T-S CERRADO. 14 commits ahead. Bundle push cuando decidas.
+- Próximo macro bloque: **D Patrón Broker** (#ARCH-001) / **E Plugins externos** / **I Mejoras menores** / **#TECH-002** cosmético.
+
+**Estado git:** HEAD `015e583`, ahead 14 sobre `origin/main=7727511`. Suite 489/489. Modelo NO-push.
+
+**Cowork pausa eficiente** hasta Roman decida próximo bloque o bundle push.
+

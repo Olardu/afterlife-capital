@@ -55,13 +55,15 @@
 | **T-R sub-8** | cross-cutting: TimedRotatingFileHandler + #TD-12 TIMESTAMPTZ (grande) + dashboard | TECH-BLOCK | P2 | BLOCKED por decisión Roman |
 | **T-R sub-9** | regime + cosméticos: #TD-22 + off-by-one + #TECH-001 + #TD-25 | TECH-DRIFT | P3 | BLOCKED por decisión Roman |
 | #ME-1 | Slippage tracking + ajuste paper→live | TECH-BLOCK | P0 | TODO |
-| #CR-1 | Reportes fiscales (K-1) | OPS | P0 | TODO |
-| #CR-3 | Fees realistas simulados | TECH-BLOCK | P0 | TODO |
+| #CR-1 | Reportes fiscales (infra: wash sales + FIFO + cost basis) | OPS | P0 | ✅ DONE local (T-S sub-2, `53fd044` + `f4bf2d8`) |
+| #CR-3 | Fees realistas simulados | TECH-BLOCK | P0 | ✅ DONE local (T-S sub-4, commits `dee1a3f` + `bada54d` + `dc427ea`) |
 | #TD-26 | Validación matemática Half-Kelly (research DONE, falta auditoría externa) | TECH-BLOCK | P0 | ⚠️ PARCIAL (research Cowork en `outputs/half_kelly_validation_analysis.md`) |
 | #ARCH-001 | Refactor patrón Broker | ARCH | P2 | TODO |
 | #TECH-001 | Bug git index recurrente | TECH-BLOCK | — | ✅ WONTFIX (0 recurrencias post-Defender exclusion en ~15 commits del sprint) |
 | #ME-4 | Costo Claude API per Sentinel | TECH-BLOCK | P2 | TODO |
-| #CR-2 | Splits y dividendos | TECH-BLOCK | P2 | TODO |
+| #CR-2 | Splits y dividendos (corporate actions API) | TECH-BLOCK | P2 | ✅ DONE local (T-S sub-3, `fb0cae2` + `6259389` + `6f87820`) |
+| **#FEAT-014** | Cooldown post-loss en mean reversion (evita 27% wash sales detectadas en #CR-1) | FEAT-CORE | P1 | TODO |
+| **#TECH-003** | Migrar `calculate_performance` a motor FIFO de tax_lots (cierra #TD-1 completo) | TECH-BLOCK | P2 | TODO |
 | #HE-2 | Investment Thesis Tracking | FEAT-CORE | P2 | TODO |
 | #HE-3 | Alpaca MCP conversacional | FEAT-NICE | P2 | TODO |
 | #HE-4 | Backtesting framework | FEAT-CORE | P2 | TODO |
@@ -118,8 +120,9 @@
 - Reactivar S-10 RegimeClassifier.
 - #TM-3 Trailing stops por software.
 - #HE-6 Riskfolio-Lib.
-- #TD-1 FIFO multi-ticker (bug menor re-caracterizado).
+- #TD-1 FIFO multi-ticker (bug menor re-caracterizado). **Se cierra automáticamente dentro de #CR-1 cuando Code implemente motor FIFO real para tax lots.**
 - T-R sub-9 cosméticos (#TD-25 dataclass + #TD-22 dead code + off-by-one).
+- **#TECH-002** — Limpiar HTMLs viejos del dashboard que inflan stats de lenguajes del repo (GitHub muestra HTML 51% por estos archivos antiguos). Candidatos a eliminar tras verificar que no se usan: `dashboard/index1.html`, `dashboard/index2.html`, `dashboard/index.pre-redesign.html`, `index.html` y `index1.html` en raíz (duplicados). Conservar `dashboard/index.html` (actual) + `dashboard/admin.html`. Trabajo cosmético, ~15 min Code. Resultado esperado: stats GitHub pasan a ~50% Python / 40% JS / 10% HTML, más representativo del proyecto.
 
 ---
 
