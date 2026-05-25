@@ -19,7 +19,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -67,10 +67,12 @@ def _setup_logging():
     # para que el log no se fragmente si se arranca desde otra carpeta.
     log_dir = Path(__file__).parent / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    file_handler = RotatingFileHandler(
+    # #TD-8: rotación DIARIA (TimedRotatingFileHandler) en vez de por tamaño — el bot
+    # corre 24/7 y el tope de 5MB se llenaba rápido. Rota a medianoche, conserva ~1 semana.
+    file_handler = TimedRotatingFileHandler(
         filename    = str(log_dir / "sentinel.log"),
-        maxBytes    = 5 * 1024 * 1024,  # 5 MB
-        backupCount = 3,
+        when        = "midnight",
+        backupCount = 7,
         encoding    = "utf-8",
     )
     file_handler.setFormatter(fmt)

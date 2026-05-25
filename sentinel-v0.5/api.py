@@ -20,7 +20,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import Optional
 from uuid import UUID
@@ -82,10 +82,13 @@ def _setup_logging():
     # proceso) para que el log no se fragmente si se arranca desde otra carpeta.
     log_dir = Path(__file__).parent / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    file_h = RotatingFileHandler(
+    # #TD-8: rotación DIARIA (TimedRotatingFileHandler) en vez de por tamaño. El bot
+    # corre 24/7 y el tope de 5MB se llenaba rápido perdiendo historia; con rotación a
+    # medianoche se conserva ~1 semana de logs diarios.
+    file_h = TimedRotatingFileHandler(
         filename    = str(log_dir / "api.log"),
-        maxBytes    = 5 * 1024 * 1024,
-        backupCount = 3,
+        when        = "midnight",
+        backupCount = 7,
         encoding    = "utf-8",
     )
     file_h.setFormatter(fmt)

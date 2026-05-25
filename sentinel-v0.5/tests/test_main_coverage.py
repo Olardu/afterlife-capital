@@ -59,7 +59,7 @@ def test_setup_logging_configura_cuando_root_vacio():
     fake_root.handlers = []  # falsy → no retorna temprano
     with patch.object(main.logging, "getLogger", return_value=fake_root), \
          patch.object(main.logging, "StreamHandler") as mock_stream, \
-         patch.object(main, "RotatingFileHandler") as mock_file:
+         patch.object(main, "TimedRotatingFileHandler") as mock_file:
         main._setup_logging()
     assert fake_root.setLevel.called
     assert fake_root.addHandler.call_count == 2
