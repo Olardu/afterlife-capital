@@ -131,6 +131,19 @@ Cuando recibas información del portafolio actual del sistema (composición de t
 
 Si la compatibilidad estadística es similar entre dos candidatos, **prefiere el que mejora la diversificación factorial del portafolio agregado**. Esto significa que a veces un candidato técnicamente "menos óptimo" pero estructuralmente descorrelacionado es la mejor recomendación. La decorrelación honesta requiere clases de activos distintas, no solo símbolos distintos sobre la misma clase.
 
+## Análisis fundamental (Equity Research)
+
+Además de la compatibilidad técnica y la diversificación factorial, evalúa la **calidad y el riesgo fundamental** del candidato. El horizonte del sistema es corto (días a semanas, mean-reversion / trend técnico): el análisis fundamental NO busca una tesis de valor de largo plazo, se usa como **filtro de calidad y de riesgo de evento** para evitar activos con deterioro estructural o gap risk inminente.
+
+**Para acciones individuales** (NVDA, AAPL, JPM, etc.), considera con tu conocimiento del mercado:
+- **Salud financiera** (señales tipo 10-K/10-Q): tendencia de revenue y earnings, márgenes, nivel de deuda/leverage, generación de caja. Evita nombres con deterioro severo, dilución agresiva o riesgo de going-concern/delisting.
+- **Valuación relativa**: múltiplos (P/E, EV/EBITDA, P/S) frente a comparables del sector. Sobrevaluación extrema agrega riesgo de reversión brusca; infravaloración con fundamentales sanos favorece estrategias de reversión.
+- **Riesgo de evento**: earnings/guidance inminentes, litigios, eventos regulatorios. Un reporte de resultados dentro del horizonte agrega gap risk que penaliza estrategias intradía/mean-reversion.
+
+**Para ETFs, sectoriales y commodities** (SPY, GLD, XLV, TLT, etc.): NO apliques DCF ni múltiplos de acción individual. El "fundamental" relevante acá es composición/concentración del fondo, expense ratio, liquidez (AUM/volumen) y rol macro (ya cubierto por el marco factorial de arriba).
+
+Documenta este análisis en el campo `fundamental_analysis` del JSON. Si no tenés información fundamental reciente y confiable sobre el candidato (o es un ETF), dilo explícitamente en ese campo en vez de inventar cifras — la honestidad sobre incertidumbre aplica igual acá.
+
 ## Restricciones operativas (Alpaca paper trading)
 
 - Universo permitido: US stocks, ETFs (incluyendo GLD, TLT, IEF, sectoriales XL*, commodities ETFs no apalancados), crypto (BTC/USD, ETH/USD, etc.).
@@ -167,6 +180,7 @@ Devuelve SIEMPRE un JSON válido con esta estructura exacta:
   "overall_confidence": 0.85,
   "reasoning": "Análisis detallado: (1) compatibilidad técnica con el tipo de estrategia, (2) cómo afecta la diversificación del portafolio agregado, (3) por qué este ticker en este momento macro.",
   "factor_exposure_analysis": "Breve análisis: qué ambiente económico cubre la recomendación, qué ambientes ya están cubiertos por el portafolio, qué ambientes quedan descubiertos.",
+  "fundamental_analysis": "Para acciones individuales: salud financiera (10-K/10-Q), valuación relativa vs comparables del sector, riesgo de earnings/eventos. Para ETFs/commodities: composición, expense ratio, liquidez (NO DCF). Sé honesto si no hay datos fundamentales confiables.",
   "risks": ["riesgo 1", "riesgo 2"],
   "expected_horizon_days": 30
 }
@@ -205,6 +219,11 @@ _RESPONSE_SCHEMA = {
         # concatenado al claude_reasoning en rotation_decisions (sin
         # cambios de schema en DB).
         "factor_exposure_analysis": {"type": "string"},
+        # Campo nuevo de la integración Equity Research (T-T Sub-3): análisis
+        # fundamental del candidato (salud financiera, valuación relativa,
+        # riesgo de evento). Opcional — vacío/honesto para ETFs o sin datos.
+        # Persistido concatenado al claude_reasoning (sin cambios de schema DB).
+        "fundamental_analysis": {"type": "string"},
         "risks":              {"type": "array", "items": {"type": "string"}},
         "expected_horizon_days": {"type": "integer"},
     },
@@ -436,7 +455,7 @@ PORTAFOLIO AGREGADO (composición actual de los Sentinels activos):
 TICKERS YA ROTADOS POR ESTE SENTINEL (sin éxito):
 {_format_failed(failed_tickers)}{feedback_section}
 
-Propón el mejor ticker de reemplazo siguiendo el schema. Considera explícitamente la diversificación factorial del portafolio agregado en tu reasoning y poblá el campo factor_exposure_analysis."""
+Propón el mejor ticker de reemplazo siguiendo el schema. Considera explícitamente la diversificación factorial del portafolio agregado (poblá factor_exposure_analysis) y el análisis fundamental del candidato (poblá fundamental_analysis, respetando la distinción acciones individuales vs ETFs/commodities del system prompt) en tu reasoning."""
 
 
 # =============================================================================
@@ -1102,6 +1121,16 @@ class UniverseSelector:
             reasoning = f"{reasoning}\n\n[Factor exposure analysis]\n{factor_exposure}"
         elif factor_exposure and not reasoning:
             reasoning = f"[Factor exposure analysis]\n{factor_exposure}"
+
+        # fundamental_analysis es el campo nuevo de la integración Equity
+        # Research (T-T Sub-3). Mismo patrón que factor_exposure: lo
+        # concatenamos al claude_reasoning (TEXT) para auditar el razonamiento
+        # fundamental sin tocar el schema de rotation_decisions.
+        fundamental = parsed.get("fundamental_analysis") if result["success"] else None
+        if fundamental and reasoning:
+            reasoning = f"{reasoning}\n\n[Fundamental analysis]\n{fundamental}"
+        elif fundamental and not reasoning:
+            reasoning = f"[Fundamental analysis]\n{fundamental}"
 
         # Defensa doble POST-Claude (#UNIVERSE-FILTER, fail-cerrada): si Claude
         # propuso un ticker pese al prompt, lo bloqueamos en código. El bloqueo
