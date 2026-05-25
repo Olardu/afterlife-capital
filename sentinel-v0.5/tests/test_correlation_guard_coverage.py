@@ -166,27 +166,44 @@ def test_evaluate_signal_fetch_bars_falla_aprueba_con_warning():
     assert res["adjusted_qty"] == Decimal("10")
 
 
-def test_evaluate_signal_incoming_sin_barras_aprueba():
+def test_evaluate_signal_incoming_sin_barras_rechaza_no_data():
+    """#TD-3: sin barras del ticker entrante → RECHAZA con reason='no_data' (antes aprobaba)."""
     cg = CorrelationGuard()
     with patch.object(cg, "fetch_bars", return_value={"QQQ": [1.0, 2.0]}):
         res = _run(cg.evaluate_signal(
             "SPY", Decimal("10"),
             open_positions=[{"ticker": "QQQ", "qty": 1}], performance_scores=[],
         ))
-    assert res["approved"] is True and res["avg_correlation"] == 0.0
+    assert res["approved"] is False and res["reason"] == "no_data"
+    assert res["adjusted_qty"] == Decimal("0")
 
 
-def test_evaluate_signal_posicion_igual_a_incoming_cuenta_1():
-    """pos_ticker == incoming → correlación 1.0 → avg alto → descarta."""
+def test_evaluate_signal_ticker_duplicado_veta():
+    """#TD-4: posición abierta del mismo ticker → VETO inmediato (antes contaba 1.0 y reducía)."""
     cg = CorrelationGuard()
     with patch.object(cg, "fetch_bars", return_value={"SPY": [1.0, 2.0, 3.0]}):
         res = _run(cg.evaluate_signal(
             "SPY", Decimal("10"),
             open_positions=[{"ticker": "SPY", "qty": 1}], performance_scores=[],
         ))
-    # avg_corr 1.0 > 0.75 → reduction_factor 0 → adjusted < MIN → descarta
-    assert res["reason"] == "discarded_high_correlation"
+    assert res["reason"] == "duplicate_ticker"
+    assert res["approved"] is False
     assert res["avg_correlation"] == pytest.approx(1.0)
+
+
+def test_evaluate_signal_alta_correlacion_descarta():
+    """Ticker DISTINTO con correlación alta → reducción → adjusted < MIN → descarta."""
+    cg = CorrelationGuard()
+    with patch.object(cg, "fetch_bars",
+                      return_value={"SPY": [1.0, 2.0, 3.0], "QQQ": [1.0, 2.0, 3.0]}), \
+         patch.object(cg, "calculate_correlation", return_value=1.0):
+        res = _run(cg.evaluate_signal(
+            "SPY", Decimal("10"),
+            open_positions=[{"ticker": "QQQ", "qty": 1}], performance_scores=[],
+        ))
+    # avg_corr 1.0 > threshold → reduction_factor 0 → adjusted 0 < MIN → descarta
+    assert res["reason"] == "discarded_high_correlation"
+    assert res["approved"] is False
 
 
 def test_evaluate_signal_posicion_sin_barras_se_omite_y_aprueba():

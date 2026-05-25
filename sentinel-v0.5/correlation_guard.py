@@ -185,8 +185,10 @@ class CorrelationGuard:
                 "reason":          "approved",
             }
 
-        open_tickers = list({pos["ticker"] for pos in open_positions})
-        all_tickers  = list({incoming_ticker} | set(open_tickers))
+        # Orden determinista (#TD): sorted() en vez de list(set(...)) — el orden de un
+        # set no es estable entre corridas y hacía no-determinista el request a Alpaca.
+        open_tickers = sorted({pos["ticker"] for pos in open_positions})
+        all_tickers  = sorted({incoming_ticker} | set(open_tickers))
 
         try:
             bars = await self.fetch_bars(all_tickers, CORRELATION_ROLLING_WINDOW)
@@ -204,15 +206,17 @@ class CorrelationGuard:
             }
 
         if incoming_ticker not in bars:
+            # #TD-3: sin precios del ticker entrante NO se puede evaluar correlación.
+            # Antes se aprobaba con warning (abrir a ciegas); ahora se rechaza por seguridad.
             logger.warning(
-                f"Sin barras para {incoming_ticker}. Aprobando con warning."
+                f"Sin barras para {incoming_ticker} — señal RECHAZADA (no_data)."
             )
             return {
-                "approved":        True,
+                "approved":        False,
                 "original_qty":    incoming_qty,
-                "adjusted_qty":    incoming_qty,
+                "adjusted_qty":    Decimal("0"),
                 "avg_correlation": 0.0,
-                "reason":          "approved",
+                "reason":          "no_data",
             }
 
         incoming_prices = bars[incoming_ticker]
@@ -221,9 +225,19 @@ class CorrelationGuard:
         for pos in open_positions:
             pos_ticker = pos["ticker"]
             if pos_ticker == incoming_ticker:
-                # Misma posición ya abierta — correlación perfecta, contar como 1.0
-                correlations.append(1.0)
-                continue
+                # #TD-4: ya hay posición abierta del MISMO ticker → veto inmediato.
+                # Antes contaba como correlación 1.0 (solo reducía qty); un duplicado
+                # exacto no debe abrirse, no apenas reducirse.
+                logger.info(
+                    f"Señal {incoming_ticker} VETADA — ya hay posición abierta del mismo ticker."
+                )
+                return {
+                    "approved":        False,
+                    "original_qty":    incoming_qty,
+                    "adjusted_qty":    Decimal("0"),
+                    "avg_correlation": 1.0,
+                    "reason":          "duplicate_ticker",
+                }
             if pos_ticker not in bars:
                 logger.debug(f"Sin barras para posición abierta {pos_ticker}. Omitido del cálculo.")
                 continue
