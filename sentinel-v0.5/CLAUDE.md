@@ -2,6 +2,18 @@
 
 Sistema de trading algorítmico multi-agente. 9 estrategias autónomas (Sentinels) coordinadas por un Dispatcher, con protecciones macro, gestión de capital Half-Kelly y persistencia en PostgreSQL. Operación en paper trading hasta validar.
 
+## Estado al 2026-05-25 — T-T Sub-2 #HE-4 backtesting COMPLETO. `origin/main`=`31f0304`, ahead 5 (`d21966f`..`b24ccfb`), suite 548/548
+
+**#HE-4 Framework de backtesting — COMPLETO** (paquete `backtest/`, 4 commits feat + 1 docs LOCALES, SIN migración). Herramienta de validación on-demand — **NO la importa el runtime del bot** (main.py/api.py):
+- `d21966f` `metrics.py` PURO: sharpe, sortino, max_drawdown, win_rate, profit_factor, return_to_drawdown, total_return + compute_metrics. Sin dep externa. 24 tests TDD vs cálculo manual. Sharpe/Sortino per-trade (no anualizado), consistente con historian post-fix #TECHDEBT-NEW-1.
+- `c6b2647` `data.py`: `normalize_ohlcv` (cualquier origen → contrato Backtesting.py: DatetimeIndex + OHLCV capitalizado float) + loaders Alpaca/CSV/Yahoo + `load_bars` dispatcher. 11 tests.
+- `1811260` `adapters.py`: `make_strategy` envuelve cada Sentinel como `Strategy`. `run_sync` (bridge async→sync para analyze await-free vía coro.send) + `_to_live_bars` (timestamp tz-aware + columnas minúsculas, requerido por S-5/S-7 intradía). Long-only default, `allow_short` opcional. 12 tests.
+- `8fa0e9a` `runner.py` + `__main__.py` CLI: `run_backtest` (Backtest con `finalize_trades=True` → métricas propias + stats nativas), `BacktestResult.to_dict` JSON-safe (inf/nan→null), `compare_to_paper`. CLI `python -m backtest --sentinel s2 --ticker SPY --start --end [--source alpaca|csv|yahoo] [--paper-json] [--json]`. `format_report` ASCII (robusto en consolas no-UTF8). 12 tests + smoke end-to-end real.
+- **Librería:** `backtesting==0.6.5` → `requirements-dev.txt` (dev/test, NO prod; §7.5). Compatible con pandas 3.0.2 / numpy 2.4.4 (CERO downgrade). Aditivas: bokeh, jinja2, tornado, narwhals, xyzservices. **Paquete `backtest/` (singular) — NO `backtesting/` — para no shadowear la lib pip homónima.**
+- Suite 489→**548** (+59 TDD). Gate cobertura CI **99.83%** (intacto, mi módulo fuera del set crítico). ruff verde. validate-workspace **0/0**. Ver `backtest/README.md`.
+
+**Pendiente T-T (orden ratificado por Cowork):** Sub-1 **#HE-2** Investment Thesis Tracking (state machine + MAE/MFE + feedback loop, **migración 017 `investment_theses` APROBADA**) → Sub-3 Equity Research integración al system prompt del Universe Selector (Equity Research instalado ✅, NO bloqueado).
+
 ## Estado al 2026-05-25 — T-S 5/5 COMPLETO (#CR-2 splits/dividendos). `origin/main`=`7727511`, HEAD `6f87820` (ahead 14), suite 489/489
 
 **#CR-2 Corporate actions simulado — COMPLETO. T-S cerrado entero (5/5).** 3 commits LOCALES, SIN migración (on-the-fly, patrón #CR-1/#CR-3):
@@ -123,6 +135,7 @@ Sesión T-K→T-O con Cowork. **Modelo desde LOG 04:45: commits LOCALES, sin pus
 | `claude_client.py` | Wrapper async sobre anthropic.AsyncAnthropic con timeout, cost tracking, JSON schema. |
 | `universe_selector.py` | Lógica de rotación automática con Claude Sonnet 4.6 (warning/decay → propuesta → rotación). |
 | `market_clock.py` | Estado mercado NYSE (OPEN/CLOSED/PRE_MARKET/AFTER_HOURS) + holidays 2026-2027. |
+| `backtest/` | Framework de backtesting (#HE-4, dev-only). metrics/data/adapters/runner + CLI `python -m backtest`. Valida Sentinels sobre data histórica. NO runtime del bot. Ver `backtest/README.md`. |
 
 ## 9 Sentinels operativos
 
