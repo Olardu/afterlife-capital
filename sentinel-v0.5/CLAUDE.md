@@ -2,6 +2,14 @@
 
 Sistema de trading algorítmico multi-agente. 9 estrategias autónomas (Sentinels) coordinadas por un Dispatcher, con protecciones macro, gestión de capital Half-Kelly y persistencia en PostgreSQL. Operación en paper trading hasta validar.
 
+## Estado al 2026-05-25 — BUNDLE PUSHEADO + T-S PARCIAL 2/5. `origin/main`=`7727511`, HEAD `4788022` (ahead 2), suite 435/435
+
+**Bundle del sprint pusheado** (Roman): `origin/main`=`7727511`, **CI GitHub Actions = success** (los 3 jobs, primer run real). Local en sync. NO-push sigue para lo nuevo.
+
+**T-S Compliance+Slippage — parcial 2/5** (métricas, ambos sin migración por drift):
+- ✅ `2aa3f14` #ME-1 slippage (bps on-the-fly) · ✅ `4788022` #ME-4 costo Claude per-Sentinel (dato ya per-Sentinel). historian methods + /api/status + queries SQL validadas en psql + tests. historian 100%, suite 435.
+- ⏳ Pendiente 3/5 greenfield (migraciones 018-021 autorizadas): #CR-1 fiscal (wash sales/cost basis/tax lots), #CR-2 splits/dividendos (corporate_actions), #CR-3 fees simulados (`simulated_costs.py`). Cortado para budget fresco (código live-bound).
+
 ## Estado al 2026-05-25 — T-Q + T-R COMPLETOS (TECHDEBT Bloque F 9/9). 35 commits LOCALES, `origin/main`=`0242eb2`, HEAD `157f363`, suite 431/431
 
 **T-R cerrado** (9 commits por archivo, plan ejecutivo Cowork): api (`f271742`) · dispatcher (`86c197e`) · main (`2f4fc0b`) · historian + migración 016 is_warmup (`82b6f45`) · config (`15bd719`) · correlation_guard (`57a5b8f`) · sentinels (`1782da2`) · infra TimedRotatingFileHandler (`513a8f9`) · regime+misc (`157f363`). Los 3 jobs CI verdes (test 431/431, lint limpio, coverage 99.83%). Migraciones DB aplicadas: 013/014/015/**016**.
