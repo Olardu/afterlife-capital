@@ -80,6 +80,30 @@ Configuración (opcional, flag-gated — vacío = deshabilitado):
 4. Agregar al `.env`: `HEARTBEAT_URL=https://hc-ping.com/<UUID>`
 5. Reiniciar `main.py`. El bot empieza a pinguear una vez por ciclo.
 
+## Sentiment analysis FinBERT (#FEAT-007 / The Ear)
+
+The Ear puede complementar el keyword matching con sentiment finance-tuned
+(modelo `ProsusAI/finbert`) cuando `THE_EAR_SENTIMENT_ENABLED=true`. El modelo se
+carga lazy al primer uso y corre 100% local en CPU (sin red ni costo recurrente).
+
+Setup (una vez, tras `pip install -r requirements.txt`):
+
+1. Las deps `torch`/`transformers` ya vienen en `requirements.txt` (CPU build).
+2. Pre-descargar el modelo (~440 MB → `~/.cache/huggingface/`) para evitar latencia
+   en el primer ciclo:
+   ```
+   python -c "from transformers import pipeline; pipeline('sentiment-analysis', model='ProsusAI/finbert')"
+   ```
+3. Activar en `.env`: `THE_EAR_SENTIMENT_ENABLED=true` (default `false`).
+   Opcional: `THE_EAR_FINBERT_VETO_THRESHOLD=-0.6` (umbral de veto, a calibrar).
+4. Reiniciar `main.py`. Si el modelo no carga, The Ear cae automáticamente al
+   keyword matching legacy (no rompe el bot).
+
+> **Nota de versiones:** se usa `torch 2.9.1+cpu` / `transformers 5.9.0` /
+> `ProsusAI/finbert` (la spec original pedía torch 2.5.0 / transformers 4.45 /
+> finbert-tone — incompatibles con Python 3.14). Plan de recalibración del umbral
+> en `docs/finbert_recalibration_plan.md`.
+
 ## Versionado
 
 | Versión | Estado | Descripción |
