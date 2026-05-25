@@ -448,6 +448,34 @@ def test_get_claude_cost_by_sentinel_today_con_datos_vacio_y_pgerror():
         _run(_hist(conn3).get_claude_cost_by_sentinel_today(uuid4()))
 
 
+def test_get_simulated_costs_today_con_datos_vacio_y_pgerror():
+    # #CR-3: agrega fees on-the-fly de las ventas FILLED de hoy.
+    # SELL 100@50  → sec 0.0139, finra 0.0166, exch 0.0100, total 0.0405
+    # SELL 1e5@10  → sec 2.7800, finra 8.3000 (cap), exch 10.0000, total 21.0800
+    conn = _conn()
+    conn.fetch = AsyncMock(return_value=[
+        {"qty": Decimal("100"), "filled_price": Decimal("50")},
+        {"qty": Decimal("100000"), "filled_price": Decimal("10")},
+    ])
+    out = _run(_hist(conn).get_simulated_costs_today(uuid4()))
+    assert out["n_sells"] == 2
+    assert out["sec_fee"] == pytest.approx(2.7939)
+    assert out["finra_taf"] == pytest.approx(8.3166)
+    assert out["exchange_fee"] == pytest.approx(10.01)
+    assert out["total"] == pytest.approx(21.1205)
+    # vacío → todo 0
+    conn2 = _conn()
+    conn2.fetch = AsyncMock(return_value=[])
+    assert _run(_hist(conn2).get_simulated_costs_today(uuid4())) == {
+        "n_sells": 0, "sec_fee": 0.0, "finra_taf": 0.0,
+        "exchange_fee": 0.0, "total": 0.0}
+    # pgerror se propaga
+    conn3 = _conn()
+    conn3.fetch = AsyncMock(side_effect=_pg())
+    with pytest.raises(asyncpg.PostgresError):
+        _run(_hist(conn3).get_simulated_costs_today(uuid4()))
+
+
 # ═══════════════════════ § 8 — macro events ═══════════════════════
 
 def test_record_macro_event_ok_y_pgerror():

@@ -17,7 +17,7 @@
 #   - Exchange/venue fee: promedio estimado por acción.
 # Los 3 aplican SOLO a SELL — las compras no pagan ninguno de estos cargos.
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 
 # --- Tasas ajustables --------------------------------------------------------
 # SEC §31 fee. Spec T-S: $0.00278 por cada $1000 de notional vendido.
@@ -34,15 +34,7 @@ FINRA_TAF_MAX_PER_TRADE = Decimal("8.30")
 # Exchange / venue fee promedio por acción (estimación; varía por venue).
 EXCHANGE_FEE_PER_SHARE  = Decimal("0.0001")
 
-# Precisión de almacenamiento/reporte: 4 decimales (DECIMAL(10,4) de la columna
-# trades.simulated_fees que agrega la migración 017).
-_QUANT = Decimal("0.0001")
-_ZERO  = Decimal("0.0000")
-
-
-def _q(value: Decimal) -> Decimal:
-    """Cuantiza a 4 decimales (ROUND_HALF_UP) — la precisión de la columna."""
-    return value.quantize(_QUANT, rounding=ROUND_HALF_UP)
+_ZERO = Decimal("0")
 
 
 def _zero_breakdown() -> dict:
@@ -58,17 +50,24 @@ def _zero_breakdown() -> dict:
 def calculate_fees(side, qty, filled_price) -> dict:
     """
     Fees simulados de un trade (#CR-3). Retorna el desglose
-    {sec_fee, finra_taf, exchange_fee, total} en Decimal cuantizado a 4
-    decimales (USD). El total es la suma de los 3 componentes YA cuantizados,
-    así total == sec_fee + finra_taf + exchange_fee exacto (sin sorpresas de
-    redondeo al persistir/sumar).
+    {sec_fee, finra_taf, exchange_fee, total} en Decimal con aritmética EXACTA
+    (sin redondear). El redondeo a la precisión de reporte se hace recién al
+    agregar (historian.get_simulated_costs_today) / mostrar — NO por trade.
+
+    Por qué exacto: redondear por-trade a 4 decimales infla los sub-céntimos.
+    Ej.: FINRA TAF de una venta de 1 acción = $0.000166; redondeado por fila a
+    $0.0002 (~+20%). Sumando 100 ventas de qty=1 el error se acumula. Sumar
+    exacto y redondear una sola vez al final coincide con la query SQL de
+    referencia (scripts/queries_simulated_costs.sql) — validado sobre la DB.
 
     Reglas:
       - Solo SELL paga fees. BUY o side desconocido → todo 0.
       - qty / filled_price None o <= 0 → todo 0 (no computable).
       - sec_fee   = notional / 1000 * SEC_FEE_PER_1000_USD   (notional = qty*price)
       - finra_taf = min(qty * FINRA_TAF_PER_SHARE_USD, FINRA_TAF_MAX_PER_TRADE)
+                    (el tope es POR TRADE → se aplica acá, no al agregar)
       - exchange  = qty * EXCHANGE_FEE_PER_SHARE
+      - total     = sec_fee + finra_taf + exchange_fee
     """
     if side != "SELL":
         return _zero_breakdown()
@@ -80,11 +79,10 @@ def calculate_fees(side, qty, filled_price) -> dict:
     if qty <= 0 or price <= 0:
         return _zero_breakdown()
 
-    notional = qty * price
-    sec_fee = _q(notional / Decimal("1000") * SEC_FEE_PER_1000_USD)
-    finra_taf = _q(min(qty * FINRA_TAF_PER_SHARE_USD, FINRA_TAF_MAX_PER_TRADE))
-    exchange_fee = _q(qty * EXCHANGE_FEE_PER_SHARE)
-    total = _q(sec_fee + finra_taf + exchange_fee)
+    sec_fee = qty * price / Decimal("1000") * SEC_FEE_PER_1000_USD
+    finra_taf = min(qty * FINRA_TAF_PER_SHARE_USD, FINRA_TAF_MAX_PER_TRADE)
+    exchange_fee = qty * EXCHANGE_FEE_PER_SHARE
+    total = sec_fee + finra_taf + exchange_fee
     return {
         "sec_fee": sec_fee,
         "finra_taf": finra_taf,

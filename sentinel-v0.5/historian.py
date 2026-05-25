@@ -8,7 +8,7 @@ import json
 import logging
 import math
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 from uuid import UUID
 
@@ -23,6 +23,7 @@ from config import (
     DB_POOL_MIN,
     DB_POOL_MAX,
 )
+from simulated_costs import calculate_fees
 
 logger = logging.getLogger("sentinel.historian")
 
@@ -1113,6 +1114,63 @@ class Historian:
             logger.error(f"Error en get_claude_cost_by_sentinel_today ({owner_id}): {e}")
             raise
         return {str(r["sentinel_id"]): r["cost"] for r in rows}
+
+    async def get_simulated_costs_today(self, owner_id: UUID) -> dict:
+        """
+        Fees simulados (#CR-3) de las VENTAS FILLED de HOY. Alpaca paper no cobra
+        comisiones; estos cargos se calculan on-the-fly con
+        simulated_costs.calculate_fees a partir de (side, qty, filled_price) ya
+        persistidos en trades — sin columna nueva ni migración (mismo patrón que
+        get_slippage_stats_today / #ME-1). Los 3 cargos son por venta, así que
+        solo se consultan los SELL.
+
+        Sirven para reportar P&L bruto vs P&L neto de fees, acercando el Sharpe
+        de paper al de live (Fase 5). Returns
+        {n_sells, sec_fee, finra_taf, exchange_fee, total} con los fees en float
+        USD; n_sells = ventas que generaron fee > 0.
+        """
+        sql = """
+            SELECT qty, filled_price
+            FROM trades
+            WHERE owner_id = $1
+              AND side = 'SELL'
+              AND status = 'FILLED'
+              AND qty IS NOT NULL
+              AND filled_price IS NOT NULL
+              AND created_at::date = CURRENT_DATE
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(sql, owner_id)
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error en get_simulated_costs_today ({owner_id}): {e}")
+            raise
+        # Suma EXACTA por trade; el redondeo a 4 decimales se hace una sola vez
+        # al final (coincide con la query SQL de referencia; evita inflar los
+        # sub-céntimos de fees por-acción en ventas chicas).
+        sec = finra = exch = Decimal("0")
+        n_sells = 0
+        for r in rows:
+            fees = calculate_fees("SELL", r["qty"], r["filled_price"])
+            if fees["total"] > 0:
+                n_sells += 1
+            sec += fees["sec_fee"]
+            finra += fees["finra_taf"]
+            exch += fees["exchange_fee"]
+        # Redondeo de cada componente a 4 decimales; el total es la SUMA de los
+        # componentes redondeados (así el desglose siempre cuadra con el total
+        # en el dashboard). Coincide con scripts/queries_simulated_costs.sql.
+        q = Decimal("0.0001")
+        sec_r = sec.quantize(q, rounding=ROUND_HALF_UP)
+        finra_r = finra.quantize(q, rounding=ROUND_HALF_UP)
+        exch_r = exch.quantize(q, rounding=ROUND_HALF_UP)
+        return {
+            "n_sells": n_sells,
+            "sec_fee": float(sec_r),
+            "finra_taf": float(finra_r),
+            "exchange_fee": float(exch_r),
+            "total": float(sec_r + finra_r + exch_r),
+        }
 
     # ═══════════════════════════ § 8 — Macro events ═══════════════════════════
     async def record_macro_event(

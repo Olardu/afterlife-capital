@@ -491,6 +491,9 @@ async def api_status():
         slippage_today = await historian.get_slippage_stats_today(_owner_id)
         # #ME-4 — costo Claude de hoy agregado por Sentinel (visibilidad de gasto API).
         claude_cost_by_sentinel = await historian.get_claude_cost_by_sentinel_today(_owner_id)
+        # #CR-3 — fees simulados de las ventas de hoy (SEC + FINRA TAF + exchange).
+        # Alpaca paper no cobra; esto acerca el P&L/Sharpe de paper al de live.
+        simulated_costs_today = await historian.get_simulated_costs_today(_owner_id)
         return {
             "system":           "ONLINE",
             "sentinels_active": stats["sentinels_active"],
@@ -507,6 +510,8 @@ async def api_status():
             "slippage_today": slippage_today,
             # #ME-4 — costo Claude de hoy por Sentinel {sentinel_id: usd}.
             "claude_cost_today_by_sentinel": claude_cost_by_sentinel,
+            # #CR-3 — fees simulados de las ventas de hoy (desglose + total USD).
+            "simulated_costs_today": simulated_costs_today,
             # #TD-6 follow-up — visible si NEWS_API_KEY falta (The Ear queda ciego
             # a noticias). True = sin key configurada.
             "the_ear_news_disabled":   not bool(NEWS_API_KEY),
