@@ -29,29 +29,29 @@ def test_buy_no_paga_fees():
 
 def test_sell_chica_sin_tope_finra():
     # qty=100 @ $50 → notional 5000.
-    #   sec   = 5000/1000 * 0.00278 = 0.0139
-    #   finra = 100 * 0.000166      = 0.0166  (bajo el tope 8.30)
-    #   exch  = 100 * 0.0001        = 0.0100
-    #   total = 0.0405
+    #   sec   = 5000/1000 * 0.0278 = 0.1390
+    #   finra = 100 * 0.000166     = 0.0166  (bajo el tope 8.30)
+    #   exch  = 100 * 0.0001       = 0.0100
+    #   total = 0.1656
     fees = calculate_fees("SELL", Decimal("100"), Decimal("50"))
-    assert fees["sec_fee"] == Decimal("0.0139")
+    assert fees["sec_fee"] == Decimal("0.1390")
     assert fees["finra_taf"] == Decimal("0.0166")
     assert fees["exchange_fee"] == Decimal("0.0100")
-    assert fees["total"] == Decimal("0.0405")
+    assert fees["total"] == Decimal("0.1656")
 
 
 def test_sell_grande_aplica_tope_finra():
     # qty=100000 @ $10 → notional 1,000,000.
-    #   sec   = 1_000_000/1000 * 0.00278 = 2.7800
+    #   sec   = 1_000_000/1000 * 0.0278 = 27.8000
     #   finra = 100000 * 0.000166 = 16.6 → CAP 8.3000
-    #   exch  = 100000 * 0.0001          = 10.0000
-    #   total = 21.0800
+    #   exch  = 100000 * 0.0001         = 10.0000
+    #   total = 46.1000
     fees = calculate_fees("SELL", Decimal("100000"), Decimal("10"))
-    assert fees["sec_fee"] == Decimal("2.7800")
+    assert fees["sec_fee"] == Decimal("27.8000")
     assert fees["finra_taf"] == FINRA_TAF_MAX_PER_TRADE.quantize(Decimal("0.0001"))
     assert fees["finra_taf"] == Decimal("8.3000")
     assert fees["exchange_fee"] == Decimal("10.0000")
-    assert fees["total"] == Decimal("21.0800")
+    assert fees["total"] == Decimal("46.1000")
 
 
 def test_total_es_suma_de_componentes():

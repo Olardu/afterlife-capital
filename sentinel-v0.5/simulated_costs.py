@@ -20,12 +20,12 @@
 from decimal import Decimal
 
 # --- Tasas ajustables --------------------------------------------------------
-# SEC §31 fee. Spec T-S: $0.00278 por cada $1000 de notional vendido.
-# ⚠️ NOTA: la tasa SEC real fluctúa trimestralmente; en 2024 rondó los
-#    $27.80 por millón vendido ( = $0.0278 / $1000, ~10x este valor). Se deja el
-#    número de la spec; ajustar SEC_FEE_PER_1000_USD a la tasa vigente cuando
-#    Roman/Cowork confirmen cuál usar.
-SEC_FEE_PER_1000_USD    = Decimal("0.00278")
+# SEC §31 fee: $0.0278 por cada $1000 de notional vendido ( = $27.80 por millón,
+# la tasa real de FY2024). Decisión de Roman 2026-05-25: usar la tasa real en vez
+# del $0.00278 de la spec (10x más baja), porque el objetivo de #CR-3 es acercar
+# el P&L/Sharpe de paper al de LIVE. ⚠️ La SEC ajusta esta tasa ~cada trimestre;
+# actualizar este único valor cuando cambie.
+SEC_FEE_PER_1000_USD    = Decimal("0.0278")
 
 # FINRA Trading Activity Fee: por acción vendida, con tope por trade.
 FINRA_TAF_PER_SHARE_USD = Decimal("0.000166")

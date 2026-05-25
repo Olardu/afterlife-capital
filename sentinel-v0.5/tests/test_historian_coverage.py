@@ -450,8 +450,9 @@ def test_get_claude_cost_by_sentinel_today_con_datos_vacio_y_pgerror():
 
 def test_get_simulated_costs_today_con_datos_vacio_y_pgerror():
     # #CR-3: agrega fees on-the-fly de las ventas FILLED de hoy.
-    # SELL 100@50  → sec 0.0139, finra 0.0166, exch 0.0100, total 0.0405
-    # SELL 1e5@10  → sec 2.7800, finra 8.3000 (cap), exch 10.0000, total 21.0800
+    # SELL 100@50  → sec 0.1390, finra 0.0166, exch 0.0100
+    # SELL 1e5@10  → sec 27.8000, finra 8.3000 (cap), exch 10.0000
+    # agregados: sec 27.9390, finra 8.3166, exch 10.01, total 46.2656
     conn = _conn()
     conn.fetch = AsyncMock(return_value=[
         {"qty": Decimal("100"), "filled_price": Decimal("50")},
@@ -459,10 +460,10 @@ def test_get_simulated_costs_today_con_datos_vacio_y_pgerror():
     ])
     out = _run(_hist(conn).get_simulated_costs_today(uuid4()))
     assert out["n_sells"] == 2
-    assert out["sec_fee"] == pytest.approx(2.7939)
+    assert out["sec_fee"] == pytest.approx(27.9390)
     assert out["finra_taf"] == pytest.approx(8.3166)
     assert out["exchange_fee"] == pytest.approx(10.01)
-    assert out["total"] == pytest.approx(21.1205)
+    assert out["total"] == pytest.approx(46.2656)
     # vacío → todo 0
     conn2 = _conn()
     conn2.fetch = AsyncMock(return_value=[])
