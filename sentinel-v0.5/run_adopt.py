@@ -1,7 +1,6 @@
 """Wrapper: runs adopt_orphan_positions and writes output to a log file."""
 import sys
 import os
-import io
 
 # Redirect stdout/stderr to file
 log_path = os.path.join(os.path.dirname(__file__), 'adopt_orphan_output.log')

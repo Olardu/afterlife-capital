@@ -26,7 +26,6 @@ Uso: venv\\Scripts\\python.exe sentinel-v0.5\\scripts\\run_balance_queries.py
 """
 import asyncio
 import csv
-import os
 import sys
 from datetime import datetime
 from pathlib import Path

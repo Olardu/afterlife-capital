@@ -14,7 +14,6 @@ Imprime metricas clave para que Cowork las extraiga al balance.
 import json
 import sys
 import urllib.request
-from datetime import datetime
 from pathlib import Path
 
 import pandas as pd

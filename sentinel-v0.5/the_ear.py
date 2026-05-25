@@ -431,7 +431,7 @@ if __name__ == "__main__":  # pragma: no cover
          2, 0, "case-insensitive: WAR/CRASH matchean"),
     ]
 
-    print(f"=== Test #FIX-009: substring -> word-boundary ===")
+    print("=== Test #FIX-009: substring -> word-boundary ===")
     print(f"Patterns negativos: {len(_NEGATIVE_PATTERNS)}, positivos: {len(_POSITIVE_PATTERNS)}\n")
 
     failures = 0
@@ -453,7 +453,7 @@ if __name__ == "__main__":  # pragma: no cover
     bug_text = "Markets show warnings about potential crash"
     old_buggy = sum(1 for kw in _NEGATIVE_KEYWORDS if kw in bug_text.lower())
     new_fixed = _count_matches(bug_text, _NEGATIVE_PATTERNS)
-    print(f"Comparativa bug vs fix:")
+    print("Comparativa bug vs fix:")
     print(f"  Texto: {bug_text!r}")
     print(f"  Lógica vieja (substring): {old_buggy} matches  -> INFLA risk_score")
     print(f"  Lógica nueva (word-bound): {new_fixed} matches -> preciso\n")

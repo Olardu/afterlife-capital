@@ -14,7 +14,6 @@
 # y devolver {"success": False, ...} — el caller decide si reintenta o
 # saltea el ciclo. Nunca propagar excepciones hacia main.py.
 
-import asyncio
 import logging
 from typing import Optional
 

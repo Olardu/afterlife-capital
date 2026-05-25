@@ -28,7 +28,6 @@ import argparse
 import asyncio
 import os
 import sys
-from datetime import datetime
 from uuid import UUID
 
 from dotenv import load_dotenv
@@ -128,7 +127,7 @@ async def main(apply: bool):
             )
             print(f"    ✓ Insertado: trade_id = {trade_id}")
         else:
-            print(f"    → Se insertaría (dry-run)")
+            print("    → Se insertaría (dry-run)")
 
     print("\n" + "=" * 60)
     if not apply:

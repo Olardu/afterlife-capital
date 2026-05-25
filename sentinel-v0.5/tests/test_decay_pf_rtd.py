@@ -24,7 +24,6 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from historian import Historian
-from config import PROFIT_FACTOR_MINIMUM, RTD_MINIMUM, SHARPE_MINIMUM
 
 
 def _run(coro):

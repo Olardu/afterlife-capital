@@ -32,7 +32,7 @@ from typing import Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from config import ALPACA_API_KEY, ALPACA_SECRET_KEY, BASE_TICKER, CANDLE_INTERVAL
+from config import ALPACA_API_KEY, ALPACA_SECRET_KEY, BASE_TICKER
 
 logger = logging.getLogger("sentinel.sentinels")
 

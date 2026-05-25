@@ -26,7 +26,6 @@ import aiohttp
 
 from config import (
     BASE_TICKER,
-    CANDLE_INTERVAL,
     DATABASE_URL,
     HEARTBEAT_URL,
     LOG_LEVEL,
