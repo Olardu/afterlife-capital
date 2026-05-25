@@ -2,16 +2,19 @@
 
 Sistema de trading algorítmico multi-agente. 9 estrategias autónomas (Sentinels) coordinadas por un Dispatcher, con protecciones macro, gestión de capital Half-Kelly y persistencia en PostgreSQL. Operación en paper trading hasta validar.
 
-## Estado al 2026-05-25 — T-S 3/5 (#CR-3 fees COMPLETO). `origin/main`=`7727511`, HEAD `bada54d` (ahead 5), suite 447/447
+## Estado al 2026-05-25 — T-S 3/5 (#CR-3 fees COMPLETO). `origin/main`=`7727511`, HEAD `dc427ea` (ahead 8), suite 447/447
 
-**#CR-3 Fees simulados — COMPLETO** (sub-4 de T-S), 2 commits LOCALES, SIN migración:
-- `dee1a3f` módulo puro `simulated_costs.calculate_fees` (SEC §31 + FINRA TAF tope $8.30 + exchange, los 3 por VENTA, Decimal exacto, 11 tests TDD).
+**#CR-3 Fees simulados — COMPLETO** (sub-4 de T-S), 4 commits LOCALES, SIN migración:
+- `dee1a3f` módulo puro `simulated_costs.calculate_fees` (SEC §31 + FINRA TAF tope $8.30 + exchange, los 3 por VENTA, Decimal **exacto** — redondeo único al agregar, no por-trade, 11 tests TDD).
 - `bada54d` wire-up: `historian.get_simulated_costs_today` (on-the-fly desde `trades`, patrón #ME-1 sin columna nueva) + `/api/status.simulated_costs_today` + `scripts/queries_simulated_costs.sql`.
+- `27d230e` CLAUDE.md · `dc427ea` tasa SEC a valor real.
 - **Validado SQL==Python read-only sobre 107 ventas FILLED reales** (total fees ~$0.14 — el período operó qty=1; pesan con sizing real). historian + simulated_costs 100% cobertura.
-- **Constante a confirmar:** `SEC_FEE_PER_1000_USD=$0.00278` (valor spec); la real fluctúa, ~$0.0278/$1000 en 2024 (10x). Fácil de ajustar (1 lugar).
-- Decisión: fees on-the-fly (no se persiste columna) — revertible a persistir si Roman prefiere fee "congelado".
+- **Decisiones Roman 2026-05-25:** tasa SEC = **$0.0278/$1000** (real FY2024, no el $0.00278 de la spec) · fees **on-the-fly** (revertible a persistir) · tax lots #CR-1 = **FIFO**.
 
-**Pendiente T-S — 2/5 (bloque fiscal pesado):** #CR-1 fiscal (wash sales + holding period + cost basis + tax lots; **decisión abierta: FIFO vs specific-id**; migración **017** próxima libre) · #CR-2 splits/dividendos (corporate_actions, depende de #CR-1). Pausado para confirmar scope con Roman.
+**Pendiente T-S — 2/5 (bloque fiscal, DIFERIDO a sesión fresca por decisión Roman — no apurar código live-bound):**
+- **#CR-1 fiscal** — diseño LISTO para retomar: módulo nuevo `tax_lots.py`, PURE/no-migración sobre los fills de `trades` (no toca DB). Pasos: (1) motor **FIFO** + holding period → disposals {qty, proceeds, cost_basis, gain, holding_days, term short/long >1año}; (2) wash-sale (pérdida + recompra ±30d → difiere); (3) reporte historian + /api/status + SQL. OJO: pairing actual `calculate_performance` es `zip(buys,sells)` ingenuo (bug #TD-1); el motor nuevo hace FIFO por qty.
+- **#CR-2 splits/dividendos** — corporate_actions + ajuste cost_basis. Depende de #CR-1. Investigar si Alpaca expone corporate actions API.
+- Próxima migración libre = **017** (si se decide persistir algo; el patrón hasta ahora evitó migraciones).
 
 ## Estado al 2026-05-25 — BUNDLE PUSHEADO + T-S PARCIAL 2/5. `origin/main`=`7727511`, HEAD `4788022` (ahead 2), suite 435/435
 
