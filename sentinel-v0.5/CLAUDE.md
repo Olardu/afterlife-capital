@@ -2,6 +2,16 @@
 
 Sistema de trading algorítmico multi-agente. 9 estrategias autónomas (Sentinels) coordinadas por un Dispatcher, con protecciones macro, gestión de capital Half-Kelly y persistencia en PostgreSQL. Operación en paper trading hasta validar.
 
+## Estado al 2026-05-25 — T-S 4/5 (#CR-1 fiscal COMPLETO). `origin/main`=`7727511`, HEAD `f4bf2d8` (ahead 10), suite 462/462
+
+**#CR-1 Reporte fiscal simulado — COMPLETO**, 2 commits LOCALES, SIN migración (on-the-fly, patrón #CR-3):
+- `53fd044` módulo puro `tax_lots.py` (204 líneas): `match_fifo` (FIFO firmado LONG+SHORT — S-2/S-8 shortean — con holding_days y term short/long >365d), `apply_wash_sales` (disposal LONG con pérdida + recompra ±30d excluyendo el lote propio → difiere pérdida completa, simplificación documentada), `summarize`, `compute_tax_report` (agrupa por ticker). **14 tests TDD.** Cierra #TD-1 (reemplaza el `zip(buys,sells)` ingenuo de `calculate_performance` por FIFO por qty exacta).
+- `f4bf2d8` wire-up: `historian.get_tax_report(owner)` (acumulado, a nivel CUENTA por owner/ticker cruzando Sentinels = trato IRS; devuelve `{summary, disposals}` JSON-safe) + `/api/status.tax_report_summary` (solo summary, liviano) + `scripts/queries_tax_report.sql` (referencia read-only; FIFO no replicable en SQL plano → da input crudo + agregados, invariante: net_qty=0 ⟹ realized_gain Python == net_cash_flow SQL) + test cobertura historian.
+- **Validado SQL==Python read-only sobre 214 FILLED reales:** 101 disposals, 4 tickers planos OK / 0 mismatch. Resultado real: realized −$12.57 (todo short-term, qty=1), **27 wash sales** difiriendo $45.81, neto $33.24. **Hallazgo:** ~27% de disposals son wash sales (re-entrada rápida del bot) — dato fiscal para live. historian + tax_lots 100% cobertura, gate CI 99.83%.
+- **Decisión Roman 2026-05-25:** tax lots = **FIFO** (default IRS, simple, auditable; extensible a specific-id luego).
+
+**Pendiente T-S — 1/5: #CR-2 splits/dividendos** — corporate_actions + ajuste cost_basis. Investigar si Alpaca expone corporate actions API (¿`GET /v1/corporate-actions`?). Posible migración **017** si se persiste. Depende del cost_basis de #CR-1 (los disposals de `tax_lots` ya exponen cost_basis por lote para ajustar).
+
 ## Estado al 2026-05-25 — T-S 3/5 (#CR-3 fees COMPLETO). `origin/main`=`7727511`, HEAD `dc427ea` (ahead 8), suite 447/447
 
 **#CR-3 Fees simulados — COMPLETO** (sub-4 de T-S), 4 commits LOCALES, SIN migración:
