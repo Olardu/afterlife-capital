@@ -24,6 +24,7 @@ from config import (
     DB_POOL_MAX,
 )
 from corporate_actions import build_corporate_actions_report
+from investment_thesis import validate_transition
 from simulated_costs import calculate_fees
 from tax_lots import compute_tax_report
 
@@ -325,6 +326,65 @@ class Historian:
             await conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_daily_equity_snapshots_owner_date "
                 "ON daily_equity_snapshots (owner_id, snapshot_date DESC)"
+            )
+
+            # =================================================================
+            # INVESTMENT THESES (#HE-2) — migración 017: tracking de tesis.
+            # State machine IDEA→ENTRY_READY→ACTIVE→CLOSED + MAE/MFE + outcome.
+            # Alimenta el feedback loop del Universe Selector (#ME-2). FK a
+            # rotation_decisions (origen) y sentinels. Idempotente.
+            # =================================================================
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS investment_theses (
+                    thesis_id            UUID           PRIMARY KEY DEFAULT gen_random_uuid(),
+                    sentinel_id          UUID           NOT NULL REFERENCES sentinels(sentinel_id),
+                    owner_id             UUID           NOT NULL REFERENCES users(user_id),
+                    decision_id          UUID           REFERENCES rotation_decisions(decision_id),
+                    ticker               TEXT           NOT NULL,
+                    direction            TEXT           NOT NULL DEFAULT 'LONG'
+                                                        CHECK (direction IN ('LONG', 'SHORT')),
+                    state                TEXT           NOT NULL DEFAULT 'IDEA'
+                                                        CHECK (state IN ('IDEA','ENTRY_READY','ACTIVE','CLOSED')),
+                    entry_price_target   NUMERIC(20, 4),
+                    exit_target          NUMERIC(20, 4),
+                    stop_loss            NUMERIC(20, 4),
+                    rationale_text       TEXT,
+                    claude_reasoning     TEXT,
+                    entry_price          NUMERIC(20, 4),
+                    exit_price           NUMERIC(20, 4),
+                    outcome              TEXT,
+                    gain                 NUMERIC(20, 4),
+                    gain_pct             NUMERIC(12, 4),
+                    mae                  NUMERIC(20, 4),
+                    mfe                  NUMERIC(20, 4),
+                    mae_pct              NUMERIC(12, 4),
+                    mfe_pct              NUMERIC(12, 4),
+                    holding_days         INTEGER,
+                    created_at           TIMESTAMP      NOT NULL DEFAULT NOW(),
+                    entry_at             TIMESTAMP,
+                    closed_at            TIMESTAMP,
+                    notes                TEXT
+                )
+            """)
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_investment_theses_sentinel "
+                "ON investment_theses(sentinel_id)"
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_investment_theses_state "
+                "ON investment_theses(state)"
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_investment_theses_owner "
+                "ON investment_theses(owner_id)"
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_investment_theses_decision "
+                "ON investment_theses(decision_id)"
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_investment_theses_created "
+                "ON investment_theses(created_at DESC)"
             )
 
             # Asegurar email + role=ADMIN del owner (#H-1). La columna `email`
@@ -1282,6 +1342,185 @@ class Historian:
                 "disposals": self._serialize_tax_disposals(report["tax_report"]["disposals"]),
             },
         }
+
+    # ═════════════════════ § 7.5 — Investment Theses (#HE-2) ═════════════════════
+    # Columnas que update_thesis_state puede setear además del estado (allowlist;
+    # los nombres NO vienen de input externo → seguro construir el SET con ellos).
+    _THESIS_UPDATABLE = (
+        "entry_price", "entry_at", "exit_price", "closed_at", "outcome",
+        "gain", "gain_pct", "mae", "mfe", "mae_pct", "mfe_pct", "holding_days", "notes",
+    )
+
+    @staticmethod
+    def _serialize_thesis(row) -> dict:
+        """Convierte una fila de investment_theses a JSON-safe (Decimals→float, fechas→ISO)."""
+        def _f(v):
+            return float(v) if v is not None else None
+        return {
+            "thesis_id": str(row["thesis_id"]),
+            "sentinel_id": str(row["sentinel_id"]),
+            "decision_id": str(row["decision_id"]) if row["decision_id"] else None,
+            "ticker": row["ticker"],
+            "direction": row["direction"],
+            "state": row["state"],
+            "entry_price_target": _f(row["entry_price_target"]),
+            "exit_target": _f(row["exit_target"]),
+            "stop_loss": _f(row["stop_loss"]),
+            "entry_price": _f(row["entry_price"]),
+            "exit_price": _f(row["exit_price"]),
+            "outcome": row["outcome"],
+            "gain": _f(row["gain"]),
+            "gain_pct": _f(row["gain_pct"]),
+            "mae": _f(row["mae"]),
+            "mfe": _f(row["mfe"]),
+            "mae_pct": _f(row["mae_pct"]),
+            "mfe_pct": _f(row["mfe_pct"]),
+            "holding_days": row["holding_days"],
+            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+            "entry_at": row["entry_at"].isoformat() if row["entry_at"] else None,
+            "closed_at": row["closed_at"].isoformat() if row["closed_at"] else None,
+        }
+
+    async def save_investment_thesis(
+        self,
+        *,
+        sentinel_id: UUID,
+        owner_id: UUID,
+        ticker: str,
+        direction: str = "LONG",
+        decision_id: Optional[UUID] = None,
+        entry_price_target: Optional[Decimal] = None,
+        exit_target: Optional[Decimal] = None,
+        stop_loss: Optional[Decimal] = None,
+        rationale_text: Optional[str] = None,
+        claude_reasoning: Optional[str] = None,
+        state: str = "IDEA",
+        notes: Optional[str] = None,
+    ) -> UUID:
+        """
+        Crea una tesis de inversión (#HE-2). Por defecto nace en 'IDEA' (propuesta
+        del Universe Selector sin ejecutar). El reasoning de Claude se copia de
+        rotation_decisions para que el postmortem sea autocontenido. Retorna thesis_id.
+        """
+        sql = """
+            INSERT INTO investment_theses
+                (sentinel_id, owner_id, decision_id, ticker, direction, state,
+                 entry_price_target, exit_target, stop_loss,
+                 rationale_text, claude_reasoning, notes)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            RETURNING thesis_id
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    sql, sentinel_id, owner_id, decision_id, ticker, direction, state,
+                    entry_price_target, exit_target, stop_loss,
+                    rationale_text, claude_reasoning, notes,
+                )
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al crear investment_thesis ({sentinel_id}/{ticker}): {e}")
+            raise
+        tid = row["thesis_id"]
+        logger.info(f"Tesis creada: {tid} | sentinel={sentinel_id} {ticker} {direction} state={state}")
+        return tid
+
+    async def update_thesis_state(self, thesis_id: UUID, new_state: str, **fields) -> bool:
+        """
+        Transiciona una tesis a `new_state` validando contra la state machine
+        (investment_thesis.validate_transition) dentro de la misma transacción
+        (SELECT ... FOR UPDATE → UPDATE). `fields` setea columnas adicionales del
+        allowlist _THESIS_UPDATABLE (al pasar a ACTIVE: entry_price/entry_at; al
+        cerrar: exit_price/closed_at/outcome/gain/mae/mfe/... ya calculados por el
+        caller con el módulo puro, DIP).
+
+        Returns True si transicionó; False si la tesis no existe o la transición es
+        inválida. NO lanza por transición inválida — un error del tracking nunca
+        debe crashear el runtime del bot; se loguea y sigue.
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        "SELECT state FROM investment_theses WHERE thesis_id = $1 FOR UPDATE",
+                        thesis_id,
+                    )
+                    if row is None:
+                        logger.warning(f"update_thesis_state: tesis {thesis_id} no existe")
+                        return False
+                    try:
+                        validate_transition(row["state"], new_state)
+                    except ValueError as ve:
+                        logger.warning(f"update_thesis_state {thesis_id}: {ve}")
+                        return False
+
+                    set_clauses = ["state = $2"]
+                    params = [thesis_id, new_state]
+                    for col in self._THESIS_UPDATABLE:
+                        if fields.get(col) is not None:
+                            params.append(fields[col])
+                            set_clauses.append(f"{col} = ${len(params)}")
+                    await conn.execute(
+                        f"UPDATE investment_theses SET {', '.join(set_clauses)} "
+                        f"WHERE thesis_id = $1",
+                        *params,
+                    )
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al actualizar tesis {thesis_id}: {e}")
+            raise
+        logger.info(f"Tesis {thesis_id} → {new_state}")
+        return True
+
+    async def find_open_thesis(
+        self, owner_id: UUID, sentinel_id: UUID, ticker: str
+    ) -> Optional[dict]:
+        """
+        Tesis ABIERTA (state != 'CLOSED') más reciente de (sentinel, ticker) del
+        owner — para que el enganche del runtime sepa qué tesis transicionar cuando
+        entra un fill o se cierra la posición. None si no hay ninguna abierta.
+        """
+        sql = """
+            SELECT * FROM investment_theses
+            WHERE owner_id = $1 AND sentinel_id = $2 AND ticker = $3 AND state <> 'CLOSED'
+            ORDER BY created_at DESC
+            LIMIT 1
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(sql, owner_id, sentinel_id, ticker)
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error en find_open_thesis ({sentinel_id}/{ticker}): {e}")
+            raise
+        return self._serialize_thesis(row) if row else None
+
+    async def get_closed_theses_feedback(
+        self, owner_id: UUID, sentinel_id: Optional[UUID] = None, limit: int = 20
+    ) -> list[dict]:
+        """
+        Tesis CERRADAS del owner (opcionalmente filtradas por Sentinel), para el
+        feedback loop del Universe Selector (#ME-2). `limit` acota cuántas tesis
+        recientes se consideran (presupuesto de tokens del prompt). Devuelve la
+        lista en orden cronológico ASCENDENTE (build_feedback_block toma la cola
+        como ejemplos recientes), JSON-safe.
+        """
+        if sentinel_id is None:
+            sql = (
+                "SELECT * FROM investment_theses WHERE owner_id = $1 AND state = 'CLOSED' "
+                "ORDER BY closed_at DESC NULLS LAST LIMIT $2"
+            )
+            args = (owner_id, limit)
+        else:
+            sql = (
+                "SELECT * FROM investment_theses WHERE owner_id = $1 AND sentinel_id = $2 "
+                "AND state = 'CLOSED' ORDER BY closed_at DESC NULLS LAST LIMIT $3"
+            )
+            args = (owner_id, sentinel_id, limit)
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(sql, *args)
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error en get_closed_theses_feedback ({owner_id}): {e}")
+            raise
+        return [self._serialize_thesis(r) for r in reversed(rows)]
 
     # ═══════════════════════════ § 8 — Macro events ═══════════════════════════
     async def record_macro_event(
