@@ -2,7 +2,7 @@
 
 Sistema de trading algorítmico multi-agente. 9 estrategias autónomas (Sentinels) coordinadas por un Dispatcher, con protecciones macro, gestión de capital Half-Kelly y persistencia en PostgreSQL. Operación en paper trading hasta validar.
 
-## Estado al 2026-05-25 — T-O COMPLETA. 10 commits LOCALES (modelo NO-push), `origin/main`=`0242eb2`, suite 115/115
+## Estado al 2026-05-24 — T-O COMPLETA. 11 commits LOCALES (modelo NO-push), `origin/main`=`0242eb2`, suite 115/115
 
 Sesión T-K→T-O con Cowork. **Modelo desde LOG 04:45: commits LOCALES, sin push** hasta un bundle ordenado por Roman. 10 commits locales sobre `origin/main`=`0242eb2` (HEAD `ce3480d`).
 
