@@ -430,6 +430,24 @@ def test_get_slippage_stats_today_vacio_y_pgerror():
         _run(_hist(conn2).get_slippage_stats_today(uuid4()))
 
 
+def test_get_claude_cost_by_sentinel_today_con_datos_vacio_y_pgerror():
+    s1, s2 = uuid4(), uuid4()
+    conn = _conn()
+    conn.fetch = AsyncMock(return_value=[
+        {"sentinel_id": s1, "cost": 0.0142},
+        {"sentinel_id": s2, "cost": 0.05},
+    ])
+    out = _run(_hist(conn).get_claude_cost_by_sentinel_today(uuid4()))
+    assert out == {str(s1): 0.0142, str(s2): 0.05}
+    conn2 = _conn()
+    conn2.fetch = AsyncMock(return_value=[])
+    assert _run(_hist(conn2).get_claude_cost_by_sentinel_today(uuid4())) == {}
+    conn3 = _conn()
+    conn3.fetch = AsyncMock(side_effect=_pg())
+    with pytest.raises(asyncpg.PostgresError):
+        _run(_hist(conn3).get_claude_cost_by_sentinel_today(uuid4()))
+
+
 # ═══════════════════════ § 8 — macro events ═══════════════════════
 
 def test_record_macro_event_ok_y_pgerror():

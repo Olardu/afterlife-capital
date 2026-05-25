@@ -489,6 +489,8 @@ async def api_status():
         # #ME-1 — slippage de hoy (USD/share + basis points) para visibilidad del
         # costo de ejecución (gap paper→live).
         slippage_today = await historian.get_slippage_stats_today(_owner_id)
+        # #ME-4 — costo Claude de hoy agregado por Sentinel (visibilidad de gasto API).
+        claude_cost_by_sentinel = await historian.get_claude_cost_by_sentinel_today(_owner_id)
         return {
             "system":           "ONLINE",
             "sentinels_active": stats["sentinels_active"],
@@ -503,6 +505,8 @@ async def api_status():
             "signals_breakdown_today": signals_breakdown,
             # #ME-1 — slippage de ejecución de hoy (USD/share + bps).
             "slippage_today": slippage_today,
+            # #ME-4 — costo Claude de hoy por Sentinel {sentinel_id: usd}.
+            "claude_cost_today_by_sentinel": claude_cost_by_sentinel,
             # #TD-6 follow-up — visible si NEWS_API_KEY falta (The Ear queda ciego
             # a noticias). True = sin key configurada.
             "the_ear_news_disabled":   not bool(NEWS_API_KEY),

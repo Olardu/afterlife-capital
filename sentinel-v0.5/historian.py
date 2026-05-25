@@ -1089,6 +1089,31 @@ class Historian:
             "avg_slippage_bps": (sum(bps_vals) / len(bps_vals)) if bps_vals else None,
         }
 
+    async def get_claude_cost_by_sentinel_today(self, owner_id: UUID) -> dict:
+        """
+        Costo Claude (USD) de HOY agregado por Sentinel (#ME-4). Suma
+        rotation_decisions.claude_cost_usd de las decisiones de hoy del owner,
+        agrupado por sentinel_id. El dato YA es per-Sentinel (rotation_decisions
+        tiene sentinel_id) → sin migración. Returns {str(sentinel_id): float_cost};
+        Sentinels sin decisiones hoy no aparecen.
+        """
+        sql = """
+            SELECT rd.sentinel_id, SUM(rd.claude_cost_usd)::float8 AS cost
+            FROM rotation_decisions rd
+            JOIN sentinels s ON s.sentinel_id = rd.sentinel_id
+            WHERE s.owner_id = $1
+              AND rd.triggered_at::date = CURRENT_DATE
+              AND rd.claude_cost_usd IS NOT NULL
+            GROUP BY rd.sentinel_id
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(sql, owner_id)
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error en get_claude_cost_by_sentinel_today ({owner_id}): {e}")
+            raise
+        return {str(r["sentinel_id"]): r["cost"] for r in rows}
+
     # ═══════════════════════════ § 8 — Macro events ═══════════════════════════
     async def record_macro_event(
         self,
