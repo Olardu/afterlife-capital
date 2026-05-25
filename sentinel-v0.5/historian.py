@@ -72,6 +72,21 @@ def _bucket_signal_rows(rows) -> dict:
     return out
 
 
+def _slippage_to_bps(filled_price, slippage):
+    """
+    Slippage en basis points (#ME-1): slippage / price_at_signal * 10000, donde
+    price_at_signal = filled_price - slippage (ambos salen de la fila de trade).
+    Función PURA → testeable. Retorna None si no es computable: sin filled_price,
+    sin slippage, o price_at_signal <= 0 (denominador inválido).
+    """
+    if filled_price is None or slippage is None:
+        return None
+    price_at_signal = Decimal(str(filled_price)) - Decimal(str(slippage))
+    if price_at_signal <= 0:
+        return None
+    return float(Decimal(str(slippage)) / price_at_signal * 10000)
+
+
 # =============================================================================
 # Índice de secciones (§) — buscables con "§ N":
 #   § 1  — Imports y configuración (arriba de este bloque)
@@ -1040,6 +1055,39 @@ class Historian:
         except asyncpg.PostgresError as e:
             logger.error(f"Error en get_signals_breakdown_today ({owner_id}): {e}")
             raise
+
+    async def get_slippage_stats_today(self, owner_id: UUID) -> dict:
+        """
+        Slippage de los trades FILLED de HOY (#ME-1): conteo + promedio en USD/share y
+        en basis points. price_at_signal se reconstruye como filled_price - slippage
+        (#H-4: ambos Decimal en DB). El bps lo computa _slippage_to_bps (función pura).
+        Returns {n, avg_slippage_usd, avg_slippage_bps} (promedios None si no hay datos).
+        """
+        sql = """
+            SELECT filled_price, slippage
+            FROM trades
+            WHERE owner_id = $1
+              AND status = 'FILLED'
+              AND filled_price IS NOT NULL
+              AND slippage IS NOT NULL
+              AND created_at::date = CURRENT_DATE
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(sql, owner_id)
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error en get_slippage_stats_today ({owner_id}): {e}")
+            raise
+        usd_vals = [float(r["slippage"]) for r in rows]
+        bps_vals = [
+            b for b in (_slippage_to_bps(r["filled_price"], r["slippage"]) for r in rows)
+            if b is not None
+        ]
+        return {
+            "n": len(rows),
+            "avg_slippage_usd": (sum(usd_vals) / len(usd_vals)) if usd_vals else None,
+            "avg_slippage_bps": (sum(bps_vals) / len(bps_vals)) if bps_vals else None,
+        }
 
     # ═══════════════════════════ § 8 — Macro events ═══════════════════════════
     async def record_macro_event(

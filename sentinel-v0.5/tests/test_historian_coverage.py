@@ -24,7 +24,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import asyncpg
-from historian import Historian
+from historian import Historian, _slippage_to_bps
 
 
 def _run(coro):
@@ -391,6 +391,43 @@ def test_get_signals_breakdown_today_pgerror_reraise():
     h = _hist(conn)
     with pytest.raises(asyncpg.PostgresError):
         _run(h.get_signals_breakdown_today(uuid4()))
+
+
+def test_slippage_to_bps_casos():
+    # 0 → 0 bps
+    assert _slippage_to_bps(Decimal("100"), Decimal("0")) == 0.0
+    # positivo: filled 100.5, slip 0.5 → price_at_signal 100 → 50 bps
+    assert _slippage_to_bps(Decimal("100.5"), Decimal("0.5")) == pytest.approx(50.0)
+    # negativo: filled 99.5, slip -0.5 → price_at_signal 100 → -50 bps
+    assert _slippage_to_bps(Decimal("99.5"), Decimal("-0.5")) == pytest.approx(-50.0)
+    # sin filled_price / sin slippage → None
+    assert _slippage_to_bps(None, Decimal("0.5")) is None
+    assert _slippage_to_bps(Decimal("100"), None) is None
+    # price_at_signal <= 0 (filled == slippage) → None
+    assert _slippage_to_bps(Decimal("0.5"), Decimal("0.5")) is None
+
+
+def test_get_slippage_stats_today_con_datos():
+    conn = _conn()
+    conn.fetch = AsyncMock(return_value=[
+        {"filled_price": Decimal("100.5"), "slippage": Decimal("0.5")},   # +50 bps
+        {"filled_price": Decimal("99.5"),  "slippage": Decimal("-0.5")},  # -50 bps
+    ])
+    out = _run(_hist(conn).get_slippage_stats_today(uuid4()))
+    assert out["n"] == 2
+    assert out["avg_slippage_usd"] == pytest.approx(0.0)
+    assert out["avg_slippage_bps"] == pytest.approx(0.0)
+
+
+def test_get_slippage_stats_today_vacio_y_pgerror():
+    conn = _conn()
+    conn.fetch = AsyncMock(return_value=[])
+    assert _run(_hist(conn).get_slippage_stats_today(uuid4())) == {
+        "n": 0, "avg_slippage_usd": None, "avg_slippage_bps": None}
+    conn2 = _conn()
+    conn2.fetch = AsyncMock(side_effect=_pg())
+    with pytest.raises(asyncpg.PostgresError):
+        _run(_hist(conn2).get_slippage_stats_today(uuid4()))
 
 
 # ═══════════════════════ § 8 — macro events ═══════════════════════

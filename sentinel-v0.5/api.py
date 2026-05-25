@@ -486,6 +486,9 @@ async def api_status():
         # #ME-3: desglose de señales de hoy por destino (filled/cancelled/
         # pending/no_trade). Adquiere su propia conexión → fuera del with previo.
         signals_breakdown = await historian.get_signals_breakdown_today(_owner_id)
+        # #ME-1 — slippage de hoy (USD/share + basis points) para visibilidad del
+        # costo de ejecución (gap paper→live).
+        slippage_today = await historian.get_slippage_stats_today(_owner_id)
         return {
             "system":           "ONLINE",
             "sentinels_active": stats["sentinels_active"],
@@ -498,6 +501,8 @@ async def api_status():
             "parking_brake":    _is_parking_brake_active(),
             # #ME-3 — tracking de trades fallidos por categoría (señales de hoy).
             "signals_breakdown_today": signals_breakdown,
+            # #ME-1 — slippage de ejecución de hoy (USD/share + bps).
+            "slippage_today": slippage_today,
             # #TD-6 follow-up — visible si NEWS_API_KEY falta (The Ear queda ciego
             # a noticias). True = sin key configurada.
             "the_ear_news_disabled":   not bool(NEWS_API_KEY),
