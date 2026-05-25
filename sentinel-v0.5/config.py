@@ -221,6 +221,11 @@ SPY_HISTORICAL_YEARS = 25
 
 BASE_TICKER    = "SPY"
 CANDLE_INTERVAL = "15Min"
+# Parámetros de descarga de barras de los Sentinels (#TD-24: antes hardcoded en
+# sentinels/__init__.py). BARS_LOOKBACK = velas de 15min a analizar; FETCH_DAYS = días
+# calendario a pedir (margen para cubrir fines de semana → ~120-150 barras hábiles).
+BARS_LOOKBACK  = 150
+FETCH_DAYS     = 10
 MARKET_OPEN    = "09:30"
 MARKET_CLOSE   = "16:00"
 TIMEZONE       = "America/New_York"

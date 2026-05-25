@@ -32,14 +32,15 @@ from typing import Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from config import ALPACA_API_KEY, ALPACA_SECRET_KEY, BASE_TICKER
+from config import ALPACA_API_KEY, ALPACA_SECRET_KEY, BASE_TICKER, BARS_LOOKBACK, FETCH_DAYS
 
 logger = logging.getLogger("sentinel.sentinels")
 
-# Barras a descargar para garantizar suficiente historia para todas las estrategias
-# (EMA 55 ~ 110, BBW percentile-10 sobre 100 velas + ventana 20 = 120).
-_BARS_LOOKBACK = 150
-_FETCH_DAYS    = 10   # 10 días calendario → ~120-150 barras de 15min en días hábiles
+# #TD-24: la fuente de verdad de estos parámetros es config.py. Se aliasan acá para
+# no tocar los call sites del módulo (la historia mínima la fija el indicador más
+# largo: EMA 55 ~ 110, BBW percentile-10 sobre 100 velas + ventana 20 = 120).
+_BARS_LOOKBACK = BARS_LOOKBACK
+_FETCH_DAYS    = FETCH_DAYS
 
 
 # =============================================================================
