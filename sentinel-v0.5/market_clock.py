@@ -139,7 +139,7 @@ def get_market_status() -> dict:
     }
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     import json
     s = get_market_status()
     print(json.dumps(s, indent=2))
