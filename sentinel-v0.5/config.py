@@ -124,6 +124,19 @@ THESIS_TRACKING_ENABLED    = os.environ.get("THESIS_TRACKING_ENABLED", "false").
 # Cuántas tesis cerradas recientes se incluyen en el prompt del Universe Selector.
 THESIS_FEEDBACK_LIMIT      = int(os.environ.get("THESIS_FEEDBACK_LIMIT", "20"))
 
+# --- #FEAT-007 — The Ear sentiment FinBERT. FLAG-GATED, default OFF. ---
+# Con THE_EAR_SENTIMENT_ENABLED=False The Ear usa solo keyword matching (legacy,
+# idéntico). Con =true y un SentimentAnalyzer inyectado, corre en "hybrid mode":
+# el risk_score [0,1] lo sigue dando el keyword (semántica intacta para decay/
+# dashboard/veto), y FinBERT agrega (a) un veto extra si el sentiment promedio
+# cae por debajo del umbral y (b) persistencia del score FinBERT para calibrar.
+# Roman lo activa en .env + restart. Si el modelo no carga → fallback a keyword.
+THE_EAR_SENTIMENT_ENABLED  = os.environ.get("THE_EAR_SENTIMENT_ENABLED", "false").lower() == "true"
+# Umbral de veto FinBERT: sentiment promedio [-1,1] por debajo de este valor
+# bloquea el trading (can_trade=False). Default conservador; se recalibra con
+# data real (ver docs/finbert_recalibration_plan.md).
+THE_EAR_FINBERT_VETO_THRESHOLD = float(os.environ.get("THE_EAR_FINBERT_VETO_THRESHOLD", "-0.6"))
+
 # =============================================================================
 # CORRELATION GUARD
 # Corre antes de cada orden. Si la correlación rolling entre la señal entrante

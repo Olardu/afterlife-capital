@@ -20,6 +20,8 @@ from config import (
     PARKING_BRAKE_TIME,
     RISK_SCORE_VETO_THRESHOLD,
     SPY_CIRCUIT_BREAKER_THRESHOLD,
+    THE_EAR_FINBERT_VETO_THRESHOLD,
+    THE_EAR_SENTIMENT_ENABLED,
     TIMEZONE,
     VIX_CIRCUIT_BREAKER_THRESHOLD,
 )
@@ -75,8 +77,13 @@ def _count_matches(text: str, patterns: list[tuple[str, "re.Pattern[str]"]]) -> 
 
 
 class TheEar:
-    def __init__(self, historian: Historian):
+    def __init__(self, historian: Historian, sentiment_analyzer=None):
         self.historian = historian
+        # #FEAT-007: analizador de sentiment FinBERT inyectado (DIP). None =
+        # solo keyword matching. The Ear NO importa SentimentAnalyzer; lo recibe
+        # ya construido desde main.py, lo que permite mockearlo en tests sin
+        # cargar el modelo. Solo se usa si THE_EAR_SENTIMENT_ENABLED=true.
+        self.sentiment_analyzer = sentiment_analyzer
         self.last_risk_score: float = 0.0
         self.circuit_breaker_active: bool = False
         self.parking_brake_active: bool = False
@@ -315,6 +322,28 @@ class TheEar:
         self.parking_brake_active = active
         return active
 
+    def _compute_finbert_score(self, articles: list[dict]) -> float | None:
+        """
+        Promedio del sentiment FinBERT [-1, 1] sobre los titulares (#FEAT-007).
+        -1 = muy bajista, +1 = muy alcista. None si el analyzer no está
+        disponible, no hay artículos, o ningún titular produjo score (el caller
+        cae al keyword matching para el método).
+
+        Evalúa TODOS los titulares (title + description), no solo los
+        keyword-negativos: el valor de FinBERT está en captar el sentiment que
+        el keyword matching no ve. Nunca lanza — batch_score es defensivo.
+        """
+        if self.sentiment_analyzer is None or not articles:
+            return None
+        texts = [
+            f"{a.get('title', '')} {a.get('description', '')}".strip()
+            for a in articles
+        ]
+        scores = [s for s in self.sentiment_analyzer.batch_score(texts) if s is not None]
+        if not scores:
+            return None
+        return sum(scores) / len(scores)
+
     async def evaluate(self) -> dict:
         """
         Método principal. Llamado por el Dispatcher en cada ciclo de decisión.
@@ -347,6 +376,19 @@ class TheEar:
 
             circuit_breaker = await self.check_circuit_breaker()
 
+            # #FEAT-007 hybrid mode: si FinBERT está activo y disponible, calcular
+            # el sentiment promedio [-1,1], persistirlo y aplicar un veto extra si
+            # es muy bajista. El risk_score [0,1] lo SIGUE dando el keyword
+            # (semántica intacta para decay/dashboard/veto existente).
+            finbert_score: float | None = None
+            sentiment_method = "keyword"
+            finbert_veto = False
+            if THE_EAR_SENTIMENT_ENABLED and self.sentiment_analyzer is not None:
+                finbert_score = self._compute_finbert_score(articles)
+                if finbert_score is not None:
+                    sentiment_method = "hybrid"
+                    finbert_veto = finbert_score < THE_EAR_FINBERT_VETO_THRESHOLD
+
             try:
                 await self.historian.record_macro_event(
                     risk_score=risk_score,
@@ -354,14 +396,21 @@ class TheEar:
                     spy_change_15min=self._last_spy_change,
                     circuit_breaker_triggered=circuit_breaker,
                     news_titles=top_titles,
+                    sentiment_score_finbert=finbert_score,
+                    sentiment_method=sentiment_method,
                 )
             except Exception as e:
                 logger.error(f"Error al persistir macro event: {e}")
 
-            can_trade = not (parking_brake or circuit_breaker or risk_score > RISK_SCORE_VETO_THRESHOLD)
+            can_trade = not (
+                parking_brake or circuit_breaker
+                or risk_score > RISK_SCORE_VETO_THRESHOLD or finbert_veto
+            )
 
             logger.info(
                 f"Ear evaluate — risk={risk_score:.4f} "
+                f"finbert={finbert_score if finbert_score is None else round(finbert_score, 4)} "
+                f"method={sentiment_method} finbert_veto={finbert_veto} "
                 f"circuit_breaker={circuit_breaker} parking_brake={parking_brake} "
                 f"can_trade={can_trade}"
             )
@@ -372,6 +421,9 @@ class TheEar:
                 "parking_brake":   parking_brake,
                 "can_trade":       can_trade,
                 "news_disabled":   self.news_disabled,   # #TD-6
+                "sentiment_score_finbert": finbert_score,   # #FEAT-007
+                "sentiment_method":        sentiment_method,
+                "finbert_veto":            finbert_veto,
             }
 
     async def start_polling(self):
