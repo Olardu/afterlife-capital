@@ -385,22 +385,6 @@ def test_get_sentinel_scores_ok_y_pgerror():
         _run(_hist(conn2).get_sentinel_scores(uuid4()))
 
 
-def test_get_trade_history_con_ticker_y_sin_ticker():
-    conn = _conn()
-    conn.fetch = AsyncMock(return_value=[{"trade_id": uuid4()}])
-    h = _hist(conn)
-    assert len(_run(h.get_trade_history(uuid4(), ticker="SPY"))) == 1
-    assert len(_run(h.get_trade_history(uuid4()))) == 1  # rama sin ticker
-
-
-def test_get_trade_history_pgerror_reraise():
-    conn = _conn()
-    conn.fetch = AsyncMock(side_effect=_pg())
-    h = _hist(conn)
-    with pytest.raises(asyncpg.PostgresError):
-        _run(h.get_trade_history(uuid4()))
-
-
 def test_get_signals_breakdown_today_pgerror_reraise():
     conn = _conn()
     conn.fetch = AsyncMock(side_effect=_pg())

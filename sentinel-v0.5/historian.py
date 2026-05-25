@@ -20,6 +20,8 @@ from config import (
     WARMUP_TRADES_REQUIRED,
     PROFIT_FACTOR_MINIMUM,
     RTD_MINIMUM,
+    DB_POOL_MIN,
+    DB_POOL_MAX,
 )
 
 logger = logging.getLogger("sentinel.historian")
@@ -78,7 +80,7 @@ def _bucket_signal_rows(rows) -> dict:
 #   § 4  — Performance y decay (calculate_performance, evaluate_decay)
 #   § 5  — Sentinels y tickers (get_active_sentinels, get_sentinel_tickers)
 #   § 6  — Helpers VIX / idle / drawdown (get_avg_vix, get_last_trade_timestamp, get_ticker_added_at)
-#   § 7  — Scores e historia de trades (get_sentinel_scores, get_trade_history, get_signals_breakdown_today)
+#   § 7  — Scores e historia de trades (get_sentinel_scores, get_signals_breakdown_today)
 #   § 8  — Macro events (record_macro_event)
 #   § 9  — Usuarios (get_user_by_email, list_users, add_user, remove_user)
 #   § 10 — System flags (get_system_flag, set_system_flag)
@@ -107,8 +109,8 @@ class Historian:
         try:
             self.pool = await asyncpg.create_pool(
                 dsn=self.database_url,
-                min_size=2,
-                max_size=10,
+                min_size=DB_POOL_MIN,
+                max_size=DB_POOL_MAX,
                 command_timeout=10,
                 timeout=5,
             )
@@ -273,6 +275,14 @@ class Historian:
             await conn.execute(
                 "ALTER TABLE performance_scores "
                 "ADD COLUMN IF NOT EXISTS warning_detected_at TIMESTAMP"
+            )
+
+            # Migración 016 (#TD): flag is_warmup en performance_scores. Marca las
+            # filas de scores PARCIALES (2 ≤ trades < WARMUP_TRADES_REQUIRED) para
+            # que el dashboard pueda distinguir "en warmup" de "sin datos". Idempotente.
+            await conn.execute(
+                "ALTER TABLE performance_scores "
+                "ADD COLUMN IF NOT EXISTS is_warmup BOOLEAN NOT NULL DEFAULT FALSE"
             )
 
             # =================================================================
@@ -715,11 +725,16 @@ class Historian:
         pf_db  = profit_factor if math.isfinite(profit_factor) else None
         rtd_db = return_to_drawdown_ratio if math.isfinite(return_to_drawdown_ratio) else None
 
+        # #TD: is_warmup TRUE mientras el par no alcanzó WARMUP_TRADES_REQUIRED
+        # (scores parciales, decay no se juzga). El dashboard lo usa para mostrar
+        # "en warmup" en vez de un vacío ambiguo.
+        is_warmup = total_trades < WARMUP_TRADES_REQUIRED
+
         upsert_sql = """
             INSERT INTO performance_scores
                 (sentinel_id, ticker, sharpe_ratio, win_rate, total_trades, performance_decay,
-                 profit_factor, return_to_drawdown_ratio)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                 profit_factor, return_to_drawdown_ratio, is_warmup)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (sentinel_id, ticker) DO UPDATE SET
                 sharpe_ratio             = EXCLUDED.sharpe_ratio,
                 win_rate                 = EXCLUDED.win_rate,
@@ -727,6 +742,7 @@ class Historian:
                 performance_decay        = EXCLUDED.performance_decay,
                 profit_factor            = EXCLUDED.profit_factor,
                 return_to_drawdown_ratio = EXCLUDED.return_to_drawdown_ratio,
+                is_warmup                = EXCLUDED.is_warmup,
                 calculated_at            = NOW()
         """
         try:
@@ -734,7 +750,7 @@ class Historian:
                 await conn.execute(
                     upsert_sql,
                     sentinel_id, ticker, sharpe_ratio, win_rate, total_trades, decay,
-                    pf_db, rtd_db,
+                    pf_db, rtd_db, is_warmup,
                 )
             logger.info(
                 f"Decay evaluado ({sentinel_id}, {ticker}): "
@@ -987,43 +1003,6 @@ class Historian:
             return [dict(r) for r in rows]
         except asyncpg.PostgresError as e:
             logger.error(f"Error al obtener sentinel scores (owner={owner_id}): {e}")
-            raise
-
-    async def get_trade_history(
-        self,
-        sentinel_id: UUID,
-        ticker: Optional[str] = None,
-        limit: int = 100,
-    ) -> list[dict]:
-        """
-        Retorna historial de trades para un Sentinel ordenado por created_at DESC.
-        Filtra por ticker si se provee.
-        """
-        try:
-            async with self.pool.acquire() as conn:
-                if ticker:
-                    rows = await conn.fetch(
-                        """
-                        SELECT * FROM trades
-                        WHERE sentinel_id = $1 AND ticker = $2
-                        ORDER BY created_at DESC
-                        LIMIT $3
-                        """,
-                        sentinel_id, ticker, limit,
-                    )
-                else:
-                    rows = await conn.fetch(
-                        """
-                        SELECT * FROM trades
-                        WHERE sentinel_id = $1
-                        ORDER BY created_at DESC
-                        LIMIT $2
-                        """,
-                        sentinel_id, limit,
-                    )
-            return [dict(r) for r in rows]
-        except asyncpg.PostgresError as e:
-            logger.error(f"Error al obtener historial ({sentinel_id}, ticker={ticker}): {e}")
             raise
 
     async def get_signals_breakdown_today(self, owner_id: UUID) -> dict:

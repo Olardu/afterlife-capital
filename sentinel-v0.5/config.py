@@ -16,6 +16,9 @@ ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY")
 ALPACA_BASE_URL   = os.environ.get("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
+# Tamaño del pool de conexiones asyncpg (#TD: antes hardcoded en historian.connect()).
+DB_POOL_MIN  = int(os.environ.get("DB_POOL_MIN", "2"))
+DB_POOL_MAX  = int(os.environ.get("DB_POOL_MAX", "10"))
 NEWS_API_KEY = os.environ.get("NEWS_API_KEY")
 SECRET_KEY   = os.environ.get("SECRET_KEY")   # legacy — uso histórico, no tocar
 
