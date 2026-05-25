@@ -2,6 +2,17 @@
 
 Sistema de trading algorítmico multi-agente. 9 estrategias autónomas (Sentinels) coordinadas por un Dispatcher, con protecciones macro, gestión de capital Half-Kelly y persistencia en PostgreSQL. Operación en paper trading hasta validar.
 
+## Estado al 2026-05-25 — T-S 3/5 (#CR-3 fees COMPLETO). `origin/main`=`7727511`, HEAD `bada54d` (ahead 5), suite 447/447
+
+**#CR-3 Fees simulados — COMPLETO** (sub-4 de T-S), 2 commits LOCALES, SIN migración:
+- `dee1a3f` módulo puro `simulated_costs.calculate_fees` (SEC §31 + FINRA TAF tope $8.30 + exchange, los 3 por VENTA, Decimal exacto, 11 tests TDD).
+- `bada54d` wire-up: `historian.get_simulated_costs_today` (on-the-fly desde `trades`, patrón #ME-1 sin columna nueva) + `/api/status.simulated_costs_today` + `scripts/queries_simulated_costs.sql`.
+- **Validado SQL==Python read-only sobre 107 ventas FILLED reales** (total fees ~$0.14 — el período operó qty=1; pesan con sizing real). historian + simulated_costs 100% cobertura.
+- **Constante a confirmar:** `SEC_FEE_PER_1000_USD=$0.00278` (valor spec); la real fluctúa, ~$0.0278/$1000 en 2024 (10x). Fácil de ajustar (1 lugar).
+- Decisión: fees on-the-fly (no se persiste columna) — revertible a persistir si Roman prefiere fee "congelado".
+
+**Pendiente T-S — 2/5 (bloque fiscal pesado):** #CR-1 fiscal (wash sales + holding period + cost basis + tax lots; **decisión abierta: FIFO vs specific-id**; migración **017** próxima libre) · #CR-2 splits/dividendos (corporate_actions, depende de #CR-1). Pausado para confirmar scope con Roman.
+
 ## Estado al 2026-05-25 — BUNDLE PUSHEADO + T-S PARCIAL 2/5. `origin/main`=`7727511`, HEAD `4788022` (ahead 2), suite 435/435
 
 **Bundle del sprint pusheado** (Roman): `origin/main`=`7727511`, **CI GitHub Actions = success** (los 3 jobs, primer run real). Local en sync. NO-push sigue para lo nuevo.
