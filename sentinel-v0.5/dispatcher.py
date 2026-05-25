@@ -563,7 +563,7 @@ class Dispatcher:
                     shadow_status = "matched"
                 elif qty_frac_would > qty_real:
                     shadow_status = "fractional_would_increase"
-                else:
+                else:  # pragma: no cover — inalcanzable: qty_real=floor(frac) ⟹ frac≥qty_real; si frac==qty_real ⟹ dollar_diff=0 ⟹ rama "matched"
                     shadow_status = "other"
 
                 await self.historian.record_shadow_fractional(
