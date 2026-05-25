@@ -18,7 +18,7 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -78,8 +78,12 @@ def _setup_logging():
     console = logging.StreamHandler()
     console.setFormatter(fmt)
 
+    # #TD-11: path absoluto basado en la ubicación del módulo (no en el CWD del
+    # proceso) para que el log no se fragmente si se arranca desde otra carpeta.
+    log_dir = Path(__file__).parent / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
     file_h = RotatingFileHandler(
-        filename    = "logs/api.log",
+        filename    = str(log_dir / "api.log"),
         maxBytes    = 5 * 1024 * 1024,
         backupCount = 3,
         encoding    = "utf-8",
@@ -156,7 +160,7 @@ async def lifespan(app: FastAPI):
 # APP
 # =============================================================================
 
-app = FastAPI(title="SENTINEL v0.5 API", lifespan=lifespan)
+app = FastAPI(title="SENTINEL v0.5 API", version="0.5.0", lifespan=lifespan)
 
 
 # =============================================================================
@@ -188,6 +192,8 @@ _PUBLIC_PATHS = {
     # Info de mercado pública (#FIX-011) — el indicador del header lo
     # consume antes de que el usuario inicie sesión también.
     "/api/market-status",
+    # Health check dedicado (#TD-10) — monitoreo externo sin sesión.
+    "/api/healthz",
 }
 _PUBLIC_PREFIXES = ("/assets/",)
 
@@ -345,7 +351,9 @@ _RANGE_DAYS = {"today": None, "last_week": 7, "last_month": 30, "all": None}
 
 def _range_to_since(range_str: str) -> Optional[datetime]:
     """Traduce range a timestamp UTC naive (para columnas TIMESTAMP sin TZ)."""
-    now = datetime.utcnow()
+    # #TD-15: utcnow() está deprecado en 3.12+. now(timezone.utc).replace(tzinfo=None)
+    # preserva exactamente la semántica UTC-naive que esperan las columnas TIMESTAMP.
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     if range_str == "today":
         return datetime(now.year, now.month, now.day)
     if range_str == "last_week":
@@ -434,6 +442,23 @@ async def auth_me(request: Request):
 # =============================================================================
 
 # ═══════════════════════════ § 3 — Endpoints core ═══════════════════════════
+@app.get("/api/healthz")
+async def api_healthz():
+    """Health check dedicado (#TD-10): liveness/readiness para monitoreo externo.
+
+    Liviano y público — NO devuelve datos de negocio (eso es /api/status). Hace un
+    `SELECT 1` contra el pool: 200 si la DB responde, 503 si el pool no está listo
+    o la DB no responde. Pensado para load balancers / uptime checks.
+    """
+    try:
+        async with historian.pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+        return {"status": "ok"}
+    except Exception as e:
+        logger.warning(f"/api/healthz DEGRADED: {e}")
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
+
+
 @app.get("/api/status")
 async def api_status():
     try:
@@ -798,7 +823,7 @@ async def api_account_capital():
 
 
 @app.get("/api/account/portfolio-history")
-async def api_portfolio_history(period: str = Query("1D", regex="^(4H|8H|1D|1W|1M|1A)$")):
+async def api_portfolio_history(period: str = Query("1D", pattern="^(4H|8H|1D|1W|1M|1A)$")):
     """
     Endpoint read-only que consulta Alpaca portfolio history via REST API.
     Alimenta la curva de equity del dashboard con datos temporales reales.
@@ -914,7 +939,7 @@ async def api_portfolio_history(period: str = Query("1D", regex="^(4H|8H|1D|1W|1
 
 # ═══════════════════════════ § 5 — Reporte ═══════════════════════════
 @app.get("/api/report")
-async def api_report(range: str = Query("today", regex="^(today|last_week|last_month|all)$")):
+async def api_report(range: str = Query("today", pattern="^(today|last_week|last_month|all)$")):
     """
     Reporte JSON exhaustivo (#FIX-006).
 
@@ -1130,7 +1155,7 @@ async def api_report(range: str = Query("today", regex="^(today|last_week|last_m
 
     return {
         "metadata": {
-            "generated_at":   datetime.utcnow().isoformat() + "Z",
+            "generated_at":   datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "range":          range,
             "owner":          OWNER_USERNAME,
             "system_version": "SENTINEL v0.5",
@@ -1922,7 +1947,7 @@ async def _build_sse_payload() -> dict:
         )
 
     return {
-        "ts":        datetime.utcnow().isoformat() + "Z",
+        "ts":        datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "status":    status,
         "sentinels": [_row(s) for s in sentinels],
         "trades":    trades,
@@ -1933,22 +1958,30 @@ async def _build_sse_payload() -> dict:
 @app.get("/api/sse")
 async def api_sse():
     async def event_generator():
-        # Primer payload inmediato — sin esperar 15min para la primera actualización
+        # Detección de desconexión del cliente: bajo el Cloudflare tunnel el cierre
+        # del cliente (pestaña cerrada, caída del proxy, timeout) llega como
+        # CancelledError al generator. Antes se cerraba en silencio; ahora lo
+        # logueamos y re-lanzamos para que sse_starlette ejecute su cleanup.
         try:
-            initial = await _build_sse_payload()
-            yield {"event": "update", "data": json.dumps(initial)}
-        except Exception as e:
-            logger.error(f"SSE initial payload failed: {e}")
-
-        while True:
-            await asyncio.sleep(_SSE_INTERVAL_SECONDS)
+            # Primer payload inmediato — sin esperar 15min para la primera actualización
             try:
-                payload = await _build_sse_payload()
-                yield {"event": "update", "data": json.dumps(payload)}
+                initial = await _build_sse_payload()
+                yield {"event": "update", "data": json.dumps(initial)}
             except Exception as e:
-                logger.error(f"SSE payload failed: {e}")
-                # No matar el stream — esperar al próximo ciclo
-                yield {"event": "error", "data": json.dumps({"error": str(e)})}
+                logger.error(f"SSE initial payload failed: {e}")
+
+            while True:
+                await asyncio.sleep(_SSE_INTERVAL_SECONDS)
+                try:
+                    payload = await _build_sse_payload()
+                    yield {"event": "update", "data": json.dumps(payload)}
+                except Exception as e:
+                    logger.error(f"SSE payload failed: {e}")
+                    # No matar el stream — esperar al próximo ciclo
+                    yield {"event": "error", "data": json.dumps({"error": str(e)})}
+        except asyncio.CancelledError:
+            logger.info("SSE: cliente desconectado — stream cerrado.")
+            raise
 
     # ping=15s mantiene la conexión viva entre updates de 15min
     return EventSourceResponse(event_generator(), ping=15)
