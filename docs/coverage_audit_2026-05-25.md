@@ -1,3 +1,37 @@
+# Auditoría de cobertura — 2026-05-25 (#FASE2-NEW-4)
+
+> **Cierre T-P — 2026-05-24.** El bloque T-P completó la cobertura. Resumen abajo;
+> el baseline histórico de T-N se conserva a partir de "Auditoría inicial".
+
+## Cierre T-P (#FASE2-NEW-4) — final 2026-05-24
+
+Suite **431 tests** (era 99 al baseline T-N). Cobertura final del set de módulos
+críticos del gate CI (mismo comando + `--cov=main`):
+
+| Módulo | Stmts | Miss | Cover | T-N → T-P |
+|---|---|---|---|---|
+| `claude_client.py` | 66 | 0 | **100%** | 18% → 100% (`4949540`) |
+| `config.py` | 72 | 4 | **94%** | sin target (`validate_config` sin test) |
+| `correlation_guard.py` | 98 | 0 | **100%** | 44% → 100% (`e850432`) |
+| `dispatcher.py` | 497 | 0 | **100%** | 44% → 100% (este bloque) |
+| `historian.py` | 712 | 0 | **100%** | 25% → 100% (este bloque) |
+| `main.py` | 291 | 0 | **100%** | 16% → 100% (`d680084`, Sub-obj 9) |
+| `market_clock.py` | 53 | 0 | **100%** | 0% → 100% (`76db0e0`) |
+| `the_ear.py` | 161 | 0 | **100%** | 16% → 100% (`84f97e5`) |
+| `universe_selector.py` | 361 | 0 | **100%** | 43% → 100% (`fbb6d64`) |
+| **TOTAL (set del gate)** | **2311** | **4** | **99%** | 36% → **99%** |
+
+- **Gate CI subido `--cov-fail-under=35` → `95`** y agregado `--cov=main` al set medido.
+  Con TOTAL 99% el job pasa con margen.
+- Único `# pragma: no cover` agregado a fuente: rama `else "other"` del shadow fractional
+  en `dispatcher.py` — inalcanzable (qty_real=floor(frac) ⟹ frac≥qty_real; si frac==qty_real
+  ⟹ dollar_diff=0 ⟹ rama "matched"). El resto es 100% sin pragmas (salvo bloques
+  `if __name__=="__main__"`).
+- `config.py` queda en 94% (4 líneas: `validate_config`, L224-232) — no era target T-P.
+- `api.py` sigue sin medir (FastAPI, requiere TestClient — bloque aparte).
+
+---
+
 # Auditoría inicial de cobertura — 2026-05-25 (#FASE2-NEW-4 parte 1)
 
 Generado por T-N (sub-objetivo 4). Números **reales** de `pytest-cov` sobre la suite

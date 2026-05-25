@@ -2,8 +2,9 @@ name: CI
 
 # Gates objetivos para cada push/PR a main (#FASE2-NEW-1).
 # test → suite pytest | lint → ruff correctness | secrets → gitleaks | coverage → umbral escalonado.
-# Coverage arranca en 35% (estado real al 2026-05-25, ver docs/coverage_audit_2026-05-25.md)
-# y se sube por fases hasta 95% (#FASE2-NEW-4).
+# Coverage: gate final en 95% sobre los módulos críticos (#FASE2-NEW-4 / T-P cerrado
+# 2026-05-24). Los 9 módulos críticos están a 100% (config a 94%, sin target); el TOTAL
+# medido del set es 99%. Ver docs/coverage_audit_2026-05-25.md (sección "Cierre T-P").
 
 on:
   push:
@@ -60,4 +61,5 @@ jobs:
           python -m pytest tests/
           --cov=dispatcher --cov=historian --cov=the_ear --cov=correlation_guard
           --cov=universe_selector --cov=config --cov=claude_client --cov=market_clock
-          --cov-report=term-missing --cov-fail-under=35
+          --cov=main
+          --cov-report=term-missing --cov-fail-under=95
