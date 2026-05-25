@@ -60,6 +60,7 @@ from config import (
 
 # Fecha inicio del periodo de observacion (trades antes de esto son contaminacion)
 OBSERVATION_START = datetime(2026, 4, 28)
+from corporate_actions import normalize_alpaca_ca
 from email_service import send_daily_report, send_removal_email, send_welcome_email
 from historian import Historian
 
@@ -842,6 +843,69 @@ async def api_account_capital():
     except Exception as e:
         logger.error(f"/api/account/capital error: {e}")
         _http_500("/api/account/capital", e)
+
+
+@app.get("/api/tax/corporate-actions")
+async def api_tax_corporate_actions():
+    """
+    Reporte de corporate actions simulado (#CR-2): income por dividendos en
+    efectivo + ajuste del reporte fiscal por splits, sobre los trades FILLED del
+    owner. Endpoint DEDICADO on-demand (NO en /api/status): consultar la API de
+    Alpaca implica una llamada de red, demasiado cara para el poll del dashboard.
+
+    Formato { data, meta } estándar (§6.2). La lógica fiscal vive en los módulos
+    puros corporate_actions / tax_lots; acá solo se trae el dato externo (Alpaca)
+    y se delega en historian (inyección de dependencia, §3.5).
+    """
+    try:
+        # Tickers operados + fecha del primer fill (query inline sobre
+        # historian.pool, mismo patrón que /api/status). Las CA relevantes son
+        # las de ex_date entre el primer fill y hoy de los tickers operados.
+        async with historian.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT ARRAY_AGG(DISTINCT ticker) AS tickers,
+                       MIN(created_at)::date      AS start_date
+                FROM trades
+                WHERE owner_id = $1 AND status = 'FILLED'
+                  AND qty IS NOT NULL AND filled_price IS NOT NULL
+                """,
+                _owner_id,
+            )
+        tickers = list(row["tickers"]) if row and row["tickers"] else []
+        end_date = datetime.now(ZoneInfo(TIMEZONE)).date()
+
+        ca_norm = {"splits": [], "dividends": []}
+        if tickers:
+            from alpaca.data.historical.corporate_actions import CorporateActionsClient
+            from alpaca.data.requests import CorporateActionsRequest
+
+            client = CorporateActionsClient(ALPACA_API_KEY, ALPACA_SECRET_KEY)
+            req = CorporateActionsRequest(symbols=tickers, start=row["start_date"], end=end_date)
+            ca_set = await asyncio.to_thread(client.get_corporate_actions, req)
+            ca_norm = normalize_alpaca_ca(ca_set.data)
+
+        report = await historian.get_corporate_actions_report(_owner_id, ca_norm)
+        return {
+            "data": report,
+            "meta": {
+                "source":  "alpaca",
+                "as_of":   datetime.now(ZoneInfo("UTC")).isoformat(),
+                "symbols": tickers,
+                "range": {
+                    "start": row["start_date"].isoformat() if tickers else None,
+                    "end":   end_date.isoformat(),
+                },
+                "note": (
+                    "Simulado para paper trading. Dividendos = income por posición "
+                    "long en ex_date (short = payment in lieu). Splits ajustan el "
+                    "cost_basis del reporte fiscal (FIFO de #CR-1)."
+                ),
+            },
+        }
+    except Exception as e:
+        logger.error(f"/api/tax/corporate-actions error: {e}")
+        _http_500("/api/tax/corporate-actions", e)
 
 
 @app.get("/api/account/portfolio-history")
