@@ -275,4 +275,22 @@ Pending candidates de Universe Selection se expiran a los 7 días si no se ejecu
 
 ---
 
+## The Ear sentiment scoring post-FinBERT (#FEAT-007 / T-U) — añadido por Code
+
+| Parámetro | Valor | Razón |
+|---|---|---|
+| `THE_EAR_SENTIMENT_ENABLED` | `false` (default) | Arranque seguro. The Ear usa solo keyword matching hasta que Roman lo active en `.env`. Reversible al instante. |
+| `THE_EAR_FINBERT_VETO_THRESHOLD` | `-0.6` (inicial) | Sentiment promedio FinBERT ∈ [-1,1] bajo este valor dispara veto (`can_trade=False`). Conservador a propósito — se recalibra con data real (`finbert_recalibration_plan.md`). |
+
+**Diseño (hybrid mode):** con el flag activo, el `risk_score` ∈ [0,1] lo **sigue
+calculando el keyword matching** (semántica intacta para decay, dashboard y el veto
+`risk_score > 0.7`). FinBERT (`ProsusAI/finbert`, CPU, lazy) agrega una capa: calcula
+el sentiment promedio de los titulares, lo persiste (`macro_events.sentiment_score_finbert`)
+y veta si cae bajo el umbral. Razón: el umbral correcto se desconoce hasta observar la
+distribución real, así que FinBERT no toma el control primario del `risk_score` hasta
+calibrar. Si el modelo no carga, fallback automático a keyword (no rompe el bot). El
+keyword matching NO se elimina: queda como fallback eterno + segunda señal del hybrid.
+
+---
+
 *RATIONALE regenerado por Cowork el 2026-05-25. Versión más compacta que la perdida (~250 líneas vs ~440). Cubre los parámetros principales con justificación citada. Iterar agregando parámetros nuevos a medida que aparezcan.*

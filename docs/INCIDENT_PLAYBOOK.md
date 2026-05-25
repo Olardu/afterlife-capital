@@ -205,4 +205,30 @@ Si hay posiciones abiertas en exóticos → primero cuidarlas (las bracket order
 
 ---
 
+## Escenario: FinBERT (modelo de sentiment) no carga (#FEAT-007 / T-U) — añadido por Code
+
+**Síntoma:** en el log de arranque o del primer ciclo de The Ear aparece
+`SentimentAnalyzer: el modelo '...' no carga (...). Fallback a keyword matching.`
+
+**Qué pasa (NO es un incidente que pare el bot):** el diseño es fail-safe. Si
+`transformers`/`torch` no están instalados, el modelo no se puede descargar (sin red),
+o la inferencia falla, `SentimentAnalyzer.score()` devuelve `None` y The Ear cae
+**automáticamente** al keyword matching legacy. El `sentiment_method` de los
+`macro_events` queda en `keyword`. El bot sigue operando normal — solo pierde la
+señal FinBERT extra.
+
+**Acción:**
+1. Confirmar que es esto: `python -c "import torch, transformers; print('ok')"` en el
+   venv del bot. Si falla → faltan las deps (`pip install -r requirements.txt`).
+2. Pre-descargar el modelo: `python -c "from transformers import pipeline; pipeline('sentiment-analysis', model='ProsusAI/finbert')"`.
+3. Si no se puede resolver pre-apertura, **no bloquea**: dejar `THE_EAR_SENTIMENT_ENABLED=false`
+   (o aceptar el fallback automático) y el bot opera con keyword matching como siempre.
+4. Recién cuando `torch`/`transformers` carguen y el modelo esté en cache, activar el
+   flag y reiniciar.
+
+> Regla: un fallo de FinBERT NUNCA debe parar el trading. Si lo hace, es un bug —
+> reportar. El fallback a keyword es la red de seguridad por diseño.
+
+---
+
 *INCIDENT_PLAYBOOK regenerado por Cowork el 2026-05-25. Reemplaza versión perdida. Iterar agregando escenarios cuando se identifiquen nuevos en producción.*
