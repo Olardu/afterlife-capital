@@ -194,12 +194,26 @@ class BaseSentinel(ABC):
 # =============================================================================
 
 def _rsi(closes, period: int):
-    """RSI clásico (Wilder simplificado a SMA del cambio absoluto)."""
+    """RSI. Dos métodos de smoothing del promedio de gains/losses:
+
+    - Default (WILDER_RSI_ENABLED=False): SMA-smoothing (rolling mean) — el cálculo
+      simplificado histórico de v0.5.
+    - WILDER_RSI_ENABLED=True: smoothing de Wilder (RMA = EWMA con alpha=1/period),
+      el estándar de la industria (Wilder, "New Concepts in Technical Trading
+      Systems", 1978). Es el mismo RMA que usa pandas_ta y el que ya usa _atr().
+
+    El flag se lee en runtime para poder activarlo/revertirlo por .env sin redeploy.
+    """
+    import config
     deltas = closes.diff()
     gains  = deltas.clip(lower=0)
     losses = -deltas.clip(upper=0)
-    avg_gain = gains.rolling(period).mean()
-    avg_loss = losses.rolling(period).mean().replace(0, 1e-10)
+    if config.WILDER_RSI_ENABLED:
+        avg_gain = gains.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+        avg_loss = losses.ewm(alpha=1 / period, adjust=False, min_periods=period).mean().replace(0, 1e-10)
+    else:
+        avg_gain = gains.rolling(period).mean()
+        avg_loss = losses.rolling(period).mean().replace(0, 1e-10)
     rs  = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 

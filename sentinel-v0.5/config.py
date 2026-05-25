@@ -147,6 +147,13 @@ THE_EAR_FINBERT_VETO_THRESHOLD = float(os.environ.get("THE_EAR_FINBERT_VETO_THRE
 COOLDOWN_POST_LOSS_ENABLED = os.environ.get("COOLDOWN_POST_LOSS_ENABLED", "false").lower() == "true"
 COOLDOWN_POST_LOSS_DAYS    = int(os.environ.get("COOLDOWN_POST_LOSS_DAYS", "7"))
 
+# --- Wilder RSI smoothing. FLAG-GATED, default OFF. ---
+# Con WILDER_RSI_ENABLED=true, _rsi() usa el smoothing de Wilder (RMA, EWMA con
+# alpha=1/period — estándar de la industria, Wilder 1978) en lugar del SMA-smoothing
+# actual. Cambia las señales de los Sentinels que usan RSI (S-2 RSI Fast Reversion,
+# S-8 RSI Divergence). Default OFF para que Roman lo active por separado y compare.
+WILDER_RSI_ENABLED = os.environ.get("WILDER_RSI_ENABLED", "false").lower() == "true"
+
 # =============================================================================
 # CORRELATION GUARD
 # Corre antes de cada orden. Si la correlación rolling entre la señal entrante

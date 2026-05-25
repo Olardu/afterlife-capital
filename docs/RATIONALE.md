@@ -293,4 +293,20 @@ keyword matching NO se elimina: queda como fallback eterno + segunda señal del 
 
 ---
 
+## Wilder RSI smoothing (#T-V Sub-3) — añadido por Code
+
+| Parámetro | Valor | Razón |
+|---|---|---|
+| `WILDER_RSI_ENABLED` | `false` (default) | Con true, `_rsi()` usa smoothing de Wilder (RMA) en vez de SMA-smoothing. Cambia las señales de S-2 (RSI Fast Reversion) y S-8 (RSI Divergence). Default OFF para activarlo/comparar por separado. |
+
+**Decisión:** el RSI clásico de Wilder ("New Concepts in Technical Trading Systems",
+1978) suaviza gains/losses con RMA = EWMA de `alpha = 1/period`, no con media simple.
+La implementación usa `ewm(alpha=1/period, adjust=False)` (idéntico al RMA de
+`pandas_ta` y al smoothing que ya usa `_atr()`), validado contra el cálculo recursivo
+manual a ε=0.001. **Drift menor:** difiere del seed-SMA del libro de Wilder en las
+primeras barras (converge después); unificar el seed con `_atr` queda como follow-up
+cosmético. El SMA-smoothing previo se conserva como rama default (flag off).
+
+---
+
 *RATIONALE regenerado por Cowork el 2026-05-25. Versión más compacta que la perdida (~250 líneas vs ~440). Cubre los parámetros principales con justificación citada. Iterar agregando parámetros nuevos a medida que aparezcan.*
