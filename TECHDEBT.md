@@ -1,4 +1,14 @@
-# TECHDEBT — Sentinel v0.5
+# TECHDEBT — OBSOLETO desde 2026-05-25
+
+> **🚨 ARCHIVO OBSOLETO. NO AGREGAR ITEMS ACÁ.**
+>
+> Todo el contenido de este archivo fue migrado a `BACKLOG.md` (raíz del repo) el 2026-05-25 con sus IDs `#TD-N` preservados. Una sola fuente de verdad, organizable por tipo y prioridad.
+>
+> Este archivo queda como **referencia histórica** de la auditoría 2026-04-25. **Para acción operativa: ir a `BACKLOG.md` sección P2.**
+
+---
+
+# Contenido histórico (consolidado en BACKLOG.md el 2026-05-25)
 
 Issues 🟡 medios y 🟢 bajos detectados durante la auditoría 2026-04-25.
 **No priorizados.** Referencia para futuro refactor — abordar en bloques cuando se toque cada módulo.

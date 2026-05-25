@@ -1,9 +1,14 @@
 # Manual de Buenas Prácticas v2.0
 
 **Autor:** Roman Alejandro  
-**Versión:** 2.6  
+**Versión:** 2.7  
 **Fecha:** 24 de mayo de 2026  
 **Alcance:** Universal — aplica a todos los proyectos, lenguajes y frameworks.
+
+**Cambios v2.6 → v2.7 (24-may-2026 noche — corrección de atribución del bug del Write truncado, investigación forense por Code):**
+- §14.0.6: causa raíz CORREGIDA. La hipótesis original ("buffer/pipe limit del tool Write") está REFUTADA por evidencia forense de Code (truncados a tamaños dispares 1.5KB/10KB/21KB/78KB sin umbral fijo; test controlado de Write de 18KB en turno fresco salió íntegro, .gitignore de 1.5KB truncó en turno saturado; historian.py creció 402→2300 líneas en 20 Edit incrementales sin un solo truncado). **Causa real:** límite de tokens de la RESPUESTA del modelo Claude — cuando el `content` de un Write masivo se topa con el budget restante del turno, el modelo emite la respuesta truncada y el tool la escribe fiel (success engañoso). Correlaciona con presupuesto de tokens del turno, NO con un límite del tool. Por eso "un cambio más después de un commit" lo gatillaba — el turno ya gastó budget en lo previo.
+- La mitigación (Edit incremental > Write masivo, prohibición Write >300 líneas, checklist post-edit) ya era correcta. Cambia solo el POR QUÉ documentado.
+- Bug reportado a Anthropic vía `/bug` (Code, 24-may). Sugerencia upstream: que el harness no aplique un `tool_use` truncado por max_tokens.
 
 **Cambios v2.5 → v2.6 (24-may-2026 tarde — 2do incidente del mismo patrón truncado en mismo día, refuerzo §14.0):**
 - Ampliación 14.0.6: prohibición de `Write` para archivos > 300 líneas en cualquier circunstancia.
@@ -1051,9 +1056,12 @@ Antes de dar por terminado un cambio significativo, recorrer este checklist.
 - **NUNCA** reportar `[CODE DONE]` o `[COWORK DONE]` si el checklist técnico no pasa.
 
 **6. Prevención (elección de tool):**
-- **Preferir `Edit` sobre `Write`** para cambios incrementales. `Edit` falla con error visible si el `old_string` no matchea; `Write` puede truncar silenciosamente al hit buffer/pipe limit.
-- **Para reemplazos extensos**: dividir en N `Edit` quirúrgicos. Si imprescindible un `Write`, verificar inmediatamente con `wc -l <archivo>` + `tail -5 <archivo>` (detección de truncado) + `py_compile`.
-- **`Write` prohibido para archivos > 300 líneas** en cualquier circunstancia. Si necesitás reescribir un archivo grande, dividí en N `Edit` quirúrgicos o `mv + Write < 300 + verify wc -l`. Nunca un `Write` extenso sin verificación inmediata post-escritura.
+- **Preferir `Edit` sobre `Write`** para cambios incrementales. `Edit` falla con error visible si el `old_string` no matchea (autoreparable: el modelo lee el archivo, regenera el `old_string`, reintenta). `Write` escribe a ciegas lo que recibe — si el contenido llegó truncado desde la generación del modelo, lo escribe truncado igual reportando "success".
+- **Para reemplazos extensos**: dividir en N `Edit` quirúrgicos. Si imprescindible un `Write`, verificar inmediatamente con `wc -l <archivo>` + `tail -5 <archivo>` (detección de truncado) + `py_compile`/`node --check`.
+- **`Write` prohibido para archivos > 300 líneas** en cualquier circunstancia. La misma regla aplica al `new_string` de un `Edit` cuando el bloque a insertar es extenso (>300 líneas) — riesgo de truncado equivalente al `Write` masivo.
+- **Si necesitás reescribir un archivo grande**: dividí en N `Edit` quirúrgicos con `new_string` chico cada uno. Si imprescindible reescribir entero, hacelo en una sesión fresca (turno con presupuesto de tokens al máximo) y verificá inmediato.
+
+**Causa raíz del truncado (referencia técnica):** el bug NO es del tool `Write` sino del **límite de tokens de la respuesta del modelo Claude**. Cuando el modelo genera un `tool_use` con `content` extenso y se topa con el budget restante del turno, la respuesta del modelo se corta a mitad del `content`. El tool recibe esa respuesta truncada y la escribe fiel al disco — el "success" es engañoso porque el tool escribió exactamente lo que recibió, pero recibió truncado desde el modelo. Por eso correlaciona con turnos cargados (mucho contexto previo gastado) y con "un cambio más después del commit" (el turno ya quemó budget en lo anterior). La defensa es estructural: minimizar tamaño del `content` por call y verificar siempre post-escritura.
 
 **7. Cierre de sesión = cierre. NO más edits post-DONE sin nueva TAREA.**
 
@@ -1171,4 +1179,4 @@ Agendar como ítem de Fase 2 (auditoría) cuando el proyecto entre a esa fase. N
 
 ---
 
-*Manual de Buenas Prácticas — fin del documento. v2.6, 24 de mayo de 2026.*
+*Manual de Buenas Prácticas — fin del documento. v2.7, 24 de mayo de 2026.*

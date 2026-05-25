@@ -1,7 +1,17 @@
-# NEXT_ITERATION.md — Ideas y mejoras para después del período de observación
+# NEXT_ITERATION.md — OBSOLETO desde 2026-05-25
 
-**Período de observación:** 27 abril – 27 mayo 2026
-**Regla:** Nada de esta lista se implementa hasta después del cierre. Solo anotar.
+> **🚨 ARCHIVO OBSOLETO. NO AGREGAR ITEMS ACÁ.**
+>
+> Todo el contenido de este archivo fue consolidado en `BACKLOG.md` (raíz del repo) el 2026-05-25 por decisión Roman + Cowork. Una sola fuente de verdad, organizable por tipo y prioridad.
+>
+> Este archivo queda como **referencia histórica** (650 líneas con context y discusiones técnicas detalladas que dieron origen a los items consolidados). Útil para entender el porqué de items específicos. **Para acción operativa: ir a `BACKLOG.md`.**
+
+---
+
+# Contenido histórico (consolidado en BACKLOG.md el 2026-05-25)
+
+**Período de observación:** 27 abril – 27 mayo 2026 (cerrado anticipadamente el 23-may, ver `OBSERVATION_PERIOD.md`)
+**Regla original:** Nada de esta lista se implementaba hasta después del cierre. Solo anotar.
 
 ---
 
