@@ -6,6 +6,15 @@
 import os
 from decimal import Decimal
 
+from dotenv import load_dotenv
+
+# Guard idempotente (#TD): aunque el entrypoint (main.py/api.py) llama load_dotenv()
+# antes de importar config, lo repetimos acá para que config sea robusto si se importa
+# desde contextos que no lo hicieron (scripts, tests). Corre ANTES de leer las vars de
+# abajo, así las constantes module-level reflejan el .env. load_dotenv NO sobrescribe
+# vars ya presentes en el entorno → llamarlo dos veces es inocuo.
+load_dotenv()
+
 # =============================================================================
 # CREDENCIALES — leídas desde entorno
 # Definir en .env o en el entorno del proceso antes de arrancar.
@@ -44,18 +53,23 @@ RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 ANTHROPIC_MODEL   = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
-_CRITICAL_CREDENTIALS = {
-    "ALPACA_API_KEY":       ALPACA_API_KEY,
-    "ALPACA_SECRET_KEY":    ALPACA_SECRET_KEY,
-    "DATABASE_URL":         DATABASE_URL,
-    "NEWS_API_KEY":         NEWS_API_KEY,
-    "SECRET_KEY":           SECRET_KEY,
-    "GOOGLE_CLIENT_ID":     GOOGLE_CLIENT_ID,
-    "GOOGLE_CLIENT_SECRET": GOOGLE_CLIENT_SECRET,
-    "SESSION_SECRET":       SESSION_SECRET,
-    "RESEND_API_KEY":       RESEND_API_KEY,
-    "ANTHROPIC_API_KEY":    ANTHROPIC_API_KEY,
-}
+# Nombres de las credenciales críticas. validate_config() las lee FRESH desde
+# os.environ en cada llamada (#TD: antes era un dict que capturaba los VALORES al
+# import → no reflejaba un os.environ.update posterior, ej. rotación de keys desde el
+# panel admin o setup en tests). Guardamos solo los nombres; los valores se resuelven
+# al validar.
+_CRITICAL_CREDENTIAL_NAMES = (
+    "ALPACA_API_KEY",
+    "ALPACA_SECRET_KEY",
+    "DATABASE_URL",
+    "NEWS_API_KEY",
+    "SECRET_KEY",
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "SESSION_SECRET",
+    "RESEND_API_KEY",
+    "ANTHROPIC_API_KEY",
+)
 
 # =============================================================================
 # DISPATCHER
@@ -224,7 +238,7 @@ def validate_config() -> bool:
     Llamar al inicio del sistema antes de instanciar cualquier agente.
     Lanza ValueError detallando qué variable falta.
     """
-    missing = [name for name, value in _CRITICAL_CREDENTIALS.items() if not value]
+    missing = [name for name in _CRITICAL_CREDENTIAL_NAMES if not os.environ.get(name)]
 
     if missing:
         raise ValueError(
@@ -234,5 +248,6 @@ def validate_config() -> bool:
 
     return True
 
-# ADVERTENCIA: load_dotenv() debe ejecutarse ANTES de importar
-# este módulo. Ver main.py para el orden correcto de inicialización.
+# NOTA: config.py ahora llama load_dotenv() al import (guard idempotente, arriba),
+# así que es robusto aunque el caller no lo haya hecho. El entrypoint (main.py/api.py)
+# igual lo llama primero — es redundante pero inocuo. Ver main.py para el orden.
