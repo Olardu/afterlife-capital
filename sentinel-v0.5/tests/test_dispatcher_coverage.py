@@ -24,6 +24,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dispatcher import Dispatcher
 
+
+@pytest.fixture(autouse=True)
+def _atr_sizing_off():
+    """#TECH-004: estos tests asumen ATR_SIZING_ENABLED=False (process_signal sin
+    el path ATR, que construye clients Alpaca reales). El .env de Roman lo tiene en
+    true (pre-martes); sin este override los tests heredarían el entorno y fallarían
+    localmente. El CI (sin .env) ya corre con el default False — esto lo hace
+    determinista en ambos lados."""
+    with patch("config.ATR_SIZING_ENABLED", False):
+        yield
+
+
 _EAR_OK = {"can_trade": True, "circuit_breaker": False, "parking_brake": False, "risk_score": 0.0}
 
 
