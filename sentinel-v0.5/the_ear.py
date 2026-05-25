@@ -397,7 +397,7 @@ class TheEar:
 # `keyword in text` original. No requiere DB, NewsAPI ni Alpaca.
 # =============================================================================
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     import sys
 
     # Trade-off del fix: word-boundary es estricto y no matchea plurales /
