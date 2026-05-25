@@ -7,7 +7,7 @@
 import json
 import logging
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 from uuid import UUID
@@ -1285,6 +1285,33 @@ class Historian:
             }
             for r in rows
         ]
+
+    async def get_last_loss_on_ticker(
+        self, owner_id: UUID, ticker: str, days: int
+    ) -> Optional[dict]:
+        """
+        #FEAT-014: devuelve el cierre con PÉRDIDA más reciente del ticker dentro de
+        los últimos `days` días, o None si no hubo. Usa el mismo motor FIFO
+        (`match_fifo`) que el reporte fiscal #CR-1, así la "pérdida" coincide con la
+        contabilidad real (no un proxy). Read-only — no muta nada.
+
+        Returns dict {ticker, closed_at, loss} (loss < 0) o None. El dispatcher lo
+        usa para bloquear re-entradas rápidas (cooldown post-loss) que disparan wash
+        sales.
+        """
+        trades = [t for t in await self._fetch_filled_trades(owner_id) if t["ticker"] == ticker]
+        if not trades:
+            return None
+        disposals = match_fifo(trades)
+        cutoff = datetime.now() - timedelta(days=days)
+        losses = [
+            d for d in disposals
+            if d["gain"] < 0 and d.get("closed_at") is not None and d["closed_at"] >= cutoff
+        ]
+        if not losses:
+            return None
+        last = max(losses, key=lambda d: d["closed_at"])
+        return {"ticker": ticker, "closed_at": last["closed_at"], "loss": float(last["gain"])}
 
     @staticmethod
     def _serialize_tax_disposals(disposals) -> list[dict]:

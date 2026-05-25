@@ -279,6 +279,33 @@ def test_process_signal_duplicate_buy():
     assert _run(_signal(d, signal_type="BUY"))["reason"] == "duplicate_ticker_buy"
 
 
+# --- #FEAT-014 cooldown post-loss (flag-gated) ---
+def test_process_signal_cooldown_bloquea_buy():
+    d = _disp()
+    d.historian.get_last_loss_on_ticker = AsyncMock(
+        return_value={"ticker": "NVDA", "closed_at": "2026-05-20", "loss": -12.5})
+    with patch("config.COOLDOWN_POST_LOSS_ENABLED", True):
+        res = _run(_signal(d, signal_type="BUY"))
+    assert res["reason"] == "cooldown_post_loss"
+    d.execute_order.assert_not_awaited()
+
+
+def test_process_signal_cooldown_sin_loss_procede():
+    d = _disp()
+    d.historian.get_last_loss_on_ticker = AsyncMock(return_value=None)
+    with patch("config.COOLDOWN_POST_LOSS_ENABLED", True):
+        res = _run(_signal(d, signal_type="BUY"))
+    assert res["reason"] != "cooldown_post_loss"
+
+
+def test_process_signal_cooldown_consulta_falla_fail_open():
+    d = _disp()
+    d.historian.get_last_loss_on_ticker = AsyncMock(side_effect=RuntimeError("db down"))
+    with patch("config.COOLDOWN_POST_LOSS_ENABLED", True):
+        res = _run(_signal(d, signal_type="BUY"))
+    assert res["reason"] != "cooldown_post_loss"   # fail-open: no bloquea
+
+
 def test_process_signal_sell_sin_posicion():
     d = _disp()
     assert _run(_signal(d, signal_type="SELL"))["reason"] == "no_open_position"

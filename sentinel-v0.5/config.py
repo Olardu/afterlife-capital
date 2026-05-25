@@ -137,6 +137,16 @@ THE_EAR_SENTIMENT_ENABLED  = os.environ.get("THE_EAR_SENTIMENT_ENABLED", "false"
 # data real (ver docs/finbert_recalibration_plan.md).
 THE_EAR_FINBERT_VETO_THRESHOLD = float(os.environ.get("THE_EAR_FINBERT_VETO_THRESHOLD", "-0.6"))
 
+# --- #FEAT-014 — Cooldown post-loss en mean reversion. FLAG-GATED, default OFF. ---
+# Con COOLDOWN_POST_LOSS_ENABLED=true, el dispatcher bloquea un BUY si hubo un
+# cierre con pérdida (disposal gain<0, motor FIFO de #CR-1) en ese ticker dentro de
+# los últimos COOLDOWN_POST_LOSS_DAYS días. Ataca el ~27% de wash sales que generaba
+# la re-entrada rápida del bot (#CR-1). Default OFF para arranque seguro; Roman lo
+# activa en .env tras validar. La ventana IRS de wash sale es 30d; 7d evita la
+# re-entrada inmediata sin ser tan restrictivo.
+COOLDOWN_POST_LOSS_ENABLED = os.environ.get("COOLDOWN_POST_LOSS_ENABLED", "false").lower() == "true"
+COOLDOWN_POST_LOSS_DAYS    = int(os.environ.get("COOLDOWN_POST_LOSS_DAYS", "7"))
+
 # =============================================================================
 # CORRELATION GUARD
 # Corre antes de cada orden. Si la correlación rolling entre la señal entrante

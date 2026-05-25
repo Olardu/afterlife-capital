@@ -488,6 +488,23 @@ class Dispatcher:
         if side == "BUY" and ticker in self.open_positions:
             logger.info(f"Señal BUY {ticker} omitida — ya hay posición abierta este cycle.")
             return {**base_result, "reason": "duplicate_ticker_buy"}
+        # #FEAT-014: cooldown post-loss — no re-entrar a un ticker poco después de
+        # cerrarlo con pérdida (ataca el ~27% de wash sales de la mean reversion,
+        # #CR-1). Flag-gated (default OFF) + fail-open: si la consulta falla NO
+        # bloquea — un error de lectura nunca debe frenar una operación válida.
+        if side == "BUY" and config.COOLDOWN_POST_LOSS_ENABLED:
+            try:
+                last_loss = await self.historian.get_last_loss_on_ticker(
+                    owner_id, ticker, days=config.COOLDOWN_POST_LOSS_DAYS)
+            except Exception as e:
+                logger.error(f"Cooldown post-loss: consulta falló para {ticker}: {e}")
+                last_loss = None
+            if last_loss is not None:
+                logger.info(
+                    f"Señal BUY {ticker} bloqueada por cooldown post-loss "
+                    f"(pérdida ${last_loss['loss']:.2f} cerrada {last_loss['closed_at']})."
+                )
+                return {**base_result, "reason": "cooldown_post_loss"}
         if side == "SELL":
             if ticker not in self.open_positions:
                 logger.info(f"Señal SELL para {ticker} rechazada — sin posición abierta.")
