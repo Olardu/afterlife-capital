@@ -2,6 +2,18 @@
 
 Sistema de trading algorítmico multi-agente. 9 estrategias autónomas (Sentinels) coordinadas por un Dispatcher, con protecciones macro, gestión de capital Half-Kelly y persistencia en PostgreSQL. Operación en paper trading hasta validar.
 
+## Estado al 2026-05-25 — T-S 5/5 COMPLETO (#CR-2 splits/dividendos). `origin/main`=`7727511`, HEAD `6f87820` (ahead 14), suite 489/489
+
+**#CR-2 Corporate actions simulado — COMPLETO. T-S cerrado entero (5/5).** 3 commits LOCALES, SIN migración (on-the-fly, patrón #CR-1/#CR-3):
+- `fb0cae2` módulo puro `corporate_actions.py`: `normalize_alpaca_ca` (objetos SDK alpaca-py o dicts → {splits, dividends}; ratio = new_rate/old_rate para forward y reverse), `adjust_trades_for_splits` (trades pre-ex_date → qty×ratio, price/ratio; mantiene cost_basis), `compute_dividend_income` (net long en ex_date × rate; **short = payment in lieu = income negativo**), `build_corporate_actions_report` (ajusta trades por splits → reusa `tax_lots.compute_tax_report`). **26 tests TDD, 100% cobertura.**
+- `6259389` wire-up `historian.get_corporate_actions_report(owner, ca inyectadas)`: **DIP** — las CA se inyectan (el endpoint las trae de Alpaca), historian NO se acopla a la red → 100% testeable. Refactor DRY: extraídos `_fetch_filled_trades` + `_serialize_tax_disposals` (compartidos con `get_tax_report`). +1 test.
+- `6f87820` endpoint `/api/tax/corporate-actions` (formato `{data, meta}` §6.2, **dedicado on-demand, NO en /api/status** para evitar la llamada de red Alpaca en el poll del dashboard): query inline tickers+rango (patrón /api/status), `CorporateActionsClient` en `asyncio.to_thread`, normaliza, delega en historian. + `scripts/queries_corporate_actions.sql`.
+- **Investigación Alpaca:** alpaca-py 0.43.3 expone `CorporateActionsClient.get_corporate_actions(CorporateActionsRequest(symbols, start, end, types))`; la cuenta paper devuelve datos. Tipos: forward/reverse/unit splits, cash/stock dividends, spin-offs, mergers, etc. (#CR-2 v1 consume forward/reverse splits + cash dividends).
+- **Validado end-to-end SQL==Python sobre DB+Alpaca reales:** dividendos = **$0.27** (AAPL, 1 share long en ex 2026-05-11, confirmado por SQL net=1); **0 splits que afecten** lotes (el único, XLU 2:1 ex 2025-12-05, es **pre-período** — el bot operó XLU desde 11-may a precio ya ajustado); **tax report ajustado == #CR-1 idéntico** (no-regresión: −12.57 realized, 27 wash sales, neto 33.24). corporate_actions + historian + tax_lots 100% cobertura, suite 462→489 (+27).
+- **Decisiones (drift/criterio, doc en código):** (1) forward y reverse splits con la misma fórmula ratio=new/old (reverse → ratio<1). (2) Dividendo short = income negativo (payment in lieu). (3) qualified vs ordinary NO se separa en v1 (income total ordinary; el bot mean-reversion holding corto → casi todo ordinary igual). (4) endpoint dedicado on-demand (decisión Roman).
+
+**T-S Bloque C Compliance + Slippage — COMPLETO 5/5:** ✅ #ME-1 slippage · ✅ #ME-4 Claude/Sentinel · ✅ #CR-3 fees · ✅ #CR-1 fiscal · ✅ #CR-2 corporate actions. **Próxima migración libre = 017** (T-S no consumió ninguna: todo on-the-fly por drift/decisiones). **PRÓXIMO:** esperar validación Cowork de #CR-1+#CR-2 en el LOG + decisión de Roman sobre el próximo macro bloque (D Patrón Broker / E Plugins) y el bundle push.
+
 ## Estado al 2026-05-25 — T-S 4/5 (#CR-1 fiscal COMPLETO). `origin/main`=`7727511`, HEAD `f4bf2d8` (ahead 10), suite 462/462
 
 **#CR-1 Reporte fiscal simulado — COMPLETO**, 2 commits LOCALES, SIN migración (on-the-fly, patrón #CR-3):
