@@ -106,3 +106,13 @@ backups/
 # === Reportes/análisis sueltos en root (no del repo)
 /investigacion_*.md
 /code-outputs/
+
+# === HTMLs viejos #TECH-002 — versiones obsoletas, se quedan locales
+# index.html (root) = landing page actual, SÍ se trackea
+# index1.html (root) = landing vieja, NO trackear (queda local)
+/index1.html
+# dashboard/: index.html + admin.html son los ACTIVOS
+# Los otros tres son backups/versiones viejas — no trackear
+dashboard/index.pre-redesign.html
+dashboard/index1.html
+dashboard/index2.html
