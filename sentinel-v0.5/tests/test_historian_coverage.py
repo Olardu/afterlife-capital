@@ -993,9 +993,15 @@ def test_get_active_pending_candidates_ok_y_pgerror():
 
 
 def test_get_failed_tickers_for_sentinel_ok_y_pgerror():
+    # #TECH-006: la query une old_ticker + new_ticker (alias 'ticker'); el código
+    # lee r["ticker"]. Ej.: GLD entró como new_ticker en una rotación previa y
+    # debe aparecer como fallido aunque nunca haya sido old_ticker.
     conn = _conn()
-    conn.fetch = AsyncMock(return_value=[{"old_ticker": "SPY"}, {"old_ticker": "TSLA"}])
-    assert _run(_hist(conn).get_failed_tickers_for_sentinel(uuid4())) == ["SPY", "TSLA"]
+    conn.fetch = AsyncMock(return_value=[{"ticker": "SPY"}, {"ticker": "TSLA"}, {"ticker": "GLD"}])
+    assert _run(_hist(conn).get_failed_tickers_for_sentinel(uuid4())) == ["SPY", "TSLA", "GLD"]
+    # el SQL debe consultar new_ticker además de old_ticker (regresión #TECH-006)
+    sql_used = conn.fetch.await_args[0][0]
+    assert "new_ticker" in sql_used and "old_ticker" in sql_used and "UNION" in sql_used
     conn2 = _conn()
     conn2.fetch = AsyncMock(side_effect=_pg())
     with pytest.raises(asyncpg.PostgresError):

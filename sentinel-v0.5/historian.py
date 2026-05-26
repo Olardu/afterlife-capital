@@ -2472,21 +2472,37 @@ class Historian:
 
     async def get_failed_tickers_for_sentinel(self, sentinel_id: UUID) -> list[str]:
         """
-        Tickers que ya tuvo este Sentinel y rotaron por decay (status='executed'
-        o 'rolled_back'). Útil como contexto para el prompt — Claude evita
-        proponer tickers que ya fallaron.
+        Tickers que este Sentinel ya tuvo en su carrusel de rotación
+        (status='executed' o 'rolled_back'). Útil como contexto para el prompt
+        — Claude evita proponer tickers que ya fallaron.
+
+        #TECH-006 (26-may): incluye tanto `old_ticker` (los que salieron por
+        decay) COMO `new_ticker` (los reemplazos ya probados). Antes solo
+        listaba `old_ticker`, así que un destino de rotación previo (ej. GLD,
+        que entró como new_ticker en el bucle del 08-may y nunca fue old_ticker)
+        NO aparecía → el Universe Selector lo re-proponía pese al "NUNCA un
+        ticker fallido" del SYSTEM_PROMPT. Re-proponer un reemplazo ya intentado
+        replica el fallo, así que cuenta como fallido.
         """
         sql = """
-            SELECT DISTINCT old_ticker
-            FROM rotation_decisions
-            WHERE sentinel_id = $1
-              AND status IN ('executed', 'rolled_back')
-              AND old_ticker IS NOT NULL
+            SELECT DISTINCT ticker FROM (
+                SELECT old_ticker AS ticker
+                FROM rotation_decisions
+                WHERE sentinel_id = $1
+                  AND status IN ('executed', 'rolled_back')
+                  AND old_ticker IS NOT NULL
+                UNION
+                SELECT new_ticker AS ticker
+                FROM rotation_decisions
+                WHERE sentinel_id = $1
+                  AND status IN ('executed', 'rolled_back')
+                  AND new_ticker IS NOT NULL
+            ) AS rotated
         """
         try:
             async with self.pool.acquire() as conn:
                 rows = await conn.fetch(sql, sentinel_id)
-            return [r["old_ticker"] for r in rows]
+            return [r["ticker"] for r in rows]
         except asyncpg.PostgresError as e:
             logger.error(f"Error al listar failed_tickers de {sentinel_id}: {e}")
             raise
