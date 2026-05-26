@@ -192,13 +192,34 @@ class ClaudeClient:
                 raw_text = block.text
                 break
 
+        # #TECH-005: distinguir JSON malformado de respuesta TRUNCADA por
+        # max_tokens. stop_reason='max_tokens' ⇒ el modelo se quedó sin budget y
+        # cortó el JSON a media string (el caso NVDA→GLD del 26-may: corte en
+        # char 6002 con max_tokens=2000). El error tipificado deja diagnóstico
+        # claro en logs (el caller debe subir max_tokens, no es JSON inválido).
+        truncated = response.stop_reason == "max_tokens"
+
         parsed: Optional[dict] = None
         if raw_text:
             try:
                 import json
                 parsed = json.loads(raw_text)
             except (ValueError, TypeError) as e:
-                logger.error(f"No se pudo parsear JSON de Claude: {e} | raw={raw_text[:300]}")
+                if truncated:
+                    logger.error(
+                        f"Respuesta de Claude TRUNCADA por max_tokens={max_tokens} "
+                        f"(stop_reason=max_tokens) → JSON incompleto. Subir max_tokens "
+                        f"del caller. raw[-120:]={raw_text[-120:]!r}"
+                    )
+                else:
+                    logger.error(f"No se pudo parsear JSON de Claude: {e} | raw={raw_text[:300]}")
+
+        if parsed is not None:
+            error = None
+        elif truncated:
+            error = "truncated_max_tokens"
+        else:
+            error = "parse_failed"
 
         return {
             "success":           parsed is not None,
@@ -210,7 +231,7 @@ class ClaudeClient:
             "cost_usd":          cost,
             "model":             self.model,
             "stop_reason":       response.stop_reason,
-            "error":             None if parsed is not None else "parse_failed",
+            "error":             error,
         }
 
     async def close(self):

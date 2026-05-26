@@ -1103,7 +1103,10 @@ class UniverseSelector:
                 system_prompt=SYSTEM_PROMPT,
                 user_prompt=user_prompt,
                 response_schema=_RESPONSE_SCHEMA,
-                max_tokens=2000,
+                # #TECH-005: 2000 truncaba el JSON (reasoning + factor_exposure +
+                # fundamental_analysis + 3 candidatos con reason) → parse_failed
+                # (caso NVDA→GLD 26-may, corte en char ~6002). 8000 da ~4x margen.
+                max_tokens=8000,
             )
 
         # Aún si Claude falló, persistimos la decisión con status='failed'

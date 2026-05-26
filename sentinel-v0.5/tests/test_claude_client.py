@@ -154,6 +154,31 @@ def test_call_json_sin_textblock():
     assert out["error"] == "parse_failed"
 
 
+def test_call_json_truncado_por_max_tokens():
+    """#TECH-005: JSON incompleto + stop_reason='max_tokens' → error tipificado
+    'truncated_max_tokens' (no el genérico 'parse_failed'), para diagnóstico."""
+    # JSON cortado a media string, como el caso NVDA→GLD del 26-may
+    resp = _Resp(_Usage(10, 2000),
+                 [_Block('{"recommended_ticker": "GLD", "reasoning": "ETF de oro líqui')],
+                 stop_reason="max_tokens")
+    cc = _with_create(_client(), returns=resp)
+    out = _call(cc)
+    assert out["success"] is False
+    assert out["parsed"] is None
+    assert out["error"] == "truncated_max_tokens"
+    assert out["stop_reason"] == "max_tokens"
+
+
+def test_call_json_truncado_pero_json_completo_es_exito():
+    """stop_reason='max_tokens' pero el JSON alcanzó a cerrarse → success igual."""
+    resp = _Resp(_Usage(10, 2000), [_Block('{"recommended_ticker": "NVDA"}')],
+                 stop_reason="max_tokens")
+    cc = _with_create(_client(), returns=resp)
+    out = _call(cc)
+    assert out["success"] is True
+    assert out["error"] is None
+
+
 # --- call_json: ramas de excepción ------------------------------------------
 def test_call_json_timeout():
     cc = _with_create(_client(), raises=_FakeTimeout())
