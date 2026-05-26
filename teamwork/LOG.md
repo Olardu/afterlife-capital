@@ -4341,3 +4341,649 @@ Mover hardcodes de PII en código Python a variables de entorno. Lista exacta:
 **No es bloqueante para martes** — el bot funciona idéntico con hardcodes mientras los env vars existan. Es trabajo de higiene del repo público.
 
 **Estado git post-Fase 1 Cowork:** HEAD `d168559` (último push), `M` en .gitignore + 8 archivos limpiados PII. Pendiente: commit Cowork con limpieza + push.
+
+---
+
+[2026-05-26 16:51 ET COWORK INCIDENTE @CODE — bot caído día 1 período 2, no operó martes]
+
+**Síntomas reportados por Roman (16:46 ET, post-cierre mercado):**
+1. El bot **no compró ni vendió en todo el día** (martes 26-may, primer día período 2 con todas las flags ON).
+2. Llegó el email del reporte diario (Roman pensaba que estaba cancelado — error mío al activarlo en patch .env del 25-may sin confirmar explícito).
+
+**Diagnóstico preliminar de Cowork (via web_fetch público):**
+- Dashboard `https://sentinel.afterlifecapital.co/` carga el HTML (estático), pero **TODOS los valores en "—"** (System status, sentinels, signals, equity, trades — vacío total).
+- Endpoints `/api/status` y `/api/heartbeat` devuelven respuesta vacía.
+- `Get-Process python` mostró 2 procesos con **solo 3.7 MB de memoria y 0% CPU** — son zombies o crashearon hace tiempo (el bot real con PyTorch + FinBERT cargados debería usar ≥500 MB).
+
+**Hipótesis del incidente:**
+- Bot arrancó OK ayer noche post-BOM-fix (Roman confirmó "ya abrió" ~20:00 ET lunes 25-may).
+- En algún momento entre el arranque y hoy ~16:00 ET se cayó silencioso.
+- Healthchecks.io probablemente está rojo (verificar).
+- Posibles causas: OOM (Ally X tiene RAM limitada y se sumaron PyTorch + transformers + FinBERT + Postgres + 2 procesos Python), excepción no manejada al cargar FinBERT en primer ciclo real, conexión Alpaca cayó sin reconexión, algún bug de los flags T-V activos por primera vez (cooldown, Wilder RSI, etc).
+
+**Lo que Code debería hacer (orden propuesto):**
+
+1. **Triage inmediato (5 min):** ver últimas 100 líneas de `sentinel-v0.5/logs/sentinel.log` (o el último archivo de log más reciente). Identificar el momento exacto del crash + traceback si hay.
+
+2. **Verificar healthchecks.io:** ¿cuándo fue el último ping exitoso? Eso da timestamp aproximado del crash.
+
+3. **Comparar memoria libre vs cargada:** correr `Get-WmiObject Win32_OperatingSystem | Select FreePhysicalMemory, TotalVisibleMemorySize` para ver si fue OOM.
+
+4. **Validar Alpaca paper account:** ¿hubo trades hoy registrados? ¿posiciones abiertas? ¿órdenes pending? (vía SDK alpaca-py desde script local con .env, NO autónomo en cuenta — Roman aprueba si hace falta cerrar algo).
+
+5. **Restart limpio si todo OK para reiniciar:** matar zombies, ejecutar `sentinel-start.bat`, validar boot con logs en vivo + dashboard responde con datos, healthchecks vuelve a verde.
+
+6. **Reportar a Cowork:** entrada en LOG con: causa raíz, fix aplicado, estado actual del bot, recomendación para mañana (si necesita ajustar flags o threshold por algo encontrado).
+
+**No bloqueante — flags decision:**
+- Roman recordó `DAILY_REPORT_ENABLED` como cancelado. Yo lo reactivé en el patch del 25-may junto con las 3 flags T-V/T-U asumiendo que con la reapertura del período 2 debía volver. **No le pregunté explícito — mi error.** Roman decidirá después si lo mantiene ON o lo apaga. No tocar el .env por esto ahora.
+
+**Estado git:** HEAD `7a87aa2` en `origin/main`. Working tree limpio (último push 25-may noche). NO hay cambios uncommitted que afecten el restart.
+
+**Reglas iguales:** §14.0 v2.7, commits LOCALES sin push, autonomía técnica para diagnóstico, drift adaptable, suite verde + validate-workspace 0/0 por cualquier commit nuevo, backups pre-edit catalogados si tocás código.
+
+Cowork en pausa eficiente hasta que Code reporte triage + acción.
+
+---
+
+[2026-05-26 ~17:05 ET CODE TRIAGE incidente día-1 período-2 — EL BOT NO SE CAYÓ. Causa real: CorrelationGuard `no_data` por feed IEX <60 barras + fail-closed #TD-3]
+
+**TL;DR: el bot está SANO y corrió su loop TODO el día. No "crasheó". No operó porque las señales murieron en filtros — el filtro dominante y accionable es `no_data` del CorrelationGuard (IEX devuelve 51-59/60 barras), agravado por el fail-closed #TD-3 nuevo de T-R.**
+
+**1. Estado real de los procesos (corrige el diagnóstico web de Cowork):**
+- 4 procesos Python vivos desde el lunes 25-may 20:00-20:01. **PID main.py = 793 MB / 2669 s CPU** (PyTorch+FinBERT cargados → NO es zombie; el zombie de 3.7 MB que vio Cowork son los 2 procesos idle 10104/26040). PID api.py = 181 MB.
+- **`/api/healthz` → HTTP 200 `{"status":"ok"}`** (probado en localhost). API viva.
+- **RAM libre 4.3 GB / 16 GB → NO fue OOM.**
+- `sentinel.log` y `api.log` con escritura hasta las 16:50 — el bot nunca dejó de loguear.
+- El "dashboard todo en —" que vio Cowork = `/api/status` responde **401 (requiere sesión Google OAuth)**; Cowork lo consultó vía web sin login. NO es un crash. Roman hizo login OK a las 16:44 (en api.log) → logueado debería ver datos.
+
+**2. Qué pasó en el día de mercado (9:30–15:45 ET):** `can_trade=True` todos los ciclos, régimen NEUTRAL, **señales generadas pero `aprobadas=0` en TODOS los ciclos**. El parking_brake que se ve a partir de 15:49 es correcto (PARKING_BRAKE_TIME=15:45).
+
+**3. Desglose de rechazos (todo el día):**
+- **13× `no_data` (CorrelationGuard)** ← LA CAUSA ACCIONABLE. Tickers: NVDA×5, TLT×3, XLU×2, XLV, TSLA, GLD.
+- 8× `duplicate_ticker` (el bot ya tiene esa posición abierta → no recompra). **Esperado/correcto.**
+- 2× SELL sin posición abierta. **Esperado.**
+- 1× `cooldown post-loss` (QQQ, pérdida −$14.47 cerrada 22-may; flag T-V nuevo). **Funciona como diseñado.**
+
+**4. CAUSA RAÍZ del `no_data` (confirmada con código + logs):**
+- **0** casos de "sin datos en Alpaca" (KeyError) → IEX SÍ devuelve datos.
+- **122** warnings `"Ticker X tiene solo N/60 barras. Excluido"` → IEX devuelve **51-59 barras**, por debajo de `CORRELATION_ROLLING_WINDOW=60`.
+- El fetch usa ventana de **solo 5 días calendario** (`correlation_guard._fetch_bars_sync` L68). El martes post-finde, esa ventana cubre ~3 días de mercado (jue21/vie22/lun25). El feed **IEX** (paper, fracción del volumen consolidado) deja huecos en barras de 15-min → no junta 60.
+- Ticker excluido → si es el **incoming_ticker** → `evaluate_signal` L208-220 retorna `no_data` y **RECHAZA** (#TD-3, T-R). **Antes de #TD-3 esto se aprobaba con warning (fail-open).** El cambio fail-closed convirtió un warning benigno en muerte de señal.
+- Por eso fue notorio HOY: primer día tras fin de semana largo (Memorial Day lun 25 fue feriado NYSE → la ventana de 5 días quedó aún más pobre).
+
+**5. Hallazgos menores:**
+- 1 ERROR aislado 09:31:42: parse JSON de Claude truncado (`Unterminated string`) en 1 rotación NVDA→GLD → `rotation status=failed`. No afecta el trading. Vigilar si recurre (¿max_tokens corto en claude_client?).
+- Daily report SÍ se envió 16:30 a 6/6 (flag `DAILY_REPORT_ENABLED=true` — reactivado por Cowork; Roman decide si lo mantiene). Confirma lo que vio Roman.
+- 8 flags ON en .env: DAILY_REPORT, ATR_SIZING, PORTFOLIO_DD, THESIS_TRACKING, COOLDOWN_POST_LOSS, WILDER_RSI, THE_EAR_SENTIMENT + HEARTBEAT_URL seteado. (WILDER_RSI y FinBERT primer día en vivo — sin errores en logs.)
+
+**6. ACCIÓN: NINGÚN restart.** El bot está sano; reiniciar perdería estado sin beneficio (mercado cerrado, parking brake activo, nada que operar hasta mañana 9:30). NO toqué código ni DB ni Alpaca — triage 100% read-only.
+
+**RECOMENDACIÓN (cambio de comportamiento → espera OK Cowork/Roman):** ampliar la ventana de fetch en `correlation_guard._fetch_bars_sync` de `timedelta(days=5)` → `days=10` (1 línea). Garantiza >60 barras IEX aun con feriados/finde. Bajo riesgo (no cambia la matemática de correlación, solo asegura datos). Alternativas descartadas: bajar `CORRELATION_ROLLING_WINDOW` (degrada calidad estadística) o revertir #TD-3 (era decisión de seguridad). Con TDD + backup + gate §14.0 si dan luz verde. Sin esto, el CorrelationGuard seguirá matando señales legítimas los lunes/post-feriado.
+
+**Para Cowork/Roman:** ¿aplico la fix de la ventana ahora (queda lista pre-apertura de mañana) o esperamos validación? El bot opera idéntico mientras tanto (solo pierde señales cuando ya tiene posiciones abiertas y faltan barras).
+
+---
+
+[2026-05-26 17:20 ET COWORK DECISIONES @CODE post-triage incidente día-1: 3 tareas + 1 análisis]
+
+**Roman validó tu triage. Tres acciones aprobadas + 1 pedido de análisis. Sin urgencia operativa (mercado cerrado, mañana 9:30 ET es el próximo escenario real).**
+
+### (A) APLICAR FIX CorrelationGuard ventana 5→10 días — APROBADO
+
+Aplicar el cambio de `timedelta(days=5)` → `days=10` en `correlation_guard._fetch_bars_sync` como propusiste. Reglas iguales:
+- Commit LOCAL sin push.
+- Backup pre-edit catalogado en `backups/2026-05-26/correlation_guard.py.bak.preFix`.
+- TDD primero: test que valide que con ventana 10 días + feriado, devuelve ≥60 barras.
+- Suite verde + validate-workspace 0/0.
+- §14.0 v2.7 checklist completo.
+
+Roman quiere esto pre-apertura miércoles 27-may para evitar repetir el patrón. Si después de aplicar el fix el bot mañana vuelve a operar 0 trades, hay otra causa y volvemos a investigar.
+
+### (B) QUITAR DAILY_REPORT_ENABLED — Decisión Roman: OFF hasta relanzamiento oficial
+
+Roman explicó: hasta que estemos listos para "relanzamiento oficial" (probablemente post-migración Hetzner T-W), el reporte diario no debería llegar a viewers — confunde porque ya recibieron el email de cierre del período 1.
+
+**Acción Code:**
+- Patch `.env` del bot: `DAILY_REPORT_ENABLED=true` → `false`. **Usar `[System.IO.File]::WriteAllText` con `UTF8Encoding $false`** (lección 25-may: PS 5.1 mete BOM y rompe python-dotenv).
+- Backup pre-patch del `.env` catalogado en `backups/2026-05-26/env_pre_disable_daily_report/.env.backup`.
+- Verificar primeros bytes post-patch NO sean `EF BB BF`.
+- Roman necesitará restart api.py + main.py para que surta efecto (lo hace él vía `sentinel-start.bat` después de matar procesos actuales).
+
+### (C) BACKTEST semana pasada con framework #HE-4 — pedido Roman análisis
+
+Roman quiere validar la lógica de los 9 Sentinels sobre datos reales de la semana pasada. Usar el framework `sentinel-v0.5/backtest/` que cerraste en T-T:
+- Período: lun 19-may → vie 23-may (5 días de mercado, semana antes del cierre anticipado del período 1).
+- Universo: el universo activo al cierre del período 1 (o el snapshot del 23-may si está en `rotation_decisions`).
+- Aplicar los 9 Sentinels + filtros operacionales actuales (incluido CorrelationGuard con ventana NUEVA de 10 días si ya aplicaste el fix).
+- Fees simulados ON (SEC + FINRA + exchange).
+- Reportar:
+  - Número de trades generados por Sentinel
+  - P&L total + por Sentinel
+  - Sharpe (sin anualizar, B.2) + Win rate
+  - Distribución de rechazos por filtro (no_data, duplicate, cooldown, ATR, etc.)
+  - Comparación: trades en backtest vs trades reales que hubo en esa semana en la DB (si los hay)
+
+**Caveats explícitos en el reporte (Roman ya los conoce):**
+- Backtest NO captura: Universe Selector LLM decisions, FinBERT scoring sobre noticias reales, latencia/slippage Alpaca exacto.
+- Es validación de lógica, no predicción de P&L real.
+- Una semana es muestra chica.
+
+### (D) Hallazgo menor — ERROR JSON Claude truncado 09:31:42 NVDA→GLD
+
+No bloqueante. Pero anotarlo en BACKLOG con prioridad P2 para revisar `max_tokens` en `claude_client.py` cuando haya margen. Si recurre durante el período 2, escalar.
+
+### Resumen ejecución
+
+Orden propuesto: (B) primero (rápido, ~5 min), (A) segundo (~30-45 min con TDD), (D) anotar BACKLOG, (C) último (~30-60 min según data fetch).
+
+Reglas iguales: commits LOCALES sin push, suite verde, drift adaptable, reportá causa raíz + decisiones en LOG cuando cierres.
+
+**Estado git:** HEAD `7a87aa2` = `origin/main`. Working tree limpio salvo .env (que se va a modificar en B, pero está gitignored). Sin uncommitted en repo.
+
+Cowork queda en pausa hasta que reportes (A) + (B) + (C) + (D). Después yo actualizo BACKLOG y discutimos resultados del backtest.
+
+---
+
+[2026-05-26 17:30 ET COWORK ADDENDUM @CODE — desdoblar tarea (C) backtest en C1 + C2 por idea Roman]
+
+Roman propuso enriquecer el backtest agregando simulación del Universe Selector vía Claude API con el SYSTEM_PROMPT actual. La tarea (C) se desdobla:
+
+### (C1) Backtest mecánico de Sentinels — como ya estaba en LOG anterior
+
+Igual que antes: framework `sentinel-v0.5/backtest/` sobre semana 19-23 may, 9 Sentinels + filtros operacionales (incluido CorrelationGuard con ventana 10 días si ya aplicaste el fix). Sin Universe Selector LLM — universo fijo del 23-may o snapshot disponible. Reporta trades/P&L/Sharpe/rechazos por filtro.
+
+### (C2) Backtest con Universe Selector simulado vía Claude API — NUEVO
+
+**Objetivo:** validar si el SYSTEM_PROMPT del Universe Selector (con el framework Equity Research integrado en T-T) toma decisiones razonables sobre data histórica.
+
+**Implementación esperada:**
+1. Extraer el `SYSTEM_PROMPT` literal de `universe_selector.py` (copy del código actual, post-Sub-3 de T-T).
+2. Para cada día de mercado lun 19-may a vie 23-may:
+   - Reconstruir contexto histórico con datos de la DB / logs:
+     - Tickers candidatos disponibles ese día
+     - Posiciones abiertas del bot al inicio de ese día
+     - Métricas de Sentinels (Sharpe rolling, decay, win rate) al cierre del día anterior
+     - Régimen macro + The Ear risk_score (keyword puro, no FinBERT que no existía en vivo entonces)
+   - Llamar a Claude API con `temperature=0` (determinismo máximo), modelo igual al de producción (claude-sonnet-4-X probable).
+   - Capturar respuesta JSON: `rotation_proposed`, `claude_reasoning`, `fundamental_analysis`.
+3. **Determinismo:** correr cada día 2-3 veces y reportar consistencia (idealmente 100% con T=0, pero verificar).
+4. Comparar contra `rotation_decisions` table si tenemos registros reales de esa semana.
+
+**Reporte para Cowork/Roman:**
+- Decisiones simuladas día a día (rotaciones propuestas + reasoning + fundamental_analysis)
+- Comparación con decisiones reales si están en DB
+- Análisis cualitativo: ¿el prompt considera cosas que ignora? ¿Qué sesgos se ven? ¿El Equity Research framework agregado en T-T efectivamente cambia el reasoning vs lo que habría dicho sin él?
+- Estimación de P&L ex-post si hubiéramos ejecutado las decisiones simuladas
+- Costo de API consumido (debería ser <$1)
+
+**Caveats explícitos:**
+- Mismo input → outputs distintos con T>0 (mitigado con T=0 + repetir 2-3x).
+- Contexto histórico reconstruido puede diferir del que vio el bot en vivo (algunos campos pueden faltar en logs).
+- "Buenas decisiones" es subjetivo; reportá patrones, no veredictos absolutos.
+- 1 semana es muestra chica — esto es validación cualitativa del prompt, no benchmark estadístico.
+
+**Por qué importa:**
+- Valida el "cerebro estratégico" del bot, no solo la mecánica táctica.
+- Si C1 (sin LLM) genera trades pero C2 (con LLM) rota a tickers distintos → el LLM cambia significativamente el comportamiento, y vale la pena seguir invirtiendo en mejorar el prompt.
+- Si las decisiones simuladas son consistentemente bien razonadas → confianza en el setup para producción.
+- Si el reasoning revela huecos (e.g. nunca menciona valuation, siempre prioriza momentum) → input para iterar el SYSTEM_PROMPT en sprint futuro.
+
+### Orden final actualizado de tareas Code
+
+Misma prioridad anterior + C dividida:
+
+| Orden | Tarea | Estimado |
+|---|---|---|
+| 1 | (B) Quitar DAILY_REPORT_ENABLED + restart manual Roman después | 5 min |
+| 2 | (A) Fix CorrelationGuard ventana 5→10 días + TDD | 30-45 min |
+| 3 | (D) Anotar BACKLOG ERROR JSON Claude truncado | 2 min |
+| 4 | (C1) Backtest mecánico Sentinels semana 19-23 may | 30-45 min |
+| 5 | (C2) Backtest con Universe Selector simulado Claude API | 45-60 min |
+
+Total estimado: ~2.5-3 horas Code.
+
+Si vas corta de tiempo/tokens, (C2) puede diferirse y queda en backlog como #FEAT-008 "Backtest LLM-driven con prompt actual". Pero idealmente sale hoy o mañana para que tengamos ambos análisis cuando arranque el período 2 real (miércoles 27-may post-fix).
+
+---
+
+[2026-05-26 ~18:10 ET CODE DONE — (B)✅ (A)✅ (C1)✅ (D)✅ · (C2) DIFERIDO a #FEAT-008. HEAD `3cc5b09`, ahead 1.]
+
+Roman salió; ejecuté con autonomía siguiendo §14.0 v2.7. **(B), (A), (C1), (D) cerrados. (C2) diferido por presupuesto de contexto** (autorizado por vos en el addendum).
+
+### (B) DAILY_REPORT_ENABLED=false — HECHO
+- Patch `.env`: `true`→`false` (1 ocurrencia). **WriteAllText UTF8 sin BOM** verificado: primeros bytes `65,76,80` ("ALP", NO `239,187,191`). Flag post-patch = `DAILY_REPORT_ENABLED=false`.
+- Backup: `backups/2026-05-26/env_pre_disable_daily_report/.env.backup`.
+- **Pendiente Roman:** restart api.py + main.py (vía `sentinel-start.bat` tras matar procesos) para que surta efecto. Mientras no reinicie, el scheduler vivo sigue con el valor viejo.
+
+### (A) Fix CorrelationGuard ventana 5→10 días — HECHO, commit LOCAL `3cc5b09`
+- `correlation_guard._fetch_bars_sync`: `timedelta(days=5)`→`days=10` + docstring/comentario actualizados con el porqué (incidente día-1).
+- **TDD:** `test_fetch_bars_sync_usa_ventana_10_dias` (captura el `StockBarsRequest`, valida `start ≈ now−10d`). Red confirmado con days=5 (medía 5.0), green con days=10.
+- Gate §14.0 completo: py_compile OK · **suite 658→659** (`ATR_SIZING_ENABLED=false` por el gotcha .env) · ruff "All checks passed!" · **validate-workspace 0/0** · `git diff --stat` = `correlation_guard.py +8/-3`, `test +22` (coherente, sin borrado masivo) · tail sin truncado.
+- Backup: `backups/2026-05-26/correlation_guard.py.bak.preFix` + `test_...coverage.py.bak.preFix`. Sin migración.
+
+### (C1) Backtest mecánico 9 Sentinels (semana 19-23 may) — HECHO
+Script ad-hoc gitignored: `backups/2026-05-26/backtest_semana_19-23may.py` (framework `backtest/`, 27 backtests = 9 Sentinels × 3 tickers activos, 15Min/IEX, cash $100k c/u, commission=0, allow_short para s2/s8).
+
+**Trades por Sentinel (backtest vs FILLED real en DB esa semana):**
+| Sent | BT trades | BT PnL% (rango) | Real FILLED |
+|---|---|---|---|
+| s1 SMA | 1 | +0.7 | 2 |
+| **s2 RSI** | **31** | NVDA +8.2 / TLT +0.6 / XLU +1.8 | **19** |
+| s3 Bollinger | 5 | XLV +2.9 | 2 |
+| s4 MACD+Vol | 2 | **NVDA −3.0 / TSLA −1.4** | 3 |
+| s5 ORB | **0** | — | **3** |
+| s6 EMA | 3 | TSLA +2.8 | 1 |
+| s7 VWAP | **0** | — | **8** |
+| s8 RSI-div | 4 | MSFT +3.1 | 1 |
+| s9 Squeeze | **0** | — | **3** |
+| **TOTAL** | **46** | — | **41 FILLED** (+16 CANCELLED) |
+
+**Hallazgos:**
+1. **Volumen total coherente** (46 BT vs 41 real) → la lógica de generación de señales del framework reproduce el orden de magnitud real.
+2. **S-2 (RSI Fast Reversion) es el más prolífico y rentable en ambos** (31 BT / 19 real, todos sus tickers positivos en BT, NVDA +8.2%). **Conexión directa con (A):** los 3 tickers de S-2 (NVDA/TLT/XLU) son EXACTAMENTE los que más murieron por `no_data` el 26-may (NVDA×5/TLT×3/XLU×2). El bug del CorrelationGuard estaba matando al Sentinel más productivo → la fix (A) lo recupera.
+3. **🔴 Limitación del framework #HE-4:** las 3 estrategias **intradía** (S-5 ORB, S-7 VWAP, S-9 Squeeze) dan **0 trades en backtest pero SÍ operan en vivo** (3/8/3 reales). El adapter `backtest/adapters.py` (`_to_live_bars`/contexto de sesión intradía) no reproduce sus setups. → Techdebt del framework: el backtest es confiable para estrategias de barras/swing (SMA/RSI/Bollinger/MACD/EMA) pero NO valida intradía. Propongo item de backlog.
+4. **S-4 MACD+Volume único claramente perdedor** (NVDA −3.0%, TSLA −1.4%, ambos 0% win rate). Dato para vigilar en período 2.
+5. **Fees:** el framework no integra `simulated_costs.py`; a qty=1 son sub-céntimo (ya cuantificado en #CR-3: $0.14 sobre 107 ventas reales) → inmateriales a esta escala.
+
+**Caveats (ya conocidos + 1 nuevo):** el backtest ejecuta la lógica de cada Sentinel **SIN los filtros operacionales** (CorrelationGuard/cooldown/Ear/ATR/allocation Half-Kelly) — por eso "distribución de rechazos por filtro" NO aplica acá (eso vive en el runtime, ya está en mi triage del día). El PnL agregado $13.5k es la suma de 27 backtests AISLADOS con $100k cada uno — **NO es P&L de portfolio** (el bot reparte ~5% por Sentinel); interpretar los return_% individuales, no el agregado. Universe Selector LLM / FinBERT / slippage Alpaca exacto no se capturan. 1 semana = muestra chica.
+
+### (D) Ítem para BACKLOG (lo agregás vos — no toco BACKLOG.md)
+**#TECH-005 (P2)** — `claude_client.py`: 1 parse JSON truncado el 26-may 09:31:42 (`Unterminated string` en rotación NVDA→GLD → `rotation status=failed`). No bloqueante (1 vez en el día). Revisar `max_tokens` de la respuesta del Universe Selector cuando haya margen. Si recurre en período 2, escalar a P1.
+
+### (C2) DIFERIDO a #FEAT-008
+Backtest con Universe Selector simulado vía Claude API. Lo difiero por presupuesto de contexto de este turno (ya gasté en triage + B + A + C1). Es validación cualitativa del prompt, no operativa → sin urgencia pre-apertura. Queda como **#FEAT-008** para sesión fresca con tokens al máximo. Cuando se haga, ojo: reconstruir contexto histórico desde DB/logs, T=0, repetir 2-3× para determinismo, comparar vs `rotation_decisions` real.
+
+### Estado git (§14.0.7 cross-check literal)
+```
+ M BACKLOG.md            (tuyo, no toqué)
+ M teamwork/LOG.md       (mío: triage + este reporte)
+?? sentinel-v0.5/logs/api.log.2026-05-24   (log viejo, gitignored-pattern)
+?? sentinel-v0.5/logs/api.log.2026-05-25
+?? sentinel-v0.5/scripts/smoke_test_fractional.py  (pre-existente, sprint anterior)
+```
+HEAD `3cc5b09`, **ahead 1** sobre `origin/main=7a87aa2`. Mi único commit nuevo = la fix (A). (B) tocó solo `.env` (gitignored); (C1) solo `backups/` (gitignored); (D) no toca repo. Working tree sin .py huérfanos míos. El script de backtest está confirmado gitignored (`git check-ignore` OK).
+
+### Para Roman (cuando vuelva)
+- Restart api.py+main.py para que tomen (B) DAILY_REPORT off + (A) ventana 10 días.
+- Mañana 9:30 ET: si con la fix el bot vuelve a operar 0 trades → hay otra causa, reabrimos (tu condición).
+- ¿Querés C2 (#FEAT-008) hoy/mañana o queda para después?
+
+### Para Cowork
+Validá (A) (commit `3cc5b09`, suite 659, gate verde) + agregá al BACKLOG #TECH-005 (D) + el item de techdebt del adapter intradía (#HE-4) + #FEAT-008 (C2). Bundle push cuando Roman decida (1 commit sobre 7a87aa2). Quedo a la espera.
+
+---
+
+[2026-05-26 ~18:45 ET CODE — C2 EJECUTADO (reinterpretado por Roman): "Code hace de Universe Selector". Período ampliado a 2 semanas (12-23 may).]
+
+**Roman redefinió C2:** en vez de llamar la API de Claude programáticamente, **YO (Claude Code) hago de Universe Selector** — corro la simulación y razono las rotaciones cuando el contexto las dispara, usando el SYSTEM_PROMPT real + el marco Equity Research (T-T) + mis plugins. Roman pidió **ampliar a 2 semanas** (12-23 may) para que haya datos suficientes para disparar el warmup de 10 trades.
+
+**Setup:** backtest mecánico 2 semanas (mismo script, START=2026-05-12), 99 trades totales. Apliqué el trigger EXACTO del bot (`_evaluate_one`): warmup ≥10 trades, WARNING si `wr<0.45 OR sharpe<0.65`, DECAY si `wr<0.40 OR sharpe<0.05`, **solo sobre tickers ACTIVOS**.
+
+**Resultado del trigger: SOLO S-2 (rsi_short) cruza el warmup en sus 3 tickers; los 3 disparan, todos por SHARPE (win rates altos):**
+| S-2 | trades | wr | sharpe | trigger |
+|---|---|---|---|---|
+| NVDA | 25 | 0.76 | 0.446 | WARNING |
+| TLT | 17 | 0.647 | −0.048 | **DECAY → rota ya** |
+| XLU | 19 | 0.842 | 0.360 | WARNING |
+
+(El resto de Sentinels: <10 trades/ticker en 2 semanas → no evalúa. S-5/S-7 intradía = 0 trades por la limitación del adapter #HE-4.)
+
+**Contexto que ve el Universe Selector (reconstruido):**
+- **Portafolio agregado (27 slots activos):** SPY×6, QQQ×4, NVDA×4, IWM, TSLA×2, AMD×2, AAPL, MSFT (tech/broad = **Ambiente 2 masivo**), XLP/XLV/XLU (defensivo Ambiente 3), TLT (bonos Ambiente 4), GLD (oro Ambiente 1/3).
+- **Diagnóstico factorial:** sobrepeso brutal Ambiente 2 (G↑/I↓). **Ambiente 1 (commodities/G↑I↑) casi ausente** (solo GLD). **Ambiente 4 (bonos/G↓I↓) solo TLT** — que justo es el que entra en decay.
+- **Régimen:** NEUTRAL. The Ear risk bajo esa quincena.
+- **Failed tickers de S-2 (NO proponer):** del bucle zombie 08-may → TLT, GLD, IEF, TIP, SLV, XLV, XLU, XLE, USO, DBA, UUP, VIXY, UVXY, SQQQ, SOXS, GDXJ, BITI, XBI. (Muchos son lista negra apalancada/inverse.)
+
+---
+
+### Decisión 1 — S-2 / TLT (DECAY → rotación inmediata)
+
+```json
+{
+  "recommended_ticker": "LQD",
+  "candidates": [
+    {"ticker": "LQD", "confidence": 0.60, "reason": "Bono corporativo IG: oscila por componente de crédito (mejor mean-reversion que TLT, que es duración pura), mantiene la cobertura de Ambiente 4 que se pierde al sacar TLT"},
+    {"ticker": "XLF", "confidence": 0.55, "reason": "Financials: cíclico líquido, mean-reverte bien en rango, NO usado en el portafolio, rompe la correlación con duración donde S-2 ya falló"},
+    {"ticker": "XLI", "confidence": 0.45, "reason": "Industriales: oscilación de rango decente, sector nuevo, diversifica fuera de tech/bonos"}
+  ],
+  "overall_confidence": 0.58,
+  "reasoning": "S-2 (RSI(2) mean-reversion) degradó en TLT: sharpe per-trade −0.05 pese a win rate 0.65 → TLT estuvo direccional (bonos tendenciales por tasas), no mean-reverting. CONFLICTO clave: S-2 ya falló en TLT/IEF/TIP (todos duración) → proponer otro bono arriesga repetir el patrón. LQD mantiene el rol macro de bonos con perfil más oscilante (crédito); XLF lo rompe del todo hacia un cíclico oscilante. Me inclino por LQD por preservar Ambiente 4 (que quedaría en CERO), pero con baja convicción.",
+  "factor_exposure_analysis": "Sacar TLT deja Ambiente 4 (G↓/I↓, bonos) descubierto — era el único. LQD lo recupera (bonos+crédito). XLF/XLI NO cubren Ambiente 4 pero reducen el sesgo de duración fallida. El portafolio NO necesita más Ambiente 2 (ya saturado).",
+  "fundamental_analysis": "ETFs (no DCF). LQD: IG corporate, expense ~0.14%, muy líquido, sensible a spreads+tasas, sin gap risk idiosincrático. XLF: sector financiero, sensible a curva de tasas. Honestidad: mi cutoff es ene-2026; para may-2026 el régimen de tasas es incierto y es justo lo que define si LQD mean-reverte o tiende.",
+  "risks": ["LQD puede seguir direccional si las tasas tienden (mismo fallo que TLT)", "XLF/XLI dejan Ambiente 4 en cero"],
+  "expected_horizon_days": 30
+}
+```
+
+### Decisión 2 — S-2 / NVDA (WARNING → candidato a watchlist, TTL 7d)
+
+```json
+{
+  "recommended_ticker": "XLF",
+  "candidates": [
+    {"ticker": "XLF", "confidence": 0.62, "reason": "Reduce la sobreconcentración de NVDA (está en 4 Sentinels); financials cíclico oscilante apto para RSI(2); sector no usado"},
+    {"ticker": "DBC", "confidence": 0.50, "reason": "Commodities diversificadas no apalancadas: cubre Ambiente 1 (hoy casi vacío); ojo, tiende más que oscila"},
+    {"ticker": "IWM", "confidence": 0.45, "reason": "Small caps muy oscilantes para mean-reversion, pero correlacionado con el broad market ya sobrepresente"}
+  ],
+  "overall_confidence": 0.6,
+  "reasoning": "NVDA en S-2 dispara WARNING por sharpe (0.45) aunque win rate 0.76 es alto — mean-reversion sobre un activo muy tendencial/volátil genera pocas pérdidas pero grandes (sharpe bajo). Como es WARNING (no decay), va a watchlist sin ejecutar. La razón MÁS fuerte para rotar NVDA acá no es su performance (decente) sino la DIVERSIFICACIÓN: NVDA aparece en S-2, S-4, S-6 y S-9 — concentración de riesgo idiosincrático extrema. Sacarlo de S-2 (mean-reversion, donde técnicamente es subóptimo por su tendencia) es lo más sano para el portafolio agregado.",
+  "factor_exposure_analysis": "NVDA = Ambiente 2 (tech growth), ya saturado (×4). Rotar a XLF mantiene Ambiente 2-cíclico pero descorrelaciona del riesgo single-name NVDA. DBC abriría Ambiente 1 (commodities), el hueco real del portafolio.",
+  "fundamental_analysis": "NVDA (acción individual): líder de aceleradores AI, fundamentales históricamente fuertes (márgenes altos, caja), PERO valuación premium extrema → riesgo de reversión brusca y gap risk en earnings; para mean-reversion intradía/swing el gap de guidance es un riesgo real. XLF (ETF sector): sin gap single-name. (Cutoff ene-2026; no afirmo cifras de may-2026.)",
+  "risks": ["NVDA mantiene win rate alto: rotar puede costar performance a cambio de diversificación", "DBC tiende, mal para mean-reversion"],
+  "expected_horizon_days": 30
+}
+```
+
+### Decisión 3 — S-2 / XLU (WARNING → honestidad: NO forzar rotación)
+
+```json
+{
+  "recommended_ticker": null,
+  "candidates": [
+    {"ticker": "XLI", "confidence": 0.40, "reason": "Si se quisiera rotar: industriales oscilante, sector nuevo. Pero baja convicción"},
+    {"ticker": "XLF", "confidence": 0.38, "reason": "Cíclico no usado, alternativa de respaldo"}
+  ],
+  "overall_confidence": 0.35,
+  "reasoning": "XLU dispara WARNING SOLO por sharpe marginal (0.36 < 0.65), pero su win rate es 0.84 (el más alto de S-2) — XLU (utilities) es un activo IDEAL para mean-reversion (baja beta, oscila en rango por sensibilidad a tasas). Aplicando la honestidad del system prompt: forzar una rotación acá sería destruir un emparejamiento que funciona por un umbral de sharpe que castiga la baja volatilidad (justamente la virtud de utilities para RSI). Recomiendo MANTENER XLU (recommended_ticker=null) y solo dejar un candidato de respaldo de baja confianza en watchlist.",
+  "factor_exposure_analysis": "XLU = Ambiente 3 (defensivo/G↓I↑), bien cubierto. No hay razón factorial para sacarlo; rotarlo no mejora la diversificación.",
+  "fundamental_analysis": "XLU (ETF utilities): regulado, dividendos estables, baja beta, muy sensible a tasas largas. Composición sana, expense bajo, líquido. No hay deterioro estructural que justifique salida.",
+  "risks": ["Mantener un ticker en warning si el sharpe sigue cayendo podría convertirse en decay real más adelante"],
+  "expected_horizon_days": 30
+}
+```
+
+---
+
+### Comparación con la realidad + análisis cualitativo
+
+- **El bot real NO rotó nada el 12-23 may** (0 rotation_decisions esa quincena — período de observación, qty=1, scores parciales no cruzaban warmup). La única rotación reciente es la **NVDA→GLD `pending` del 26-may** (la que falló por el parse JSON, #TECH-005).
+- **🔴 Hallazgo:** el bot real propuso **GLD** para reemplazar NVDA en S-2 — pero **GLD está en la lista de failed tickers de S-2** (rotó a GLD en el bucle del 08-may). El SYSTEM_PROMPT dice "NUNCA el mismo ticker fallido". Que el Universe real proponga un ticker ya fallido sugiere que **el contexto de `failed_tickers` no se está construyendo/pasando bien** en vivo (o el LLM lo ignoró). Vale auditar `build_user_prompt` → de dónde sale `failed_tickers` y si incluye el histórico de rotaciones de ese sentinel. Yo, con ese contexto explícito, descarté GLD en las 3 decisiones.
+- **¿El marco Equity Research (T-T) cambia el reasoning?** SÍ, de forma observable: en la Decisión 2 el análisis fundamental de NVDA (valuación premium + gap risk de earnings) refuerza la rotación más allá de lo técnico; en la Decisión 3 distingue correctamente ETF (sin DCF) de acción. Sin esa sección, el reasoning sería puramente técnico+factorial.
+- **Sesgo detectado en el setup:** los 3 disparos fueron por SHARPE, no win rate. El umbral `sharpe<0.65` castiga estrategias de baja volatilidad (utilities) y de alto win rate con cola gorda (NVDA). El Universe termina queriendo rotar tickers que GANAN seguido. Es coherente con que el bot casi no rotó en vivo (warmup), pero si activa, **el sharpe per-trade puede gatillar rotaciones contraproducentes** (Decisión 3 lo ilustra: rotar XLU sería un error). Input para revisar los thresholds o ponderar win rate.
+
+**Caveats:** (1) backtests aislados, sin filtros operacionales ni el ciclo real de rotación con TTL. (2) PnL agregado NO es portfolio. (3) Mi razonamiento de Universe usa conocimiento a cutoff ene-2026 — para may-2026 hay incertidumbre macro real (lo declaré en cada `fundamental_analysis`, como pide el prompt). (4) 2 semanas sigue siendo muestra chica; solo S-2 tuvo densidad de trades. (5) "Buena decisión" es subjetivo — esto es validación cualitativa del prompt, no benchmark.
+
+**Para Cowork/Roman:** C2 entregado como análisis (sin tocar código/DB — read-only + razonamiento). El hallazgo accionable es el de GLD en failed_tickers (auditar `build_user_prompt`/contexto de rotación en vivo) — lo dejo para validar; si confirmás, abrimos item de fix.
+
+---
+
+[2026-05-26 ~19:30 ET COWORK PAQUETE COMPLETO @CODE — 5 tareas para hoy: T-X TP/SL per-Sentinel + #TECH-005/006 + #FEAT-010 + análisis P&L]
+
+Roman validó tu triage y los hallazgos. Quiere atacar TODO lo accionable hoy antes del miércoles 27-may. **5 tareas en orden propuesto, ~3-4 horas estimadas.**
+
+### Orden de ejecución sugerido
+
+| # | Tarea | Estimado | Razón orden |
+|---|---|---|---|
+| 1 | **(E) Análisis P&L real período 1** | 15 min | Lectura rápida de DB, no toca código |
+| 2 | **(F) #TECH-006 investigar bug failed_tickers** | 30-40 min | Lectura código `build_user_prompt` + audit, sin toque código pesado |
+| 3 | **(G) #TECH-005 fix max_tokens claude_client** | 15-20 min | Cambio config, posiblemente relacionado con #TECH-006 |
+| 4 | **(H) #FEAT-010 regla desempate SYSTEM_PROMPT** | 20-30 min | Edit + tests verificando el prompt actualizado |
+| 5 | **(I) T-X TP/SL per-Sentinel — Opción B con análisis** | 60-90 min | El más grande, deja al final |
+
+### (E) Análisis P&L real período 1 — pedido Roman
+
+Extraer de DB y reportar en LOG:
+- Equity inicio (28-abr) vs equity cierre (23-may) → P&L absoluto y %
+- P&L per-Sentinel sobre el período: número de trades, win rate, P&L total, sharpe per-trade
+- Comparar con backtest mecánico (C1) que ya hiciste: ¿el orden de magnitud coincide?
+- Distribución de razones de cierre: stop_loss, take_profit, signal_close (si está registrada)
+
+**Caveat:** durante todo el período 1 el bot operó qty=1 sin brackets (ATR_SIZING_ENABLED=false hasta 25-may noche). Los datos NO son directamente comparables con el período 2 post-T-X.
+
+### (F) #TECH-006 — bug failed_tickers en Universe Selector
+
+Tu hallazgo del C2: el bot real propuso NVDA→GLD el 26-may, pero **GLD está en failed_tickers de S-2** (rotó a GLD en el bucle del 08-may). El SYSTEM_PROMPT dice "NUNCA el mismo ticker fallido". Hipótesis (en orden de probabilidad):
+
+1. **`build_user_prompt` NO incluye failed_tickers en el contexto del LLM** — auditar la función.
+2. **Sí incluye pero la lista está incompleta/desactualizada** — verificar fuente de datos (¿tabla `rotation_decisions`? `failed_rotations`?).
+3. **Sí incluye pero el LLM lo ignoró** — improbable si el prompt es explícito. Pero ojo: parse JSON truncado (#TECH-005) puede haber tragado el reasoning.
+
+**Acción:**
+- Leer `build_user_prompt` en `universe_selector.py`.
+- Generar 1 ejemplo de prompt real reconstruido para el caso NVDA→GLD del 26-may. Confirmar si la lista de failed_tickers está presente y completa.
+- Si falta o está mal armada → arreglar (commit local con TDD).
+- Si está bien armada → el LLM lo ignoró; reforzar la regla en el SYSTEM_PROMPT (vinculado con #FEAT-010).
+
+### (G) #TECH-005 — max_tokens claude_client truncó respuesta NVDA→GLD
+
+Revisar `claude_client.py` (o equivalente). Verificar `max_tokens` del request al Universe Selector. La respuesta del 26-may 09:31:42 quedó truncada en `Unterminated string` → parse JSON falló → `rotation status=failed`.
+
+**Acción:**
+- Si max_tokens < 4000 (típico) → subir a 8000 o 16000.
+- Considerar añadir lógica de retry con max_tokens duplicado si parse JSON falla.
+- Test TDD que valide parse robusto vs response truncada.
+
+**Posible conexión con #TECH-006:** si la respuesta se truncó, puede haber tragado el reasoning donde el LLM SÍ consideraba failed_tickers. Reportar si los logs muestran qué parte se cortó.
+
+### (H) #FEAT-010 — regla desempate SYSTEM_PROMPT
+
+Agregar al `SYSTEM_PROMPT` de Universe Selector una regla explícita para cuando 2 reglas chocan:
+
+> "Cuando la regla 'cubrir todos los ambientes factoriales' choca con 'evitar categorías de tickers fallidos', PRIORIZAR evitar la categoría fallida. Razón: si toda una categoría (e.g. bonos duración) falló para una estrategia, otra de la misma categoría replica el patrón. Es preferible dejar un ambiente factorial vacío temporalmente que repetir un fallo de naturaleza categórica. Anotar explícitamente en `reasoning` que se priorizó este criterio."
+
+**Acción:**
+- Edit del prompt en `universe_selector.py`.
+- TDD: test que verifique que el prompt actualizado contiene la frase clave.
+- Backup pre-edit catalogado.
+
+### (I) T-X TP/SL per-Sentinel — Spec completa en docs/
+
+**Spec lista en `docs/TAREA_T-X_tpsl_per_sentinel.md`** (Roman va a hacer Copy-Item desde outputs/). Contiene:
+- Análisis técnico de cada uno de los 9 Sentinels (lógica + horizonte + estilo)
+- Tabla de multipliers recomendados con justificación
+- Implementación esperada en `config.py` + `dispatcher.py`
+- Tests TDD esperados (~20 tests)
+- Riesgos + rollback
+
+**Resumen multipliers:**
+| strategy_type | SL_MULT | RR_RATIO | TP_MULT |
+|---|---|---|---|
+| sma_crossover, ema_triple | 2.0 | 3.0 | 6.0 |
+| rsi_short | 1.5 | 1.0 | 1.5 |
+| bollinger_bounce | 2.0 | 1.5 | 3.0 |
+| macd_volume | 2.5 | 2.5 | 6.25 |
+| orb_breakout | 1.0 | 2.0 | 2.0 |
+| vwap_reversion | 1.0 | 1.0 | 1.0 |
+| rsi_divergence | 2.0 | 2.0 | 4.0 |
+| bollinger_squeeze | 1.5 | 3.0 | 4.5 |
+
+Fallback a defaults globales (SL=2.0, RR=2.0) si strategy_type no está en el dict.
+
+### Reglas operacionales (iguales)
+
+- Commits LOCALES sin push (Roman decide bundle push después).
+- Suite verde + validate-workspace 0/0 por commit.
+- Backup pre-edit catalogado en `backups/2026-05-26/<archivo>.bak.pre<TAREA>`.
+- §14.0 v2.7 checklist por commit + `git status --short` literal en `[CODE DONE]`.
+- Drift adaptable — reportá cualquier divergencia contra spec o cualquier conexión inesperada entre tareas (e.g. #TECH-005 ↔ #TECH-006).
+
+### Estado git inicial
+
+HEAD `3cc5b09`, ahead 1 sobre `origin/main=7a87aa2` (la fix CorrelationGuard). Working tree limpio salvo `M BACKLOG.md` (mío, no toques) + `M sentinel-v0.5/CLAUDE.md` (tu reporte triage anterior).
+
+### Para Roman post-Code
+
+Cuando Code reporte cierre de las 5 tareas, vos hacés:
+- Restart bot (matar procesos + sentinel-start.bat) para que tome todo.
+- Decidir si pusheamos hoy o esperamos al finde (junto con la migración Hetzner).
+- Mañana 9:30 ET: validar que el bot opera con todo nuevo activo.
+
+Cowork queda en pausa eficiente. Te aviso cuando reportes cierre.
+
+---
+
+[2026-05-26 ~19:55 ET CODE — (E) Análisis P&L real período 1. Read-only DB.]
+
+**Equity:** no hay serie diaria del período — `daily_equity_snapshots` solo tiene **25-may ($100,171.12)** y 26-may ($100,197.00); el poller EOD recién arrancó el 25-may noche (cuando Roman activó los flags). Equity inicial paper estándar = **$100,000**. → **P&L período 1 ≈ +$171 / +0.17%** en ~4 semanas (proxy con el snapshot del 25-may, el más cercano al cierre del 23-may). **Marginal — consistente con que el bot operó qty=1 todo el período** (sizing trivial, el diseño nunca corrió en su forma real; ver OBSERVATION_PERIOD).
+
+**P&L per-Sentinel** (net cash flow de FILLED 28abr-23may; ⚠️ es PROXY, no realized FIFO — varios Sentinels quedaron con posiciones abiertas, ver net_qty):
+| Sentinel | FILLED | net_cash $ | net_qty (b−s) | win_rate (de perf_scores) |
+|---|---|---|---|---|
+| S-8 RSI-div | 9 | **+2188.20** | −3 (short abierto) | bajo (MSFT 0.0) |
+| S-2 RSI | 130 | **+1795.28** | +2 | NVDA .59/XLU .67/TLT .38 |
+| S-7 VWAP | 32 | +1162.91 | −2 | GLD .86/QQQ .60 |
+| S-9 Squeeze | 4 | +400.03 | −2 | (warmup) |
+| S-4 MACD | 10 | +129.84 | −2 | NVDA 0.0 |
+| S-1 SMA | 11 | −272.29 | +1 | IWM .50 |
+| S-3 Bollinger | 17 | −691.21 | +1 | SPY 1.0/XLV .50 |
+| S-6 EMA | 19 | −1103.41 | +3 | NVDA .67/SPY 1.0 |
+| **S-5 ORB** | 38 | **−2528.28** | +4 | QQQ 0.0/SPY 1.0/AAPL .60 |
+
+**Total net cash flow ≈ +$1,081**, pero el equity solo subió ~+$171 → la diferencia (~$910) es el valor neto de las **posiciones abiertas remanentes** (net_qty≠0) marked-to-market + las pérdidas realized/wash de #CR-1 (realized −$12.57, 27 wash). Por eso el net_cash es ranking RELATIVO, no P&L cerrado.
+
+**Hallazgos:**
+1. **S-5 ORB es el peor** (−$2528, 38 trades, QQQ win rate 0.0) — el más activo entre los perdedores. Mala calidad de señal en período 1. **Conecta con C1/C2:** ORB es intradía, y el backtest #HE-4 NO lo reproduce (0 trades BT vs 38 reales). El bot real lo operó MAL → input para T-X (TP/SL puede acotar las pérdidas de ORB).
+2. **S-2 y S-8 los mejores en cash flow** — coherente con backtest (S-2 el más rentable en BT).
+3. **Comparación con backtest C1/C2:** el ranking de ACTIVIDAD coincide (S-2 domina: 130 real vs 31/61 BT; intradía variable). Los SIGNOS de P&L NO son comparables: el backtest opera sin los filtros operacionales, con sizing distinto (cash $100k vs qty=1 real) y sin el timing real de fills. Orden de magnitud de actividad: ✅ coherente. P&L: no comparable (caveat ya conocido).
+4. **Razones de cierre (stop_loss/take_profit/signal_close): NO disponibles.** `trades` no tiene esa columna y el período 1 operó SIN brackets (ATR_SIZING off hasta 25-may). Se podrá medir recién en período 2 post-T-X (los brackets de T-X generan las salidas tipificables). **Esto JUSTIFICA T-X:** sin TP/SL, las salidas del período 1 fueron solo por señal opuesta → pérdidas como las de S-5 ORB no tuvieron stop.
+
+**Caveat global:** período 1 = qty=1 sin brackets → NO comparable con período 2. El +0.17% no evalúa el diseño, evalúa una versión trivial de él.
+
+---
+
+[2026-05-26 ~21:10 ET CODE DONE — PAQUETE 5 TAREAS E/F/G/H/I cerrado. HEAD `7a839c9`, ahead 5. Suite 685. Commits LOCALES sin push.]
+
+**Las 5 cerradas con commits locales testeados (§14.0 v2.7 por commit: TDD, backup pre-edit, py_compile, suite verde, ruff, validate 0/0).** Orden ejecutado E→F→G→H→I (el sugerido).
+
+| Tarea | Commit | Resultado |
+|---|---|---|
+| (E) Análisis P&L período 1 | — (read-only) | en LOG ↑. P&L ≈ +$171/+0.17% (qty=1). S-5 ORB el peor (−$2528), S-2/S-8 los mejores |
+| (F) #TECH-006 failed_tickers | `f80e231` | UNION old+new. Validado DB: S-2 antes {SPY,TSLA}, ahora incluye GLD + 17 |
+| (G) #TECH-005 max_tokens | `20e21b0` | 2000→8000 + error tipificado `truncated_max_tokens`. +2 tests |
+| (H) #FEAT-010 desempate | `1206183` | regla categoría-fallida > cobertura en SYSTEM_PROMPT. +1 test |
+| (I) T-X #FEAT-011 TP/SL | `7a839c9` | ATR_PER_SENTINEL + wire dispatcher. +23 tests, config 96%/dispatcher 100% |
+
+**Suite 659→685** (+26 tests netos). ruff "All checks passed!" + validate-workspace 0/0 en cada commit.
+
+### Drifts reportados (drift adaptable)
+1. **(F)↔(G) NO están causalmente conectados** (Cowork lo sospechaba). El GLD lo causó la query incompleta de failed_tickers (#TECH-006), NO el truncado (#TECH-005). Son 2 bugs independientes del mismo flujo: F = contexto de ENTRADA incompleto; G = respuesta de SALIDA truncada. Los arreglé por separado (archivos distintos: historian.py vs claude_client.py). El truncado del 26-may sí impidió que se registrara el reasoning, pero aunque hubiera parseado, GLD igual se habría propuesto (no estaba en failed). Ambos fixes son necesarios.
+2. **(G) sin retry automático.** La spec/Cowork sugería "considerar retry con max_tokens duplicado". Opté por max_tokens=8000 (~4x el punto de corte) + detección clara de truncado, sin retry — por KISS (manual) y para no duplicar costo de API en cada ciclo. Si recurre con 8000, se agrega retry. Lo dejo como follow-up opcional.
+3. **(I) T-X NO necesitó el helper `_get_strategy_type` con query DB** que sugería la spec §3.3. `process_signal` YA recibe `strategy_type` como parámetro (dispatcher.py:288) → lo uso directo. Más simple, sin red, sin query extra. El wire-up quedó en 7 líneas.
+4. **(I) 2 tests de integración actualizados** (`test_process_signal_integration`): usaban `strategy_type="macd_volume"` y asumían defaults globales (TP 236/SL 209); con T-X, macd_volume = 2.5/2.5 → TP 246.12/SL 206.75. No es regresión, es el cambio intencional — y ahora esos tests validan que el strategy_type se propaga a los multipliers (cobertura extra del wire-up).
+
+### Hallazgos para vigilar (de E + análisis)
+- **S-5 ORB**: peor del período 1 (−$2528, win rate QQQ 0.0) + es intradía (backtest #HE-4 no lo reproduce). T-X le pone SL=1.0×ATR (apretado) → debería acotar sus pérdidas en período 2. **Vigilar S-5 días 1-10.**
+- **Razones de cierre NO existían en período 1** (sin brackets). Con T-X los brackets generan salidas tipificables (TP/SL hit) → en período 2 SÍ se podrá medir la distribución. Justifica T-X.
+
+### Estado git (§14.0.7 cross-check literal)
+```
+ M BACKLOG.md            (tuyo, no toqué)
+ M teamwork/LOG.md       (mío: E + este DONE)
+?? docs/TAREA_T-X_tpsl_per_sentinel.md   (spec que copió Roman; untracked)
+?? sentinel-v0.5/logs/api.log.2026-05-24 / .2026-05-25   (logs viejos)
+?? sentinel-v0.5/scripts/smoke_test_fractional.py        (pre-existente)
+```
+HEAD `7a839c9`, **ahead 5** sobre `origin/main=7a87aa2`: `3cc5b09`(A, turno previo) + `f80e231`(F) + `20e21b0`(G) + `1206183`(H) + `7a839c9`(I). Sin .py huérfanos míos. Scripts de análisis (backtest_semana, etc.) en `backups/2026-05-26/` (gitignored). Backups pre-edit catalogados: `historian/claude_client/universe_selector/config/dispatcher.py.bak.pre<TAREA>` + tests.
+
+### Para Roman
+- Restart api.py+main.py (mata procesos + `sentinel-start.bat`) para tomar: B (daily report off, turno previo) + A (ventana 10d) + F/G/H/I. Mañana 9:30 ET el bot opera con todo nuevo.
+- Decidir bundle push (5 commits sobre 7a87aa2) hoy o al finde con Hetzner.
+
+### Para Cowork
+Validar los 5 commits + actualizar BACKLOG: #TECH-005 DONE, #TECH-006 DONE, #FEAT-010 DONE, #FEAT-011 (T-X) DONE, #FEAT-008 (C2 ya entregado como análisis), + techdebt nuevo: "adapter backtest #HE-4 no reproduce estrategias intradía (S-5/S-7/S-9 dan 0 trades vs reales)". Quedo a la espera de validación.
+
+---
+
+[2026-05-26 ~21:40 ET COWORK BUNDLE PUSH 4 @CODE — Roman pidió que Code haga el push completo con audit pre-push obligatorio]
+
+**Decisión Roman:** push ahora, NO esperar al finde. Razones discutidas: CI verde como red de seguridad antes del miércoles + 5 commits validados ya con §14.0. Bundle finde será solo migración Hetzner T-W.
+
+**Roman delegó el push completo a Code** (no quiere ejecutarlo él esta vez). Cowork queda en pausa hasta que Code reporte.
+
+### Pre-flight checklist OBLIGATORIO (audit pre-push expandido post-lección 25-may)
+
+1. **Limpiar `.git/index.lock` si quedó algo** (lección incidente 25-may):
+   ```bash
+   if [ -f .git/index.lock ]; then rm .git/index.lock; fi
+   ```
+   En PowerShell desde tu sesión, equivalente.
+
+2. **Verificar working tree estado actual:**
+   - `git status --short` debe mostrar SOLO:
+     - `M BACKLOG.md` (mío — actualizado con los cierres de hoy)
+     - `M teamwork/LOG.md` (tuyo + mío — reporte E + DONE + este pedido)
+     - `?? docs/TAREA_T-X_tpsl_per_sentinel.md` (spec, Roman ya Copy-Item desde outputs)
+     - `?? sentinel-v0.5/logs/api.log.2026-05-2X` (logs viejos, gitignored)
+     - `?? sentinel-v0.5/scripts/smoke_test_fractional.py` (pre-existente, sprint anterior, no del bundle)
+   - Si aparece otra cosa inesperada → PARAR y reportar antes de continuar.
+
+3. **Audit credenciales en los 5 commits ahead** (no en working tree, EN LOS COMMITS):
+   ```bash
+   git log origin/main..HEAD -p | grep -E "***REMOVED-ALPACA-ID***|***REMOVED-GOOGLE***|***REMOVED-RESEND***|***REMOVED-ANTHROPIC***|***REMOVED-PW***|zhd0dC1Of4kkhi52dGu8R1HTnrh6Fp4qTr0AAIpFYGY"
+   ```
+   Si encuentra cualquier match → ABORTAR push, reportar. Si vacío → OK seguir.
+
+4. **Audit PII en los 5 commits ahead** (lección post-incidente 25-may PII):
+   ```bash
+   git log origin/main..HEAD -p | grep -E "***REMOVED-EMAIL***|goorale@gmail|***REMOVED-EMAIL***|evyta\.cas@gmail|cusanllc@gmail|said\.pezo|Roman Olarte|a913ff7b"
+   ```
+   Si encuentra match → ABORTAR + reportar. Si vacío → OK.
+
+5. **Verificar gitignore cubre archivos sensibles del working tree** (defensivo):
+   ```bash
+   git check-ignore -v sentinel-v0.5/backups sentinel-v0.5/logs/api.log.2026-05-25 backups/2026-05-26
+   ```
+   Todos deben dar match (gitignored). Si alguno NO → reportar antes de seguir.
+
+### Bundle a pushear
+
+**Archivos para `git add` explícito (NO usar `git add .`):**
+- `BACKLOG.md` — actualizado por Cowork con los cierres E/F/G/H/I + T-X DONE + #TECH-008 nuevo
+- `teamwork/LOG.md` — el LOG completo del día (tu triage + tus 5 reportes + mis paquetes/validaciones)
+- `docs/TAREA_T-X_tpsl_per_sentinel.md` — la spec de T-X (Roman ya Copy-Item; agregarla al repo)
+
+**NO agregar al push (mantener untracked):**
+- `sentinel-v0.5/logs/*.log` (gitignored)
+- `sentinel-v0.5/scripts/smoke_test_fractional.py` (pre-existente, no relacionado con este bundle)
+- `backups/2026-05-26/` (gitignored)
+- Cualquier `.bak` o backup catalogado (gitignored)
+
+### Comando commit Cowork bundle 4
+
+```bash
+git commit -m "ops(cowork): bundle 4 - incidente dia-1 P2 + 5 tareas Code (E/F/G/H/I) + T-X TP/SL per-Sentinel
+
+- Triage incidente 26-may: bot SANO todo el dia, causa raiz CorrelationGuard no_data por feed IEX <60 barras + #TD-3 fail-closed (lunes feriado redujo ventana 5d util)
+- (A) Fix CorrelationGuard ventana 5->10d (3cc5b09, turno previo)
+- (B) DAILY_REPORT_ENABLED=false (decision Roman: relanzamiento oficial cuando este listo)
+- (E) Analisis P&L periodo 1: +\$171 / +0.17% en 4 semanas, qty=1 sin brackets. S-5 ORB peor (-\$2528), S-8/S-2 mejores
+- (F) #TECH-006 fix failed_tickers query (f80e231) - bug real, S-2 antes solo {SPY,TSLA} ahora incluye GLD + 17. Explica NVDA->GLD del 26-may
+- (G) #TECH-005 fix max_tokens claude_client (20e21b0) - 2000->8000 + error tipificado, sin retry KISS
+- (H) #FEAT-010 regla desempate SYSTEM_PROMPT (1206183) - categoria fallida > cobertura factorial cuando chocan
+- (I) T-X #FEAT-011 TP/SL ATR multipliers per-Sentinel (7a839c9) - dict + wire dispatcher + 23 tests TDD
+- Suite 658->685 (+27 nets), ruff verde, validate-workspace 0/0 por commit
+- BACKLOG: 4 items DONE local, 1 techdebt nuevo (#TECH-008 backtest framework con brackets)
+- Drift importante: #TECH-005 y #TECH-006 NO conectados causalmente (2 bugs independientes del mismo flujo Universe Selector)"
+```
+
+### Push + verificación
+
+```bash
+git push origin main
+# Verificación post-push:
+LOCAL=$(git rev-parse HEAD)
+REMOTE=$(git ls-remote origin main | awk '{print $1}')
+if [ "$LOCAL" = "$REMOTE" ]; then
+  echo "OK: local HEAD = origin/main = $LOCAL"
+else
+  echo "WARNING: HEADs divergen — investigar"
+fi
+```
+
+### Reglas operacionales
+
+- §14.0 v2.7 obligatorio.
+- Reportar `[CODE DONE]` en LOG con `git status --short` literal post-push (working tree debería quedar limpio salvo los untracked esperados: logs, smoke_test_fractional.py, backups/).
+- Si audit falla en cualquier punto → reportar `[CODE BLOQ]` SIN push y esperar Cowork/Roman.
+
+### Estado git esperado post-push
+
+```
+HEAD local = origin/main = <nuevo SHA del commit Cowork bundle 4>
+Ahead: 0
+Working tree: limpio salvo untracked esperados (logs, smoke_test, backups gitignored)
+```
+
+Cowork quedará en pausa eficiente. Mañana 9:30 ET es el escenario real (bot operará con todas las fixes activas post-restart Roman).

@@ -41,6 +41,15 @@
 - **#HE-2b** Transición ENTRY_READY→ACTIVE + MAE/MFE backfill (post-#HE-2 IDEA insert).
 - **#FEAT-EquityResearch-real (Sub-3b)** Parsing 10-K/EDGAR + DCF real (vs framework por prompt actual).
 - **Signals.rejection_reason** (drift T-V: cooldown/duplicate descartes solo observables por logs).
+- **#TECH-005** ✅ DONE local en `20e21b0` (26-may noche). max_tokens 2000→8000 + error tipificado `truncated_max_tokens` + 2 tests. Sin retry automático (KISS, evita duplicar costo API). Si recurre con 8000, agregar retry.
+- **#TECH-006** ✅ DONE local en `f80e231` (26-may noche). Bug REAL confirmado: query de failed_tickers estaba incompleta. Fix con UNION old+new. Validado DB: S-2 antes {SPY,TSLA}, ahora incluye GLD + 17 más. Drift importante: NO estaba conectado con #TECH-005 (eran 2 bugs independientes).
+- **#TECH-007** Backtest framework #HE-4 — adapter intradía NO reproduce S-5 ORB / S-7 VWAP / S-9 Squeeze (0 trades en backtest, 3/8/3 trades reales). `backtest/adapters.py` no maneja contexto de sesión intradía. P2, sprint próximo finde.
+- **#FEAT-008** Backtest LLM-driven con Claude API (C2 diferido del incidente 26-may). Validación cualitativa del SYSTEM_PROMPT mediante replay programático con T=0 + 2-3x repeticiones. Code en este incidente ya razonó como Universe sobre 2 semanas; queda el replay programático cuando haya tokens. P3.
+- **#FEAT-009** Revisar thresholds warmup/decay del trigger Universe Selector — el umbral `sharpe<0.65` puede gatillar rotaciones contraproducentes en tickers con win rate alto pero cola gorda (NVDA) o baja volatilidad (utilities). Ponderar win rate o ajustar umbral. P2, sprint post-período 2 con data real.
+- **#FEAT-010** ✅ DONE local en `1206183` (26-may noche). Regla "categoría-fallida > cobertura" agregada al SYSTEM_PROMPT + 1 test.
+- **T-X #FEAT-011** ✅ DONE local en `7a839c9` (26-may noche). TP/SL ATR multipliers per-Sentinel (Opción B). Dict `ATR_PER_SENTINEL` + helper `get_atr_multipliers_for_strategy` + wire dispatcher.process_signal. 23 tests TDD nuevos. Spec en `docs/TAREA_T-X_tpsl_per_sentinel.md` con justificación técnica por Sentinel. Suite 685, config 96% / dispatcher 100%.
+- **#TECH-008** Backtest framework #HE-4 con TP/SL brackets — el framework actual NO incluye los brackets de ATR_SIZING en la simulación. Sharpes/win rates históricos del período 1 (qty=1 sin brackets) no son comparables con período 2 post-T-X. Ampliar `backtest/` para simular brackets, re-medir métricas per-Sentinel. P2, sprint post-período 2 con data real ATR.
+- **Análisis P&L real período 1** — Code extraer de la DB: equity inicio/cierre, P&L global + por Sentinel, win rate global + por Sentinel sobre 28-abr → 23-may. Comparar con backtest mecánico para validar el orden de magnitud del framework #HE-4. P1, próxima sesión Code (rápido, 15 min).
 - **Bloque J — Futuro P3:** Leverage + risk budgeting + Reactivar S-10 + Trailing stops + Riskfolio-Lib (post-Fase 5).
 
 **Afuera (NO se trabaja, 11 items):** #OPS-005 LLC + #OPS-006 Auditoría IAs + #FEAT-011 SMS/Telegram + #OPS-007 OAuth Meridian + Paper-Live paralelo + #TM-1/4/5 + Multimercado + La Forja + Batching Universe Selector.
@@ -135,6 +144,7 @@
 ## P3 — Futuro (post-Fase 5)
 
 - **#FEAT-EquityResearch-real (Sub-3b)** Parsing 10-K/EDGAR + DCF computado con datos reales (vs framework por prompt actual).
+- **#FEAT-007b** Alternativa a FinBERT vía Claude Haiku API (~$3/mes). Mejor calidad de sentiment, cero infraestructura, sin PyTorch ni 840MB cache, ya conectado vía ANTHROPIC_API_KEY. Implementar como `SentimentAnalyzerClaude` con mismo interface (`score`/`batch_score`) — fallback automático a keyword si API falla. Plan B sin costo: VADER (pure Python <1MB). Evaluar después de T-W migración Hetzner — si FinBERT funciona OK en Linux, no urgente; si falla, este es el camino.
 - **gstack evaluation** — Toolkit Garry Tan/YC (28 slash commands). Re-evaluar si suma en sprint finde.
 - Leverage escalonado (1.25x condicionado).
 - Risk budgeting jerárquico intra-Sentinel.
