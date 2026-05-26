@@ -37,8 +37,9 @@ class CorrelationGuard:
         warning y aprueba la señal sin chequeo de correlación.
 
         Tickers sin suficientes barras se excluyen del resultado con un WARNING.
-        El rango de búsqueda es 5 días calendario — suficiente para garantizar
-        60 barras de 15 minutos considerando huecos de fin de semana.
+        El rango de búsqueda es 10 días calendario — el feed IEX es disperso y con
+        5 días no juntaba 60 barras de 15 min los lunes/post-feriado (incidente
+        día-1 período-2). 10 días dan margen sobre huecos de fin de semana/feriados.
 
         Returns:
             {ticker: [close_prices]} solo para tickers con datos suficientes.
@@ -65,7 +66,11 @@ class CorrelationGuard:
         )
 
         now   = datetime.now(tz=ZoneInfo("UTC"))
-        start = now - timedelta(days=5)   # margen amplio para cubrir fines de semana
+        # 10 días calendario: el feed IEX (paper) es disperso y deja huecos en barras
+        # de 15-min; con 5 días los lunes/post-feriado devolvía 51-59/60 barras → el
+        # ticker quedaba excluido y #TD-3 rechazaba la señal como no_data (incidente
+        # día-1 período-2, 26-may). 10 días garantizan holgura sobre los 60 requeridos.
+        start = now - timedelta(days=10)
 
         request = StockBarsRequest(
             symbol_or_symbols=tickers,

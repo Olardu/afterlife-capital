@@ -12,8 +12,10 @@ Correr:
 import asyncio
 import os
 import sys
+from datetime import datetime
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -149,6 +151,26 @@ def test_fetch_bars_sync_alpaca_falla_levanta_runtimeerror():
     with _patch_alpaca(get_raises=True), \
          pytest.raises(RuntimeError, match="fetch_bars"):
         cg._fetch_bars_sync(["SPY"], window=3)
+
+
+def test_fetch_bars_sync_usa_ventana_10_dias():
+    """Incidente día-1 período-2 (26-may): la ventana de fetch de 5 días calendario
+    no garantizaba CORRELATION_ROLLING_WINDOW=60 barras IEX los lunes/post-feriado
+    (IEX es feed disperso → devolvía 51-59/60 → ticker excluido → #TD-3 rechaza
+    la señal como no_data). El fetch debe pedir 10 días de margen, no 5."""
+    cg = CorrelationGuard()
+    client = MagicMock()
+    client.get_stock_bars.return_value = MagicMock(df=_FakeBarsDF({"SPY": [1.0, 2.0, 3.0]}))
+    with patch("alpaca.data.historical.StockHistoricalDataClient", return_value=client):
+        cg._fetch_bars_sync(["SPY"], window=3)
+        now = datetime.now(tz=ZoneInfo("UTC"))
+    request = client.get_stock_bars.call_args[0][0]   # StockBarsRequest posicional
+    req_start = request.start
+    if req_start.tzinfo is None:        # pydantic de alpaca-py puede normalizar a naive UTC
+        req_start = req_start.replace(tzinfo=ZoneInfo("UTC"))
+    delta_days = (now - req_start).total_seconds() / 86400.0
+    # start ≈ now − 10 días (con holgura por el tiempo de ejecución del test)
+    assert 10.0 <= delta_days <= 10.05, f"ventana de fetch = {delta_days:.3f} días (esperado ~10)"
 
 
 # =============================================================================
