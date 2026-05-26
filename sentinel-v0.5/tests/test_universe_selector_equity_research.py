@@ -94,6 +94,17 @@ def test_system_prompt_distingue_acciones_de_etfs():
                            or "individual stock" in p)
 
 
+def test_system_prompt_regla_desempate_categoria_fallida():
+    """#FEAT-010: ante conflicto entre cubrir un ambiente factorial y evitar una
+    categoría de tickers fallida, el prompt debe instruir PRIORIZAR evitar la
+    categoría fallida (un fallo categórico se replica con otro de la misma clase)."""
+    p = us.SYSTEM_PROMPT.lower()
+    assert "categoría fallida" in p or "categoria fallida" in p
+    # debe expresar la priorización + la noción de fallo estructural de categoría
+    assert "prioriza" in p
+    assert "categórica" in p or "categorica" in p or "estructural de la categoría" in p
+
+
 def test_response_schema_acepta_fundamental_analysis():
     props = us._RESPONSE_SCHEMA["properties"]
     assert "fundamental_analysis" in props

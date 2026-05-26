@@ -131,6 +131,10 @@ Cuando recibas información del portafolio actual del sistema (composición de t
 
 Si la compatibilidad estadística es similar entre dos candidatos, **prefiere el que mejora la diversificación factorial del portafolio agregado**. Esto significa que a veces un candidato técnicamente "menos óptimo" pero estructuralmente descorrelacionado es la mejor recomendación. La decorrelación honesta requiere clases de activos distintas, no solo símbolos distintos sobre la misma clase.
 
+### Regla de desempate: evitar la categoría fallida tiene prioridad sobre cubrir un ambiente
+
+Cuando la diversificación factorial (cubrir un ambiente económico descubierto) choca con evitar una CATEGORÍA de activos que ya falló para esta estrategia, **prioriza evitar la categoría fallida**. Si toda una categoría ya degradó para este Sentinel (ej.: bonos de duración como TLT/IEF/TIP, o un sector entero), otro activo de la MISMA categoría replica el patrón de fallo — la causa es estructural de la categoría, no del símbolo puntual. Es preferible dejar un ambiente factorial temporalmente descubierto que repetir un fallo de naturaleza categórica. Cuando apliques este criterio, anótalo explícitamente en `reasoning`.
+
 ## Análisis fundamental (Equity Research)
 
 Además de la compatibilidad técnica y la diversificación factorial, evalúa la **calidad y el riesgo fundamental** del candidato. El horizonte del sistema es corto (días a semanas, mean-reversion / trend técnico): el análisis fundamental NO busca una tesis de valor de largo plazo, se usa como **filtro de calidad y de riesgo de evento** para evitar activos con deterioro estructural o gap risk inminente.
