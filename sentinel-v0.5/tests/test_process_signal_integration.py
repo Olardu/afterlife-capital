@@ -91,8 +91,11 @@ def test_flag_on_sizing_y_bracket():
     with patch("config.ATR_SIZING_ENABLED", True):
         _run(_signal(d))
     _, kwargs = d.execute_order.call_args
-    assert kwargs["take_profit_price"] == Decimal("236.00")
-    assert kwargs["stop_loss_price"] == Decimal("209.00")
+    # T-X (#FEAT-011): strategy_type=macd_volume → multipliers per-Sentinel
+    # sl_mult=2.5, rr_ratio=2.5 (antes defaults globales 2.0/2.0). ATR=4.50:
+    # stop_distance=11.25 → SL=218−11.25=206.75; TP=218+11.25×2.5=246.12.
+    assert kwargs["take_profit_price"] == Decimal("246.12")
+    assert kwargs["stop_loss_price"] == Decimal("206.75")
     assert float(kwargs["qty"]) > 1          # el sizing dimensionó (no el qty=1 viejo)
     assert float(kwargs["qty"]) < 100        # cap MAX_POSITION_PCT domina (~68.8)
 
@@ -129,5 +132,6 @@ def test_flag_on_combo_correlation_guard_reduce_qty():
         _run(_signal(d))
     _, kwargs = d.execute_order.call_args
     assert kwargs["qty"] == Decimal("10")            # el guard redujo (respeta correlación)
-    assert kwargs["take_profit_price"] == Decimal("236.00")  # TP/SL del sizing intactos
-    assert kwargs["stop_loss_price"] == Decimal("209.00")
+    # T-X: TP/SL per-Sentinel (macd_volume 2.5/2.5) intactos pese a la reducción de qty
+    assert kwargs["take_profit_price"] == Decimal("246.12")
+    assert kwargs["stop_loss_price"] == Decimal("206.75")

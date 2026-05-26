@@ -97,6 +97,38 @@ RR_RATIO_TAKE_PROFIT       = Decimal("2.0")     # take-profit a 2× el riesgo (R
 MAX_POSITION_PCT_OF_EQUITY = Decimal("0.15")    # cap por posición individual (15%)
 MIN_POSITION_USD           = Decimal("25")      # piso $ para que los fees no dominen
 
+# --- T-X (#FEAT-011): multipliers ATR per-Sentinel (Opción B) ---
+# SL = entry − sl_mult × ATR (riesgo absoluto)
+# TP = entry + sl_mult × ATR × rr_ratio (recompensa)
+# Cada par se justifica por la naturaleza del Sentinel (trend largo vs mean-rev
+# rápida vs intradía vs reversal) — ver docs/TAREA_T-X_tpsl_per_sentinel.md §1.
+# Los defaults globales de arriba (ATR_STOP_MULTIPLIER/RR_RATIO_TAKE_PROFIT)
+# quedan como fallback si el strategy_type no está en el dict.
+ATR_PER_SENTINEL = {
+    "sma_crossover":     {"sl_mult": Decimal("2.0"), "rr_ratio": Decimal("3.0")},   # trend largo
+    "rsi_short":         {"sl_mult": Decimal("1.5"), "rr_ratio": Decimal("1.0")},   # mean-rev rápida (RSI2)
+    "bollinger_bounce":  {"sl_mult": Decimal("2.0"), "rr_ratio": Decimal("1.5")},   # mean-rev mediana
+    "macd_volume":       {"sl_mult": Decimal("2.5"), "rr_ratio": Decimal("2.5")},   # trend confirmado por vol
+    "orb_breakout":      {"sl_mult": Decimal("1.0"), "rr_ratio": Decimal("2.0")},   # intradía momentum
+    "ema_triple":        {"sl_mult": Decimal("2.0"), "rr_ratio": Decimal("3.0")},   # trend smoother
+    "vwap_reversion":    {"sl_mult": Decimal("1.0"), "rr_ratio": Decimal("1.0")},   # intradía mean-rev
+    "rsi_divergence":    {"sl_mult": Decimal("2.0"), "rr_ratio": Decimal("2.0")},   # reversal (baseline)
+    "bollinger_squeeze": {"sl_mult": Decimal("1.5"), "rr_ratio": Decimal("3.0")},   # volatility breakout
+}
+
+
+def get_atr_multipliers_for_strategy(strategy_type: str) -> dict:
+    """
+    Devuelve {'sl_mult', 'rr_ratio'} (Decimal) para el strategy_type del Sentinel.
+    Fallback a los defaults globales (ATR_STOP_MULTIPLIER / RR_RATIO_TAKE_PROFIT)
+    si el strategy_type no está en ATR_PER_SENTINEL (incluye "" o "unknown").
+    """
+    override = ATR_PER_SENTINEL.get(strategy_type)
+    if override is not None:
+        return override
+    return {"sl_mult": ATR_STOP_MULTIPLIER, "rr_ratio": RR_RATIO_TAKE_PROFIT}
+
+
 # --- #GR-3 — Drawdown limits del portafolio. FLAG-GATED, default OFF. ---
 # Con PORTFOLIO_DD_LIMITS_ENABLED=False el dispatcher no evalúa drawdown (igual
 # patrón que ATR_SIZING). Roman lo activa en .env cuando decida.

@@ -397,11 +397,18 @@ class Dispatcher:
                 logger.info(f"Skip {ticker}: ATR no calculable (NaN o <=0).")
                 return {**base_result, "reason": "atr_unavailable"}
 
+            # T-X (#FEAT-011): multipliers ATR per-Sentinel. strategy_type ya
+            # llega como parámetro de process_signal; el helper hace fallback a
+            # los defaults globales si está vacío o no figura en ATR_PER_SENTINEL.
+            atr_mults = config.get_atr_multipliers_for_strategy(strategy_type)
+
             sizing = calculate_position_size(
                 ticker=ticker,
                 equity=account_equity,
                 current_price=price,
                 atr=Decimal(str(atr_value)),
+                atr_multiplier=atr_mults["sl_mult"],
+                rr_ratio=atr_mults["rr_ratio"],
             )
             if sizing is None:
                 logger.info(
