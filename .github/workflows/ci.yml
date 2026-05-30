@@ -63,3 +63,24 @@ jobs:
           --cov=universe_selector --cov=config --cov=claude_client --cov=market_clock
           --cov=main
           --cov-report=term-missing --cov-fail-under=95
+
+  # #TD-NEW-7: SAST con Semgrep en el CI (Linux). El plugin local quedó
+  # deshabilitado — Semgrep no corre nativo en Windows (requiere WSL) y su hook
+  # SessionStart fallaba en cada arranque. Arranca INFORMATIVO (sin --error → no
+  # bloquea el push) para establecer el baseline del código actual sin frenar el
+  # bundle. Escalar a BLOQUEANTE (agregar --error) una vez revisado el baseline.
+  sast:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sentinel-v0.5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: pip install semgrep
+      - run: >
+          semgrep scan
+          --config p/python --config p/security-audit --config p/secrets
+          --metrics off --disable-version-check
