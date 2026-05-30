@@ -875,11 +875,15 @@ class Dispatcher:
             # (evita problemas de serialización de Decimal en el SDK).
             tp = Decimal(str(take_profit_price)).quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN)
             sl = Decimal(str(stop_loss_price)).quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN)
+            # #TD-NEW-6: TIF=GTC (no DAY). Con DAY las legs TP/SL del bracket
+            # expiraban al cierre (16:00 ET) → la posición quedaba naked overnight
+            # (confirmado en vivo 27/28-may). GTC mantiene la protección viva hasta
+            # que se ejecute o se cancele. Alpaca admite DAY o GTC para brackets.
             order_data = MarketOrderRequest(
                 symbol        = ticker,
                 qty           = str(qty),
                 side          = order_side,
-                time_in_force = TimeInForce.DAY,
+                time_in_force = TimeInForce.GTC,
                 order_class   = OrderClass.BRACKET,
                 take_profit   = TakeProfitRequest(limit_price=str(tp)),
                 stop_loss     = StopLossRequest(stop_price=str(sl)),

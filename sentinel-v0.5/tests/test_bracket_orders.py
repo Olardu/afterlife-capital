@@ -23,7 +23,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from alpaca.trading.enums import OrderClass
+from alpaca.trading.enums import OrderClass, TimeInForce
 from dispatcher import Dispatcher
 
 
@@ -118,3 +118,38 @@ def test_execute_order_solo_tp_sin_sl_lanza_valueerror():
         _run(_disp().execute_order(
             "SPY", "BUY", Decimal("5"), take_profit_price=Decimal("400.00"),
         ))
+
+
+# --- Caso 7 (#TD-NEW-6): el bracket usa TIF=GTC para sobrevivir overnight ----
+def test_bracket_usa_time_in_force_gtc():
+    """Las legs TP/SL de un bracket deben ser GTC, no DAY.
+
+    Con TIF=DAY las legs expiraban al cierre (16:00 ET) → posiciones naked
+    overnight (confirmado en vivo 27/28-may). GTC mantiene la protección viva
+    hasta que se ejecute o se cancele.
+    """
+    fc = _fake_client()
+    with patch("alpaca.trading.client.TradingClient", return_value=fc):
+        _disp()._submit_order_sync(
+            "NVDA", "BUY", 68, "", None,
+            Decimal("236.00"), Decimal("209.00"),
+        )
+    od = _order_data(fc)
+    assert od.order_class == OrderClass.BRACKET
+    assert od.time_in_force == TimeInForce.GTC
+
+
+# --- Caso 8 (#TD-NEW-6): órdenes intradía (market/limit simples) siguen DAY --
+def test_market_y_limit_simples_siguen_day():
+    """El fix GTC es solo para brackets. Las órdenes simples (cierres de
+    mercado, limit intradía) mantienen TIF=DAY (backward compat)."""
+    fc = _fake_client()
+    with patch("alpaca.trading.client.TradingClient", return_value=fc):
+        _disp()._submit_order_sync("SPY", "BUY", 5, "", None)  # market simple
+    assert _order_data(fc).time_in_force == TimeInForce.DAY
+
+    fc2 = _fake_client()
+    with patch("alpaca.trading.client.TradingClient", return_value=fc2):
+        # rsi_short es limit-strategy → LimitOrderRequest, debe quedar DAY
+        _disp()._submit_order_sync("SPY", "BUY", 5, "rsi_short", Decimal("400.00"))
+    assert _order_data(fc2).time_in_force == TimeInForce.DAY
