@@ -680,6 +680,7 @@ def _disp_run_cycle(*, dd=None, ear=None):
     d.sync_positions_from_alpaca = AsyncMock()
     d.allocate_capital = AsyncMock(return_value={})
     d._get_account_equity = MagicMock(return_value=Decimal("100000"))
+    d._get_account_long_market_value = MagicMock(return_value=Decimal("0"))
     d.process_signal = AsyncMock(return_value={"approved": True})
     d.activate_kill_switch = AsyncMock()
     d._check_portfolio_drawdown = AsyncMock(
@@ -784,6 +785,97 @@ def test_run_cycle_evaluate_decay_exception():
         {"sentinel_id": uuid4(), "tickers": ["SPY"]}])
     d.historian.evaluate_decay = AsyncMock(side_effect=RuntimeError("decay"))
     _run(d.run_cycle([]))  # excepción del decay capturada
+
+
+# ═══════════════════════ § 9 — cap de exposición (#BUG-NEW-4) ═══════════════════════
+
+def test_buy_descartada_si_exposicion_en_el_cap():
+    """deployed = 85% del equity → headroom 0 → BUY rechazada (no entra en margen)."""
+    d = _disp()
+    out = _run(_signal(
+        d, ticker="GLD", deployed_value=Decimal("85000"),
+        account_equity=Decimal("100000"),
+    ))
+    assert out["approved"] is False
+    assert out["reason"] == "exposure_cap_reached"
+    d.execute_order.assert_not_awaited()
+
+
+def test_buy_qty_recortada_por_headroom_parcial():
+    """deployed deja headroom 200; qty 5×100=500 → se recorta a 2 antes de ejecutar."""
+    d = _disp()
+    _run(_signal(
+        d, ticker="QQQ", qty=Decimal("5"), price=Decimal("100"),
+        deployed_value=Decimal("84800"), account_equity=Decimal("100000"),
+    ))
+    # execute_order recibe la qty ya recortada (2), no 5.
+    assert d.execute_order.await_args.kwargs["qty"] == Decimal("2")
+
+
+def test_buy_sin_recorte_si_hay_headroom():
+    """deployed bajo → la qty pasa intacta por el guard."""
+    d = _disp()
+    _run(_signal(
+        d, ticker="SPY", qty=Decimal("5"), price=Decimal("100"),
+        deployed_value=Decimal("0"), account_equity=Decimal("100000"),
+    ))
+    assert d.execute_order.await_args.kwargs["qty"] == Decimal("5")
+
+
+def test_cap_omitido_si_deployed_value_none():
+    """Sin deployed_value (call standalone) el guard no aplica (backward compat)."""
+    d = _disp()
+    _run(_signal(
+        d, ticker="SPY", qty=Decimal("5"), price=Decimal("100"),
+        deployed_value=None, account_equity=Decimal("100000"),
+    ))
+    assert d.execute_order.await_args.kwargs["qty"] == Decimal("5")
+
+
+def test_get_account_long_market_value():
+    d = _disp()
+    with patch("alpaca.trading.client.TradingClient") as TC:
+        TC.return_value.get_account.return_value = MagicMock(long_market_value="94064.96")
+        assert d._get_account_long_market_value() == Decimal("94064.96")
+
+
+def test_get_account_long_market_value_none_es_cero():
+    d = _disp()
+    with patch("alpaca.trading.client.TradingClient") as TC:
+        TC.return_value.get_account.return_value = MagicMock(long_market_value=None)
+        assert d._get_account_long_market_value() == Decimal("0")
+
+
+def test_run_cycle_long_value_exception_no_rompe():
+    """Si el fetch de capital desplegado falla → deployed=0 y el ciclo sigue."""
+    d = _disp_run_cycle()
+    d.historian.get_active_sentinels = AsyncMock(return_value=[])
+    d._get_account_long_market_value = MagicMock(side_effect=RuntimeError("alpaca"))
+    sig = {"sentinel_id": uuid4(), "owner_id": d.owner_id, "ticker": "SPY",
+           "signal_type": "BUY", "price": Decimal("100"), "qty": Decimal("5"),
+           "strategy_type": "macd_volume"}
+    _run(d.run_cycle([sig]))  # no crashea
+    assert d.process_signal.await_args.kwargs["deployed_value"] == Decimal("0")
+
+
+def test_run_cycle_acumula_exposicion_entre_senales():
+    """run_cycle pasa deployed_value creciente: la 2da señal ve la exposición de la 1ra."""
+    d = _disp_run_cycle()
+    d.historian.get_active_sentinels = AsyncMock(return_value=[])
+    # 1ra BUY aprueba qty 10 @ 100 = +1000 de exposición; 2da debe ver deployed=1000.
+    d.process_signal = AsyncMock(return_value={"approved": True, "qty_executed": Decimal("10")})
+    sigs = [
+        {"sentinel_id": uuid4(), "owner_id": d.owner_id, "ticker": "SPY",
+         "signal_type": "BUY", "price": Decimal("100"), "qty": Decimal("10"),
+         "strategy_type": "macd_volume"},
+        {"sentinel_id": uuid4(), "owner_id": d.owner_id, "ticker": "QQQ",
+         "signal_type": "BUY", "price": Decimal("100"), "qty": Decimal("10"),
+         "strategy_type": "macd_volume"},
+    ]
+    _run(d.run_cycle(sigs))
+    # La 2da llamada a process_signal recibió deployed_value = 1000 (0 + 10×100).
+    segunda = d.process_signal.await_args_list[1]
+    assert segunda.kwargs["deployed_value"] == Decimal("1000")
 
 
 if __name__ == "__main__":

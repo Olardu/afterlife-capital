@@ -289,6 +289,7 @@ class Dispatcher:
         ear_state: dict = None,
         allocation: dict = None,
         account_equity: Decimal = None,
+        deployed_value: Decimal = None,
     ) -> dict:
         """
         Pipeline completo de evaluación para una señal entrante.
@@ -306,6 +307,11 @@ class Dispatcher:
         allocation:      si se provee (desde run_cycle), se usa directamente.
         account_equity:  si se provee (desde run_cycle), evita una llamada
                          a Alpaca por señal para obtener el equity de cuenta.
+        deployed_value:  valor de mercado ya desplegado (long_market_value) al
+                         inicio del ciclo, actualizado por run_cycle a medida que
+                         aprueba órdenes. Habilita el cap de exposición agregada
+                         (#BUG-NEW-4) sobre los BUY. Si es None, el cap se omite
+                         (calls standalone / backward compat).
 
         Returns:
             dict con approved, reason, signal_id, trade_id y qty_ejecutada.
@@ -316,6 +322,8 @@ class Dispatcher:
         qty = Decimal(str(qty))
         if account_equity is not None:
             account_equity = Decimal(str(account_equity))
+        if deployed_value is not None:
+            deployed_value = Decimal(str(deployed_value))
 
         base_result = {
             "approved":     False,
@@ -435,6 +443,31 @@ class Dispatcher:
                 max_dollar_value = account_equity * Decimal(str(sentinel_alloc / 100.0))
                 max_qty          = max_dollar_value / price
                 qty              = min(qty, max_qty)
+
+        # 4.b #BUG-NEW-4: cap de exposición agregada (anti-margen). El path de ATR
+        # sizing no pasa por allocate_capital/_cap_allocation, así que ningún tope
+        # de portafolio limitaba la suma de posiciones → el bot acumuló 10 posiciones
+        # y entró en margen (cash -$37.9k, 1.38× equity, 29-may). Recorta el BUY para
+        # que la exposición total no exceda MAX_ALLOCATION_TOTAL del equity. Solo BUY
+        # (un SELL reduce exposición). deployed_value lo provee run_cycle (long_market_value
+        # del ciclo + lo aprobado intra-ciclo); si es None (standalone), el cap se omite.
+        if signal_type == "BUY" and deployed_value is not None and account_equity > 0:
+            capped_qty = cap_qty_to_exposure_limit(
+                equity=account_equity, deployed_value=deployed_value,
+                price=price, qty=qty,
+            )
+            if capped_qty <= 0:
+                logger.info(
+                    f"Señal BUY {ticker} descartada por cap de exposición "
+                    f"(desplegado={deployed_value}, equity={account_equity}, "
+                    f"techo={_MAX_EXPOSURE_FRACTION:.0%})."
+                )
+                return {**base_result, "reason": "exposure_cap_reached"}
+            if capped_qty < qty:
+                logger.info(
+                    f"{ticker}: qty recortada por cap de exposición {qty} → {capped_qty}."
+                )
+                qty = capped_qty
 
         # 5. CorrelationGuard
         try:
@@ -954,6 +987,17 @@ class Dispatcher:
         account = client.get_account()
         return Decimal(str(account.equity))
 
+    def _get_account_long_market_value(self) -> Decimal:
+        """Retorna el valor de mercado de las posiciones long (capital desplegado).
+
+        Insumo del cap de exposición agregada (#BUG-NEW-4): la suma de posiciones
+        no debe exceder MAX_ALLOCATION_TOTAL del equity. Ejecutado en thread."""
+        from alpaca.trading.client import TradingClient
+
+        client  = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
+        account = client.get_account()
+        return Decimal(str(account.long_market_value or 0))
+
     # ---------------------------------------------------------------------
     # Drawdown limits del portafolio (#GR-3)
     # ---------------------------------------------------------------------
@@ -1164,6 +1208,22 @@ class Dispatcher:
                 logger.error(f"Error obteniendo equity en run_cycle: {e}")
                 cycle_equity = 0.0
 
+            # #BUG-NEW-4: capital ya desplegado al inicio del ciclo, para el cap de
+            # exposición agregada. Se actualiza dentro del loop a medida que se
+            # aprueban BUYs (un fill recién enviado no se refleja todavía en
+            # long_market_value), así varias señales del mismo ciclo no se pasan
+            # del techo entre todas. Fail-open: si falla, queda 0 (pero entonces
+            # cycle_equity también suele fallar → sizing bloquea por equity 0).
+            try:
+                deployed = await asyncio.wait_for(
+                    asyncio.to_thread(self._get_account_long_market_value),
+                    timeout=15.0,
+                )
+            except Exception as e:
+                logger.error(f"Error obteniendo capital desplegado en run_cycle: {e}")
+                deployed = Decimal("0")
+            deployed = Decimal(str(deployed))
+
             for signal in pending_signals:
                 try:
                     result = await self.process_signal(
@@ -1171,8 +1231,16 @@ class Dispatcher:
                         ear_state      = ear_state,
                         allocation     = cycle_allocation,
                         account_equity = cycle_equity,
+                        deployed_value = deployed,
                     )
                     results.append(result)
+                    # Sumar la exposición recién aprobada para que la próxima señal
+                    # del ciclo vea el techo actualizado (solo BUY agregan exposición).
+                    if result.get("approved") and signal.get("signal_type") == "BUY":
+                        deployed += (
+                            Decimal(str(result.get("qty_executed", 0)))
+                            * Decimal(str(signal.get("price", 0)))
+                        )
                 except Exception as e:
                     logger.error(f"Error procesando señal {signal.get('ticker')}: {e}")
         elif not can_trade:
@@ -1281,3 +1349,56 @@ def calculate_position_size(
         ),
         "capped": capped,
     }
+
+
+# Fracción máxima del equity desplegable en posiciones (reserva de cash =
+# 1 - esta fracción). Deriva de MAX_ALLOCATION_TOTAL (85) → 0.85. Es el mismo
+# techo que _cap_allocation aplica en el path legacy; cap_qty_to_exposure_limit
+# lo lleva al path de ATR sizing, que no pasaba por allocate_capital (#BUG-NEW-4).
+_MAX_EXPOSURE_FRACTION = Decimal(str(MAX_ALLOCATION_TOTAL)) / Decimal("100")
+
+
+def cap_qty_to_exposure_limit(
+    equity: Decimal,
+    deployed_value: Decimal,
+    price: Decimal,
+    qty: Decimal,
+    max_total_pct: Decimal = _MAX_EXPOSURE_FRACTION,
+    is_fractionable: bool = True,
+) -> Decimal:
+    """Recorta `qty` para que la exposición total no exceda `equity·max_total_pct`.
+
+    Cap de portafolio anti-margen (#BUG-NEW-4). El path de ATR sizing dimensiona
+    cada posición contra el equity (hasta MAX_POSITION_PCT_OF_EQUITY c/u) sin
+    ningún tope agregado, así que N Sentinels podían desplegar N×15% y empujar al
+    bot a margen (cash negativo). Esta función garantiza que
+    `deployed_value + nueva_posición ≤ equity·max_total_pct`, preservando la
+    reserva de cash. Aplica solo a aperturas long (el caller la usa en BUY).
+
+    Args:
+        equity: equity total de la cuenta.
+        deployed_value: valor de mercado ya desplegado (long_market_value).
+        price: precio de entrada de la nueva posición.
+        qty: cantidad propuesta por el sizing.
+        max_total_pct: fracción máxima del equity en posiciones (default 0.85).
+        is_fractionable: si el activo admite fracciones (quantize 9 decimales)
+            o no (quantize a entero).
+
+    Returns:
+        La misma `qty` si entra completa, una qty menor recortada al headroom, o
+        `Decimal("0")` si no hay headroom o algún input es inválido.
+    """
+    if equity <= 0 or price <= 0 or qty <= 0:
+        return Decimal("0")
+
+    headroom = equity * max_total_pct - deployed_value
+    if headroom <= 0:
+        return Decimal("0")
+
+    if qty * price <= headroom:
+        return qty
+
+    capped = headroom / price
+    if is_fractionable:
+        return capped.quantize(Decimal("0.000000001"), rounding=ROUND_DOWN)
+    return capped.quantize(Decimal("1"), rounding=ROUND_DOWN)
