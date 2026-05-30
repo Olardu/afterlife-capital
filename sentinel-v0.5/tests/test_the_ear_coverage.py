@@ -25,6 +25,7 @@ import the_ear
 from the_ear import (
     TheEar,
     _count_matches,
+    _dedup_articles,
     _matched_keywords,
     _NEGATIVE_PATTERNS,
     _POSITIVE_PATTERNS,
@@ -321,6 +322,42 @@ def test_start_polling_un_ciclo():
         with pytest.raises(asyncio.CancelledError):
             _run(ear.start_polling())
     ear.evaluate.assert_awaited()
+
+
+# --- #BUG-NEW-1: dedup de titulares -----------------------------------------
+def test_dedup_articles_elimina_repetidos_preserva_orden():
+    arts = [
+        {"title": "Crash", "publishedAt": "2026-05-29T10:00:00Z"},
+        {"title": "Rally", "publishedAt": "2026-05-29T10:05:00Z"},
+        {"title": "Crash", "publishedAt": "2026-05-29T10:00:00Z"},  # dup exacto
+    ]
+    out = _dedup_articles(arts)
+    assert [a["title"] for a in out] == ["Crash", "Rally"]
+
+
+def test_dedup_articles_distingue_por_published_at():
+    # Mismo título pero distinto publishedAt → son notas distintas, se conservan.
+    arts = [
+        {"title": "Fed hikes", "publishedAt": "2026-05-29T10:00:00Z"},
+        {"title": "Fed hikes", "publishedAt": "2026-05-29T14:00:00Z"},
+    ]
+    assert len(_dedup_articles(arts)) == 2
+
+
+def test_dedup_articles_lista_vacia():
+    assert _dedup_articles([]) == []
+
+
+def test_fetch_news_dedupea_repetidos():
+    # NewsAPI devuelve el mismo artículo 3 veces → fetch_news entrega 1.
+    art = {"title": "Recession fears", "description": "d",
+           "publishedAt": "2026-05-29T10:00:00Z", "source": {"name": "WSJ"}}
+    payload = {"articles": [art, dict(art), dict(art)]}
+    with patch.object(the_ear, "NEWS_API_KEY", "k"), \
+         _patch_session(_FakeGetCM(resp=_FakeResp(200, payload))):
+        out = _run(_ear().fetch_news())
+    assert len(out) == 1
+    assert out[0]["title"] == "Recession fears"
 
 
 if __name__ == "__main__":

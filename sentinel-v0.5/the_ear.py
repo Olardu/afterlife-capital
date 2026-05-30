@@ -76,6 +76,26 @@ def _count_matches(text: str, patterns: list[tuple[str, "re.Pattern[str]"]]) -> 
     return sum(1 for _, pat in patterns if pat.search(text))
 
 
+def _dedup_articles(articles: list[dict]) -> list[dict]:
+    """Dedup de artículos por (title, publishedAt), preservando el primero y el orden.
+
+    NewsAPI devuelve el mismo artículo en polls sucesivos (cada 15 min) y, dentro
+    de un mismo fetch, la misma nota replicada por varias fuentes. Sin dedup,
+    `calculate_risk_score` cuenta el mismo titular varias veces e infla el
+    risk_score en días volátiles, y `macro_events.news_titles` persiste duplicados
+    (#BUG-NEW-1, detectado 27-may en el dashboard: el mismo titular cada ciclo).
+    """
+    seen: set[tuple[str, str]] = set()
+    unique: list[dict] = []
+    for article in articles:
+        key = (article.get("title", ""), article.get("publishedAt", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(article)
+    return unique
+
+
 class TheEar:
     def __init__(self, historian: Historian, sentiment_analyzer=None):
         self.historian = historian
@@ -128,7 +148,7 @@ class TheEar:
                     data = await resp.json()
                     articles = data.get("articles", [])
                     logger.debug(f"NewsAPI: {len(articles)} artículos recibidos.")
-                    return [
+                    mapped = [
                         {
                             "title":       a.get("title", "") or "",
                             "description": a.get("description", "") or "",
@@ -137,6 +157,14 @@ class TheEar:
                         }
                         for a in articles
                     ]
+                    # #BUG-NEW-1: dedup antes de devolver → no infla risk_score ni
+                    # duplica titulares en macro_events.news_titles.
+                    unique = _dedup_articles(mapped)
+                    if len(unique) < len(mapped):
+                        logger.debug(
+                            f"NewsAPI: {len(mapped) - len(unique)} artículos duplicados descartados."
+                        )
+                    return unique
         except asyncio.TimeoutError:
             logger.warning("NewsAPI timeout. Usando último risk_score conocido.")
             return []
