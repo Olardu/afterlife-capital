@@ -45,10 +45,10 @@ from config import (
     ALPACA_SECRET_KEY,
     DAILY_REPORT_ENABLED,
     DATABASE_URL,
+    DEEPSEEK_API_KEY,
     GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET,
     LOG_LEVEL,
-    NEWS_API_KEY,
     OAUTH_REDIRECT_URI,
     OWNER_USERNAME,
     PARKING_BRAKE_TIME,
@@ -518,9 +518,9 @@ async def api_status():
             "simulated_costs_today": simulated_costs_today,
             # #CR-1 — resumen fiscal acumulado (realized/short/long/wash sales/neto).
             "tax_report_summary": tax_report_summary,
-            # #TD-6 follow-up — visible si NEWS_API_KEY falta (The Ear queda ciego
-            # a noticias). True = sin key configurada.
-            "the_ear_news_disabled":   not bool(NEWS_API_KEY),
+            # #TD-6 follow-up — visible si falta DEEPSEEK_API_KEY (The Ear queda
+            # ciego a noticias; swap FinBERT→DeepSeek). True = sin key configurada.
+            "the_ear_news_disabled":   not bool(DEEPSEEK_API_KEY),
         }
     except Exception as e:
         _http_500("/api/status", e)

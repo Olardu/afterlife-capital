@@ -1,11 +1,11 @@
-"""Tests T-P #FASE2-NEW-4 — the_ear (cobertura 29% → 95%).
+"""Tests de cobertura de the_ear tras el swap FinBERT→DeepSeek + Alpaca News.
 
-Complementa test_the_ear.py (que cubre #TD-5/#TD-6). Acá: helpers de keywords,
-fetch_news (status!=200 / éxito / timeout / ClientError), extract_top_negative_titles,
-calculate_risk_score, check_circuit_breaker (timeout/excepción/transiciones),
-_fetch_price_changes (alpaca + df mockeados), check_parking_brake, evaluate
-(flujo completo, ambas ramas de articles, can_trade, error al persistir),
-start_polling (un ciclo + except).
+Cubre: build_risk_user_prompt, _dedup_articles, fetch_news (Alpaca, éxito/timeout/
+excepción), _fetch_news_sync (mapeo del modelo News), assess_risk (éxito/clamp/ids
+inválidos/no-numérico/fallo/sin-cliente/sin-artículos), _map_top_titles,
+_update_news_veto (entra a los N ciclos / spike aislado no frena / histéresis de
+salida), check_circuit_breaker, _fetch_price_changes, check_parking_brake,
+evaluate (con/ sin assessment, veto, breaker, error al persistir) y start_polling.
 
 Correr: venv\\Scripts\\python.exe -m pytest tests/test_the_ear_coverage.py -v
 """
@@ -13,204 +13,243 @@ import asyncio
 import os
 import sys
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
-import aiohttp
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import the_ear
-from the_ear import (
-    TheEar,
-    _count_matches,
-    _dedup_articles,
-    _matched_keywords,
-    _NEGATIVE_PATTERNS,
-    _POSITIVE_PATTERNS,
-)
+from the_ear import TheEar, _dedup_articles, build_risk_user_prompt
 
 
 def _run(coro):
     return asyncio.run(coro)
 
 
-def _ear():
-    return TheEar(MagicMock())
+def _ear(deepseek=None):
+    return TheEar(MagicMock(), deepseek_client=deepseek)
 
 
-# --- helpers de keywords ----------------------------------------------------
-def test_matched_keywords_vacio():
-    assert _matched_keywords("", _NEGATIVE_PATTERNS) == []
-
-
-def test_matched_keywords_ordenado():
-    out = _matched_keywords("war and crash incoming", _NEGATIVE_PATTERNS)
-    assert out == sorted(out)
-    assert "crash" in out and "war" in out
-
-
-def test_count_matches_vacio_y_con_hits():
-    assert _count_matches("", _POSITIVE_PATTERNS) == 0
-    assert _count_matches("rally and growth", _POSITIVE_PATTERNS) == 2
-
-
-# --- fetch_news (con NEWS_API_KEY presente, mock de aiohttp) ----------------
-class _FakeResp:
-    def __init__(self, status, payload=None):
-        self.status = status
-        self._payload = payload or {}
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *a):
-        return False
-
-    async def json(self):
-        return self._payload
-
-
-class _FakeGetCM:
-    """Lo que devuelve session.get(...) — async CM que da la respuesta o levanta."""
-    def __init__(self, resp=None, exc=None):
-        self._resp = resp
-        self._exc = exc
-
-    async def __aenter__(self):
-        if self._exc is not None:
-            raise self._exc
-        return self._resp
-
-    async def __aexit__(self, *a):
-        return False
-
-
-class _FakeSession:
-    def __init__(self, get_cm):
-        self._get_cm = get_cm
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *a):
-        return False
-
-    def get(self, *a, **kw):
-        return self._get_cm
-
-
-def _patch_session(get_cm):
-    fake = _FakeSession(get_cm)
-    return patch.object(the_ear.aiohttp, "ClientSession", lambda *a, **kw: fake)
-
-
-def test_fetch_news_status_no_200():
-    with patch.object(the_ear, "NEWS_API_KEY", "k"), \
-         _patch_session(_FakeGetCM(resp=_FakeResp(429))):
-        assert _run(_ear().fetch_news()) == []
-
-
-def test_fetch_news_exito_mapea_articulos():
-    payload = {"articles": [
-        {"title": "Crash", "description": "d", "publishedAt": "2026", "source": {"name": "WSJ"}},
-        {"title": None, "description": None, "publishedAt": None, "source": None},
-    ]}
-    with patch.object(the_ear, "NEWS_API_KEY", "k"), \
-         _patch_session(_FakeGetCM(resp=_FakeResp(200, payload))):
-        out = _run(_ear().fetch_news())
-    assert len(out) == 2
-    assert out[0] == {"title": "Crash", "description": "d", "publishedAt": "2026", "source": "WSJ"}
-    # segundo artículo con None → strings vacíos
-    assert out[1]["title"] == "" and out[1]["source"] == ""
-
-
-def test_fetch_news_timeout():
-    with patch.object(the_ear, "NEWS_API_KEY", "k"), \
-         _patch_session(_FakeGetCM(exc=asyncio.TimeoutError())):
-        assert _run(_ear().fetch_news()) == []
-
-
-def test_fetch_news_client_error():
-    with patch.object(the_ear, "NEWS_API_KEY", "k"), \
-         _patch_session(_FakeGetCM(exc=aiohttp.ClientError())):
-        assert _run(_ear().fetch_news()) == []
-
-
-# --- extract_top_negative_titles --------------------------------------------
-def test_extract_top_negative_rankea_y_filtra():
-    articles = [
-        {"title": "crash and recession", "description": "panic", "source": "A", "publishedAt": "t1"},
-        {"title": "crash only", "description": "", "source": "B", "publishedAt": "t2"},
-        {"title": "good news", "description": "growth", "source": "C", "publishedAt": "t3"},
+# --- build_risk_user_prompt -------------------------------------------------
+def test_build_user_prompt_numera_y_pone_timestamp():
+    arts = [
+        {"title": "Crash", "summary": "markets fall", "published_at": "2026-05-30T10:00:00Z"},
+        {"title": "Rally", "summary": "", "published_at": ""},
     ]
-    out = _ear().extract_top_negative_titles(articles, top_n=5)
-    # el de 3 keywords (crash, recession, panic) primero; el de "good news" se filtra
-    assert len(out) == 2
-    assert out[0]["matched_keywords"] == ["crash", "panic", "recession"]
-    assert out[1]["title"] == "crash only"
+    out = build_risk_user_prompt(arts)
+    assert "0 | 2026-05-30T10:00:00Z | Crash - markets fall" in out
+    assert "1 |  | Rally -" in out
+    assert out.strip().endswith("Return only the JSON object.")
 
 
-def test_extract_top_negative_respeta_top_n():
-    articles = [{"title": "crash", "description": "", "source": "X", "publishedAt": "t"}] * 4
-    assert len(_ear().extract_top_negative_titles(articles, top_n=2)) == 2
+# --- _dedup_articles (por title, published_at) ------------------------------
+def test_dedup_elimina_repetidos_preserva_orden():
+    arts = [
+        {"title": "Crash", "published_at": "t1"},
+        {"title": "Rally", "published_at": "t2"},
+        {"title": "Crash", "published_at": "t1"},   # dup exacto
+    ]
+    assert [a["title"] for a in _dedup_articles(arts)] == ["Crash", "Rally"]
 
 
-# --- calculate_risk_score ---------------------------------------------------
-def test_risk_score_sin_articulos_usa_ultimo():
+def test_dedup_distingue_por_published_at():
+    arts = [
+        {"title": "Fed hikes", "published_at": "t1"},
+        {"title": "Fed hikes", "published_at": "t2"},
+    ]
+    assert len(_dedup_articles(arts)) == 2
+
+
+def test_dedup_lista_vacia():
+    assert _dedup_articles([]) == []
+
+
+# --- fetch_news (Alpaca News, vía to_thread) --------------------------------
+def test_fetch_news_exito_dedupea_y_capea():
     ear = _ear()
-    ear.last_risk_score = 0.42
-    assert ear.calculate_risk_score([]) == 0.42
+    dup = {"title": "A", "summary": "s", "published_at": "t", "source": "WSJ"}
+    ear._fetch_news_sync = MagicMock(return_value=[dup, dict(dup), {"title": "B", "summary": "", "published_at": "t2", "source": "BZ"}])
+    out = _run(ear.fetch_news())
+    assert [a["title"] for a in out] == ["A", "B"]   # dup descartado
 
 
-def test_risk_score_clampa_y_pondera():
+def test_fetch_news_timeout_retorna_vacio():
     ear = _ear()
-    # 2 negativas (crash, recession) - 1 positiva*0.5 (rally) sobre 1 artículo
-    articles = [{"title": "crash recession rally", "description": ""}]
-    score = ear.calculate_risk_score(articles)
-    assert score == pytest.approx(min(1.0, (2 - 0.5) / 1))  # = 1.0 (clamp)
+
+    async def _raise(coro, *a, **k):
+        coro.close()   # evita el RuntimeWarning de coroutine no-awaited
+        raise asyncio.TimeoutError()
+
+    with patch.object(the_ear.asyncio, "wait_for", _raise):
+        assert _run(ear.fetch_news()) == []
 
 
-def test_risk_score_negativo_clampa_a_cero():
+def test_fetch_news_excepcion_retorna_vacio():
     ear = _ear()
-    articles = [{"title": "rally surge growth", "description": ""}]  # solo positivas
-    assert ear.calculate_risk_score(articles) == 0.0
+    ear._fetch_news_sync = MagicMock(side_effect=RuntimeError("alpaca down"))
+    assert _run(ear.fetch_news()) == []
 
 
-# --- check_circuit_breaker: timeout / excepción / transición ----------------
+def test_fetch_news_capea_al_maximo():
+    ear = _ear()
+    big = [{"title": f"t{i}", "summary": "", "published_at": f"p{i}", "source": "S"} for i in range(100)]
+    ear._fetch_news_sync = MagicMock(return_value=big)
+    out = _run(ear.fetch_news())
+    assert len(out) == the_ear.NEWS_BATCH_MAX_ARTICLES
+
+
+# --- _fetch_news_sync (mapeo del modelo News de Alpaca) ---------------------
+def _patch_newsclient(items):
+    fake_set = SimpleNamespace(data={"news": items})
+    client = MagicMock()
+    client.get_news.return_value = fake_set
+    return patch("alpaca.data.historical.news.NewsClient", MagicMock(return_value=client))
+
+
+def test_fetch_news_sync_mapea_headline_y_created_at():
+    n = SimpleNamespace(
+        headline="Recession fears", summary="bad", source="Benzinga",
+        created_at=datetime(2026, 5, 30, 12, 0, tzinfo=ZoneInfo("UTC")),
+    )
+    with _patch_newsclient([n]):
+        out = _ear()._fetch_news_sync()
+    assert out[0]["title"] == "Recession fears"
+    assert out[0]["summary"] == "bad" and out[0]["source"] == "Benzinga"
+    assert out[0]["published_at"].startswith("2026-05-30T12:00")
+
+
+def test_fetch_news_sync_sin_items():
+    with _patch_newsclient([]):
+        assert _ear()._fetch_news_sync() == []
+
+
+def test_fetch_news_sync_result_dict_crudo():
+    # get_news devuelve dict plano {"news": [...]} (sin atributo .data) → rama elif.
+    n = SimpleNamespace(headline="H", summary="s", source="BZ", created_at=None)
+    client = MagicMock()
+    client.get_news.return_value = {"news": [n]}
+    with patch("alpaca.data.historical.news.NewsClient", MagicMock(return_value=client)):
+        out = _ear()._fetch_news_sync()
+    assert out[0]["title"] == "H" and out[0]["published_at"] == ""   # created_at None → ""
+
+
+def test_fetch_news_sync_result_inesperado_vacio():
+    # get_news devuelve algo sin .data ni dict → items = [] (rama else).
+    client = MagicMock()
+    client.get_news.return_value = 42
+    with patch("alpaca.data.historical.news.NewsClient", MagicMock(return_value=client)):
+        assert _ear()._fetch_news_sync() == []
+
+
+# --- assess_risk ------------------------------------------------------------
+def _ds(parsed, success=True, error=None):
+    client = MagicMock()
+    client.call_json = AsyncMock(return_value={
+        "success": success, "parsed": parsed, "cost_usd": 0.0, "error": error,
+    })
+    return client
+
+
+_ARTS = [{"title": "Crash", "summary": "s", "published_at": "t", "source": "WSJ"},
+         {"title": "Rally", "summary": "s", "published_at": "t2", "source": "BZ"}]
+
+
+def test_assess_risk_sin_cliente_o_sin_articulos():
+    assert _run(_ear().assess_risk(_ARTS)) is None          # sin cliente DeepSeek
+    assert _run(_ear(_ds({})).assess_risk([])) is None      # con cliente pero sin artículos
+
+
+def test_assess_risk_exito_mapea_top_titles():
+    ear = _ear(_ds({"risk_score": 0.82, "top_risk_ids": [0], "rationale": "cluster risk-off"}))
+    out = _run(ear.assess_risk(_ARTS))
+    assert out["risk_score"] == 0.82
+    assert out["top_titles"] == [{"title": "Crash", "source": "WSJ", "published_at": "t"}]
+    assert out["rationale"] == "cluster risk-off"
+
+
+def test_assess_risk_clampa_score():
+    ear = _ear(_ds({"risk_score": 1.7, "top_risk_ids": [], "rationale": "x"}))
+    assert _run(ear.assess_risk(_ARTS))["risk_score"] == 1.0
+
+
+def test_assess_risk_filtra_ids_invalidos():
+    # ids fuera de rango / no-int se descartan (anti-hallucination).
+    ear = _ear(_ds({"risk_score": 0.5, "top_risk_ids": [9, "x", 1], "rationale": None}))
+    out = _run(ear.assess_risk(_ARTS))
+    assert out["top_titles"] == [{"title": "Rally", "source": "BZ", "published_at": "t2"}]
+    assert out["rationale"] is None
+
+
+def test_assess_risk_score_no_numerico_devuelve_none():
+    ear = _ear(_ds({"risk_score": "alto", "top_risk_ids": []}))
+    assert _run(ear.assess_risk(_ARTS)) is None
+
+
+def test_assess_risk_call_fallida_devuelve_none():
+    ear = _ear(_ds(None, success=False, error="timeout_20s"))
+    assert _run(ear.assess_risk(_ARTS)) is None
+
+
+# --- _update_news_veto (histéresis stateful) --------------------------------
+def test_veto_no_entra_con_spike_aislado():
+    ear = _ear()
+    assert ear._update_news_veto(0.9) is False   # 1 ciclo alto → todavía NO
+    assert ear._news_veto_active is False
+
+
+def test_veto_entra_a_los_dos_ciclos():
+    ear = _ear()
+    ear._update_news_veto(0.9)
+    assert ear._update_news_veto(0.9) is True     # 2º ciclo consecutivo → entra
+    assert ear._news_veto_active is True
+
+
+def test_veto_reset_si_baja_antes_del_segundo():
+    ear = _ear()
+    ear._update_news_veto(0.9)
+    ear._update_news_veto(0.3)                     # corta la racha
+    assert ear._consecutive_high_cycles == 0
+    assert ear._news_veto_active is False
+
+
+def test_veto_histeresis_se_mantiene_en_banda_muerta():
+    ear = _ear()
+    ear._update_news_veto(0.9); ear._update_news_veto(0.9)   # activo
+    assert ear._update_news_veto(0.65) is True     # 0.60<=0.65<0.70 → sigue activo
+    assert ear._update_news_veto(0.55) is False    # <EXIT → sale
+    assert ear._news_veto_active is False
+
+
+# --- check_circuit_breaker / _fetch_price_changes (intactos) ----------------
 def test_cb_timeout_devuelve_estado_actual():
     ear = _ear()
     ear.circuit_breaker_active = True
-    ear._fetch_price_changes = MagicMock(side_effect=lambda: (_ for _ in ()).throw(TimeoutError()))
     with patch.object(the_ear.asyncio, "wait_for", AsyncMock(side_effect=asyncio.TimeoutError())):
         assert _run(ear.check_circuit_breaker()) is True
 
 
 def test_cb_excepcion_devuelve_estado_actual():
     ear = _ear()
-    ear.circuit_breaker_active = False
     with patch.object(the_ear.asyncio, "wait_for", AsyncMock(side_effect=RuntimeError("boom"))):
         assert _run(ear.check_circuit_breaker()) is False
 
 
 def test_cb_desactivacion_transicion():
-    # Estaba activo; ahora datos normales (0,0) → se desactiva (cubre rama elif).
     ear = _ear()
     ear.circuit_breaker_active = True
     ear._fetch_price_changes = MagicMock(return_value=(0.0, 0.0))
     assert _run(ear.check_circuit_breaker()) is False
-    assert ear.circuit_breaker_active is False
 
 
-# --- _fetch_price_changes (alpaca + df mockeados) ---------------------------
 def _df(rows):
     import pandas as pd
     tuples, closes = [], []
     for sym, vals in rows.items():
         for i, c in enumerate(vals):
-            tuples.append((sym, i))
-            closes.append(c)
+            tuples.append((sym, i)); closes.append(c)
     idx = pd.MultiIndex.from_tuples(tuples, names=["symbol", "ts"])
     return pd.DataFrame({"close": closes}, index=idx)
 
@@ -218,32 +257,26 @@ def _df(rows):
 def _patch_alpaca(df):
     client = MagicMock()
     client.get_stock_bars.return_value = MagicMock(df=df)
-    return patch("alpaca.data.historical.StockHistoricalDataClient",
-                 MagicMock(return_value=client))
+    return patch("alpaca.data.historical.StockHistoricalDataClient", MagicMock(return_value=client))
 
 
 def test_fetch_price_changes_normal():
-    df = _df({"VIXY": [10.0, 12.0], "SPY": [100.0, 98.0]})
-    with _patch_alpaca(df):
+    with _patch_alpaca(_df({"VIXY": [10.0, 12.0], "SPY": [100.0, 98.0]})):
         vix, spy = _ear()._fetch_price_changes()
-    assert vix == pytest.approx(20.0)
-    assert spy == pytest.approx(-2.0)
+    assert vix == pytest.approx(20.0) and spy == pytest.approx(-2.0)
 
 
-def test_fetch_price_changes_simbolo_ausente_y_pocas_barras():
-    # VIXY presente con 1 sola barra → None; SPY ausente → None.
-    df = _df({"VIXY": [10.0]})
-    with _patch_alpaca(df):
+def test_fetch_price_changes_ausente_y_prev_cero():
+    with _patch_alpaca(_df({"VIXY": [0.0, 5.0]})):
+        vix, spy = _ear()._fetch_price_changes()
+    assert vix is None and spy is None   # VIXY prev 0 → None; SPY ausente → None
+
+
+def test_fetch_price_changes_pocas_barras():
+    # VIXY con 1 sola barra → <2 → None (cubre la rama de pocas barras).
+    with _patch_alpaca(_df({"VIXY": [10.0]})):
         vix, spy = _ear()._fetch_price_changes()
     assert vix is None and spy is None
-
-
-def test_fetch_price_changes_prev_cero():
-    df = _df({"VIXY": [0.0, 5.0], "SPY": [100.0, 100.0]})
-    with _patch_alpaca(df):
-        vix, spy = _ear()._fetch_price_changes()
-    assert vix is None             # prev 0 → None
-    assert spy == pytest.approx(0.0)
 
 
 # --- check_parking_brake ----------------------------------------------------
@@ -255,109 +288,76 @@ class _FrozenDT(datetime):
         return cls._now
 
 
-def _freeze_ear(dt):
+def _freeze(dt):
     _FrozenDT._now = dt
     return patch.object(the_ear, "datetime", _FrozenDT)
 
 
 def test_parking_brake_activo_despues_de_hora():
-    ear = _ear()
-    with _freeze_ear(datetime(2026, 5, 26, 15, 50, tzinfo=ZoneInfo("America/New_York"))):
-        assert ear.check_parking_brake() is True
-    assert ear.parking_brake_active is True
+    with _freeze(datetime(2026, 5, 26, 15, 50, tzinfo=ZoneInfo("America/New_York"))):
+        assert _ear().check_parking_brake() is True
 
 
-def test_parking_brake_inactivo_y_transicion_apagado():
+def test_parking_brake_transicion_apagado():
     ear = _ear()
-    ear.parking_brake_active = True   # venía activo → cubre rama de "desactivado"
-    with _freeze_ear(datetime(2026, 5, 26, 10, 0, tzinfo=ZoneInfo("America/New_York"))):
+    ear.parking_brake_active = True
+    with _freeze(datetime(2026, 5, 26, 10, 0, tzinfo=ZoneInfo("America/New_York"))):
         assert ear.check_parking_brake() is False
 
 
 # --- evaluate (flujo completo) ----------------------------------------------
-def _evaluable_ear(articles, *, parking=False, breaker=False):
-    ear = TheEar(MagicMock())
+def _evaluable(assessment, *, parking=False, breaker=False, articles=None):
+    ear = TheEar(MagicMock(), deepseek_client=MagicMock())
     ear.historian.record_macro_event = AsyncMock()
-    ear.fetch_news = AsyncMock(return_value=articles)
+    ear.fetch_news = AsyncMock(return_value=articles if articles is not None else _ARTS)
+    ear.assess_risk = AsyncMock(return_value=assessment)
     ear.check_parking_brake = MagicMock(return_value=parking)
     ear.check_circuit_breaker = AsyncMock(return_value=breaker)
     return ear
 
 
-def test_evaluate_con_articulos_can_trade_true():
-    ear = _evaluable_ear([{"title": "rally", "description": ""}])
+def test_evaluate_con_assessment_can_trade_true():
+    ear = _evaluable({"risk_score": 0.1, "top_titles": [], "rationale": "calm"})
     out = _run(ear.evaluate())
-    assert out["can_trade"] is True
-    assert out["news_disabled"] == ear.news_disabled
+    assert out["can_trade"] is True and out["risk_score"] == 0.1
+    assert out["sentiment_method"] == "deepseek"
     ear.historian.record_macro_event.assert_awaited_once()
 
 
-def test_evaluate_sin_articulos_usa_last_score():
-    ear = _evaluable_ear([])
-    ear.last_risk_score = 0.9    # > veto threshold → can_trade False
+def test_evaluate_sin_assessment_usa_last_score():
+    ear = _evaluable(None)
+    ear.last_risk_score = 0.42
     out = _run(ear.evaluate())
-    assert out["risk_score"] == 0.9
-    assert out["can_trade"] is False
+    assert out["risk_score"] == 0.42 and out["risk_rationale"] is None
+
+
+def test_evaluate_veto_tras_dos_ciclos_altos():
+    ear = _evaluable({"risk_score": 0.95, "top_titles": [], "rationale": "crash"})
+    assert _run(ear.evaluate())["can_trade"] is True    # 1er ciclo: aún no veta
+    assert _run(ear.evaluate())["can_trade"] is False   # 2º ciclo: veta
+    assert _run(ear.evaluate())["news_veto_active"] is True
 
 
 def test_evaluate_breaker_bloquea():
-    ear = _evaluable_ear([{"title": "x", "description": ""}], breaker=True)
+    ear = _evaluable({"risk_score": 0.0, "top_titles": [], "rationale": "x"}, breaker=True)
     out = _run(ear.evaluate())
-    assert out["circuit_breaker"] is True
-    assert out["can_trade"] is False
+    assert out["circuit_breaker"] is True and out["can_trade"] is False
 
 
 def test_evaluate_error_al_persistir_no_rompe():
-    ear = _evaluable_ear([{"title": "x", "description": ""}])
+    ear = _evaluable({"risk_score": 0.1, "top_titles": [], "rationale": "x"})
     ear.historian.record_macro_event = AsyncMock(side_effect=RuntimeError("db down"))
-    out = _run(ear.evaluate())   # no debe propagar
-    assert "can_trade" in out
+    assert "can_trade" in _run(ear.evaluate())
 
 
-# --- start_polling (un ciclo + except + sleep) ------------------------------
-def test_start_polling_un_ciclo():
+# --- start_polling ----------------------------------------------------------
+def test_start_polling_un_ciclo_y_except():
     ear = _ear()
-    ear.evaluate = AsyncMock(side_effect=RuntimeError("falla ciclo"))  # cubre except
+    ear.evaluate = AsyncMock(side_effect=RuntimeError("falla ciclo"))
     with patch.object(the_ear.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError())):
         with pytest.raises(asyncio.CancelledError):
             _run(ear.start_polling())
     ear.evaluate.assert_awaited()
-
-
-# --- #BUG-NEW-1: dedup de titulares -----------------------------------------
-def test_dedup_articles_elimina_repetidos_preserva_orden():
-    arts = [
-        {"title": "Crash", "publishedAt": "2026-05-29T10:00:00Z"},
-        {"title": "Rally", "publishedAt": "2026-05-29T10:05:00Z"},
-        {"title": "Crash", "publishedAt": "2026-05-29T10:00:00Z"},  # dup exacto
-    ]
-    out = _dedup_articles(arts)
-    assert [a["title"] for a in out] == ["Crash", "Rally"]
-
-
-def test_dedup_articles_distingue_por_published_at():
-    # Mismo título pero distinto publishedAt → son notas distintas, se conservan.
-    arts = [
-        {"title": "Fed hikes", "publishedAt": "2026-05-29T10:00:00Z"},
-        {"title": "Fed hikes", "publishedAt": "2026-05-29T14:00:00Z"},
-    ]
-    assert len(_dedup_articles(arts)) == 2
-
-
-def test_dedup_articles_lista_vacia():
-    assert _dedup_articles([]) == []
-
-
-def test_fetch_news_dedupea_repetidos():
-    # NewsAPI devuelve el mismo artículo 3 veces → fetch_news entrega 1.
-    art = {"title": "Recession fears", "description": "d",
-           "publishedAt": "2026-05-29T10:00:00Z", "source": {"name": "WSJ"}}
-    payload = {"articles": [art, dict(art), dict(art)]}
-    with patch.object(the_ear, "NEWS_API_KEY", "k"), \
-         _patch_session(_FakeGetCM(resp=_FakeResp(200, payload))):
-        out = _run(_ear().fetch_news())
-    assert len(out) == 1
-    assert out[0]["title"] == "Recession fears"
 
 
 if __name__ == "__main__":

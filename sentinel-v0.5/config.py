@@ -28,7 +28,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 # Tamaño del pool de conexiones asyncpg (#TD: antes hardcoded en historian.connect()).
 DB_POOL_MIN  = int(os.environ.get("DB_POOL_MIN", "2"))
 DB_POOL_MAX  = int(os.environ.get("DB_POOL_MAX", "10"))
-NEWS_API_KEY = os.environ.get("NEWS_API_KEY")
+NEWS_API_KEY = os.environ.get("NEWS_API_KEY")   # DEPRECADO: The Ear migró a Alpaca News + DeepSeek (swap FinBERT→DeepSeek). Ya no es crítica.
 SECRET_KEY   = os.environ.get("SECRET_KEY")   # legacy — uso histórico, no tocar
 
 # Google OAuth — credenciales del proyecto "Afterlife Capital".
@@ -53,6 +53,17 @@ RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 ANTHROPIC_MODEL   = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
+# DeepSeek API — usada por The Ear para interpretar noticias de mercado y
+# devolver un risk_score 0-1 (swap FinBERT→DeepSeek). API OpenAI-compatible.
+# Si falta la key, The Ear degrada con gracia (fallback a last_risk_score) — NO
+# es credencial crítica para el arranque (a diferencia de las de _CRITICAL).
+# Modelo default = v4-flash (barato, suficiente para clasificar densidad
+# risk-off; ~$1-2/mes con título+resumen). Cambiable a v4-pro vía .env.
+DEEPSEEK_API_KEY        = os.environ.get("DEEPSEEK_API_KEY")
+DEEPSEEK_BASE_URL       = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+DEEPSEEK_MODEL          = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
+DEEPSEEK_TIMEOUT_SECONDS = float(os.environ.get("DEEPSEEK_TIMEOUT_SECONDS", "20"))
+
 # Nombres de las credenciales críticas. validate_config() las lee FRESH desde
 # os.environ en cada llamada (#TD: antes era un dict que capturaba los VALORES al
 # import → no reflejaba un os.environ.update posterior, ej. rotación de keys desde el
@@ -62,7 +73,9 @@ _CRITICAL_CREDENTIAL_NAMES = (
     "ALPACA_API_KEY",
     "ALPACA_SECRET_KEY",
     "DATABASE_URL",
-    "NEWS_API_KEY",
+    # NEWS_API_KEY removida de críticas: The Ear migró a Alpaca News (mismas keys
+    # de Alpaca) + DeepSeek. NewsAPI quedó deprecada. DEEPSEEK_API_KEY tampoco es
+    # crítica: si falta, The Ear cae a last_risk_score (degradación con gracia).
     "SECRET_KEY",
     "GOOGLE_CLIENT_ID",
     "GOOGLE_CLIENT_SECRET",
@@ -203,11 +216,28 @@ MIN_POSITION_SIZE          = 1      # unidades mínimas — si sizing cae por de
 # Parking Brake cierra posiciones abiertas antes del cierre del mercado.
 # =============================================================================
 
-NEWS_FETCH_INTERVAL_SECONDS    = 900    # polling NewsAPI cada 15 minutos
+NEWS_FETCH_INTERVAL_SECONDS    = 900    # polling de noticias cada 15 minutos (Alpaca News)
 VIX_CIRCUIT_BREAKER_THRESHOLD  = 30    # % de cambio en VIX que activa el corte
 SPY_CIRCUIT_BREAKER_THRESHOLD  = -2    # % de caída de SPY en 15 min que activa el corte
 PARKING_BRAKE_TIME             = "15:45"  # hora límite para nuevas órdenes (HH:MM ET)
-RISK_SCORE_VETO_THRESHOLD      = 0.7     # risk_score sobre este valor bloquea operaciones
+RISK_SCORE_VETO_THRESHOLD      = 0.7     # risk_score sobre este valor bloquea operaciones (= umbral de ENTRADA al veto)
+
+# --- Veto de noticias SUAVIZADO (swap FinBERT→DeepSeek, LOCKED por Roman). ---
+# El veto por risk_score deja de ser instantáneo (1 ciclo) para evitar que un
+# titular alarmista AISLADO frene la jornada entera. Histéresis con 2 umbrales:
+#   - ENTRAR al veto (can_trade=False): risk_score >= ENTER en CONSECUTIVE ciclos seguidos.
+#   - SALIR del veto: risk_score < EXIT (banda muerta ENTER..EXIT evita flapping en el borde).
+# The Ear es stateful (cuenta ciclos consecutivos ≥ENTER + estado del veto, in-memory;
+# en restart arranca SIN veto = seguro). NO toca el Circuit Breaker (freno rápido por
+# precio VIXY/SPY), que sigue intacto → suavizar el veto de noticias NO deja expuesto
+# a crashes súbitos (esos los corta el circuit breaker).
+RISK_VETO_ENTER_THRESHOLD   = float(os.environ.get("RISK_VETO_ENTER_THRESHOLD", str(RISK_SCORE_VETO_THRESHOLD)))  # 0.70
+RISK_VETO_EXIT_THRESHOLD    = float(os.environ.get("RISK_VETO_EXIT_THRESHOLD", "0.60"))
+RISK_VETO_CONSECUTIVE_CYCLES = int(os.environ.get("RISK_VETO_CONSECUTIVE_CYCLES", "2"))
+# Tope de artículos por batch enviado a DeepSeek (acota tokens/costo; los más recientes).
+NEWS_BATCH_MAX_ARTICLES     = int(os.environ.get("NEWS_BATCH_MAX_ARTICLES", "40"))
+# Cuántos titulares top-riesgo se persisten en macro_events.news_titles (= top_n actual).
+NEWS_TOP_TITLES             = int(os.environ.get("NEWS_TOP_TITLES", "5"))
 
 # =============================================================================
 # HISTORIAN

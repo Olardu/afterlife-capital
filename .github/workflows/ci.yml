@@ -61,7 +61,7 @@ jobs:
           python -m pytest tests/
           --cov=dispatcher --cov=historian --cov=the_ear --cov=correlation_guard
           --cov=universe_selector --cov=config --cov=claude_client --cov=market_clock
-          --cov=main
+          --cov=main --cov=deepseek_client
           --cov-report=term-missing --cov-fail-under=95
 
   # #TD-NEW-7: SAST con Semgrep en el CI (Linux). El plugin local quedó

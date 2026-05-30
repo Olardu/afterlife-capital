@@ -314,15 +314,26 @@ def test_initialize_sentinels_desde_db_filtra_invalidos():
     hist.connect.assert_awaited()
 
 
-def test_initialize_finbert_flag_on_construye_analyzer():
-    """#FEAT-007: con THE_EAR_SENTIMENT_ENABLED=true, initialize construye el
-    SentimentAnalyzer y lo inyecta (rama if del wire-up)."""
+def test_initialize_deepseek_key_presente_construye_client():
+    """Swap FinBERT→DeepSeek: con DEEPSEEK_API_KEY presente, initialize construye
+    el DeepSeekClient y lo inyecta en The Ear (rama if del wire-up)."""
     hist = _make_historian([_row("sma_crossover", "S-A", ["SPY"])])
     with _init_env(hist), \
-         patch.object(main, "THE_EAR_SENTIMENT_ENABLED", True), \
-         patch("sentiment_analyzer.SentimentAnalyzer", return_value=MagicMock()) as MSA:
+         patch.object(main, "DEEPSEEK_API_KEY", "sk-deepseek-test"), \
+         patch("deepseek_client.DeepSeekClient", return_value=MagicMock(model="deepseek-v4-flash")) as MDS:
         system = _run(main.initialize())
-    MSA.assert_called_once()
+    MDS.assert_called_once()
+    assert "the_ear" in system
+
+
+def test_initialize_sin_deepseek_key_no_construye_client():
+    """Sin DEEPSEEK_API_KEY, no se construye cliente (rama else; The Ear sordo)."""
+    hist = _make_historian([_row("sma_crossover", "S-A", ["SPY"])])
+    with _init_env(hist), \
+         patch.object(main, "DEEPSEEK_API_KEY", None), \
+         patch("deepseek_client.DeepSeekClient") as MDS:
+        system = _run(main.initialize())
+    MDS.assert_not_called()
     assert "the_ear" in system
 
 

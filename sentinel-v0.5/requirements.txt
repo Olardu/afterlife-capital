@@ -17,13 +17,8 @@ httpx==0.28.1
 anthropic==0.97.0
 # Reporte de balance del período de observación (Fase 1).
 quantstats==0.0.81
-# Sentiment analysis finance-tuned para The Ear (#FEAT-007 / T-U). Se importan
-# solo cuando THE_EAR_SENTIMENT_ENABLED=true (lazy load del modelo). CPU build de
-# torch obligatorio (la GPU build pesa ~5x y no se usa).
-# DRIFT vs spec T-U (forzado por Python 3.14): la spec pedía torch==2.5.0 /
-# transformers==4.45.0 — no tienen wheels cp314. Mínimas con wheel cp314:
-# torch 2.9.x / transformers 5.x. Modelo: ProsusAI/finbert (yiyanghkust/finbert-tone
-# no carga su clasificador en transformers 5.x). Detalle en docs/finbert_recalibration_plan.md.
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.9.1+cpu
-transformers==5.9.0
+# NOTA (swap FinBERT→DeepSeek): The Ear ya NO usa FinBERT local — torch/transformers
+# removidos (aligera el deploy ~5x, era el peso grande del server). Ahora The Ear
+# usa Alpaca News (alpaca-py, arriba) + DeepSeek API vía aiohttp (arriba). DeepSeek
+# se autentica con DEEPSEEK_API_KEY del .env; no requiere SDK extra.
+# Ver the_ear.py / deepseek_client.py.

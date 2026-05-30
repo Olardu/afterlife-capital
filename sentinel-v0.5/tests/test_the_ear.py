@@ -10,13 +10,12 @@ Mock de _fetch_price_changes (sin red ni Alpaca). Correr:
 import asyncio
 import os
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import the_ear
 from the_ear import TheEar
 from config import VIX_CIRCUIT_BREAKER_THRESHOLD, SPY_CIRCUIT_BREAKER_THRESHOLD
 
@@ -55,24 +54,22 @@ def test_cb_spy_dispara_aunque_vix_none():
     assert _cb_with((None, SPY_CIRCUIT_BREAKER_THRESHOLD - 1)) is True
 
 
-# --- #TD-6 — flag news_disabled visible si falta la API key ------------------
-def test_news_disabled_true_sin_key():
-    with patch.object(the_ear, "NEWS_API_KEY", None):
-        ear = TheEar(MagicMock())
-        assert ear.news_disabled is True
+# --- #TD-6 — flag news_disabled visible si no hay cliente DeepSeek -----------
+def test_news_disabled_true_sin_client():
+    # Sin DeepSeekClient inyectado → The Ear "sordo" a noticias.
+    ear = TheEar(MagicMock())
+    assert ear.news_disabled is True
 
 
-def test_news_disabled_false_con_key():
-    with patch.object(the_ear, "NEWS_API_KEY", "fake-key"):
-        ear = TheEar(MagicMock())
-        assert ear.news_disabled is False
+def test_news_disabled_false_con_client():
+    ear = TheEar(MagicMock(), deepseek_client=MagicMock())
+    assert ear.news_disabled is False
 
 
-def test_fetch_news_sin_key_retorna_vacio():
-    # Sin key: fetch_news loggea warning y retorna [] sin tocar la red.
-    with patch.object(the_ear, "NEWS_API_KEY", None):
-        ear = TheEar(MagicMock())
-        assert _run(ear.fetch_news()) == []
+def test_assess_risk_sin_client_retorna_none():
+    # Sin cliente DeepSeek, assess_risk devuelve None (caller cae a last_risk_score).
+    ear = TheEar(MagicMock())
+    assert _run(ear.assess_risk([{"title": "x", "summary": "y"}])) is None
 
 
 if __name__ == "__main__":

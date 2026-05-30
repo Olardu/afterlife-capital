@@ -401,6 +401,17 @@ class Historian:
                 "ADD COLUMN IF NOT EXISTS sentiment_method VARCHAR(20)"
             )
 
+            # =================================================================
+            # RISK RATIONALE (swap FinBERT→DeepSeek) — migración 019: DeepSeek
+            # devuelve, junto al risk_score, una breve explicación de por qué.
+            # Se persiste 1 por ciclo para auditar las decisiones de The Ear
+            # (los titulares top siguen en news_titles JSONB). Idempotente.
+            # =================================================================
+            await conn.execute(
+                "ALTER TABLE macro_events "
+                "ADD COLUMN IF NOT EXISTS risk_rationale TEXT"
+            )
+
             # Asegurar email + role=ADMIN del owner (#H-1). La columna `email`
             # ya existe en schema.sql desde la creación de la DB (multi-tenant
             # base). Este UPDATE solo corre cuando el email persistido no
@@ -1578,6 +1589,7 @@ class Historian:
         news_titles: Optional[list[dict]] = None,
         sentiment_score_finbert: Optional[float] = None,
         sentiment_method: str = "keyword",
+        risk_rationale: Optional[str] = None,
     ) -> UUID:
         """
         Inserta un registro de estado macro en macro_events.
@@ -1604,8 +1616,8 @@ class Historian:
             INSERT INTO macro_events
                 (risk_score, vix_level, spy_change_15min,
                  circuit_breaker_triggered, news_titles,
-                 sentiment_score_finbert, sentiment_method)
-            VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
+                 sentiment_score_finbert, sentiment_method, risk_rationale)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
             RETURNING event_id
         """
         try:
@@ -1613,7 +1625,7 @@ class Historian:
                 row = await conn.fetchrow(
                     sql, risk_score, vix_level, spy_change_15min,
                     circuit_breaker_triggered, titles_json,
-                    sentiment_score_finbert, sentiment_method,
+                    sentiment_score_finbert, sentiment_method, risk_rationale,
                 )
             event_id = row["event_id"]
             logger.info(
