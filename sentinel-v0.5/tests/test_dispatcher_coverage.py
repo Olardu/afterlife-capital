@@ -878,5 +878,36 @@ def test_run_cycle_acumula_exposicion_entre_senales():
     assert segunda.kwargs["deployed_value"] == Decimal("1000")
 
 
+# ═══════════════════════ § 10 — D-fix-a: qty ejecutada == ledger ═══════════════════════
+
+def test_execute_order_expone_executed_qty_floored():
+    """execute_order floorea la qty antes de enviarla y la devuelve en executed_qty."""
+    d = Dispatcher.__new__(Dispatcher)  # execute_order REAL (no el mock de _disp)
+    d._submit_order_sync = MagicMock(return_value={
+        "order_id": "o1", "filled_price": Decimal("100.00"), "status": "FILLED"})
+    out = _run(d.execute_order("AMD", "BUY", Decimal("14.33"), "macd_volume"))
+    assert out["executed_qty"] == Decimal("14")        # 14.33 → floor 14
+    assert d._submit_order_sync.call_args[0][2] == 14   # Alpaca recibió 14, no 14.33
+
+
+def test_execute_order_qty_menor_1_executed_qty_cero():
+    d = Dispatcher.__new__(Dispatcher)
+    out = _run(d.execute_order("SPY", "BUY", Decimal("0.5"), "macd_volume"))
+    assert out["status"] == "CANCELLED"
+    assert out["executed_qty"] == Decimal("0")
+
+
+def test_process_signal_persiste_qty_ejecutada_no_fraccional():
+    """El ledger (record_trade + cache) guarda la qty entera ejecutada, no el fraccional."""
+    d = _disp()
+    d.execute_order = AsyncMock(return_value={
+        "status": "FILLED", "filled_price": Decimal("100.00"), "order_id": "o1",
+        "executed_qty": Decimal("14")})
+    _run(_signal(d, ticker="AMD", qty=Decimal("14.33"), price=Decimal("100"),
+                 account_equity=Decimal("100000")))
+    assert d.historian.record_trade.await_args.kwargs["qty"] == Decimal("14")
+    assert d.open_positions["AMD"]["qty"] == Decimal("14")  # cache también entero
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

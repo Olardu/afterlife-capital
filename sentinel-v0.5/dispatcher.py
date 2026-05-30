@@ -563,6 +563,12 @@ class Dispatcher:
             logger.error(f"Error al ejecutar orden {ticker}: {e}")
             order_result = {"status": "CANCELLED", "filled_price": None, "order_id": None}
 
+        # D-fix-a: qty REALMENTE ejecutada (entera, lo que recibió Alpaca). El
+        # ledger persiste esto, no el fraccional pre-floor → cierra el drift
+        # DB↔Alpaca. Fallback a final_qty si el order_result no la trae (callers
+        # legacy / mocks): no rompe backward compat.
+        executed_qty = Decimal(str(order_result.get("executed_qty", final_qty)))
+
         # 7. Persistir en Historian
         try:
             signal_id = await self.historian.record_signal(
@@ -586,7 +592,7 @@ class Dispatcher:
                 owner_id     = owner_id,
                 ticker       = ticker,
                 side         = side,
-                qty          = final_qty,
+                qty          = executed_qty,
                 filled_price = order_result.get("filled_price"),
                 slippage     = slippage,
                 status       = order_result.get("status", "PENDING"),
@@ -601,7 +607,7 @@ class Dispatcher:
         self._apply_fill_to_cache(
             ticker,
             order_result.get("status"),
-            {"ticker": ticker, "qty": final_qty, "side": side, "sentinel_id": sentinel_id},
+            {"ticker": ticker, "qty": executed_qty, "side": side, "sentinel_id": sentinel_id},
         )
 
         # EXP-005 — Modo Observador Fractional. NO afecta el flow ejecutable: solo
@@ -668,7 +674,7 @@ class Dispatcher:
             "reason":       order_result.get("status", "PENDING"),
             "signal_id":    signal_id,
             "trade_id":     trade_id,
-            "qty_executed": final_qty if approved else 0.0,
+            "qty_executed": executed_qty if approved else 0.0,
         }
 
     def _apply_fill_to_cache(self, ticker: str, status: str, position: dict) -> None:
@@ -806,13 +812,20 @@ class Dispatcher:
             and limit_price is not None
         )
 
+        # D-fix-a: Alpaca recibe qty ENTERA (el bracket no admite fraccional). Se
+        # expone `executed_qty` (= la entera enviada) en el resultado para que
+        # process_signal persista en el ledger lo MISMO que ejecutó Alpaca, no el
+        # fraccional pre-floor (que generaba el drift DB↔Alpaca: AMD 14.33 vs 14,
+        # XLU 336.84 vs 336, etc.). El modo sombra fractional sigue usando el
+        # pre-floor aparte — esa es su función.
         original_qty = qty
         qty = int(math.floor(qty))
         if qty < 1:
             logger.info(
                 f"Qty {original_qty:.4f} redondeada a 0 para {ticker} {side} — orden cancelada."
             )
-            return {"order_id": None, "filled_price": None, "status": "CANCELLED"}
+            return {"order_id": None, "filled_price": None, "status": "CANCELLED",
+                    "executed_qty": Decimal("0")}
 
         try:
             submit_result = await asyncio.wait_for(
@@ -824,11 +837,14 @@ class Dispatcher:
             )
         except asyncio.TimeoutError:
             logger.error(f"Timeout (15s) al enviar orden {ticker} {side} qty={qty}")
-            return {"order_id": None, "filled_price": None, "status": "CANCELLED"}
+            return {"order_id": None, "filled_price": None, "status": "CANCELLED",
+                    "executed_qty": Decimal("0")}
         except Exception as e:
             logger.error(f"Alpaca rechazó la orden {ticker} {side} qty={qty}: {e}")
-            return {"order_id": None, "filled_price": None, "status": "CANCELLED"}
+            return {"order_id": None, "filled_price": None, "status": "CANCELLED",
+                    "executed_qty": Decimal("0")}
 
+        submit_result["executed_qty"] = Decimal(qty)
         if not is_limit:
             return submit_result
 
