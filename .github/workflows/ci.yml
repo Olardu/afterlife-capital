@@ -2,6 +2,8 @@ name: CI
 
 # Gates objetivos para cada push/PR a main (#FASE2-NEW-1).
 # test → suite pytest | lint → ruff correctness | secrets → gitleaks | coverage → umbral escalonado.
+# pii-guard → check_secrets.sh (doble red §15.2: PII/credenciales en las líneas nuevas del push/PR;
+#   complementa gitleaks/semgrep que no detectan emails personales). Raíz: incidente 2026-05-31.
 # Coverage: gate final en 95% sobre los módulos críticos (#FASE2-NEW-4 / T-P cerrado
 # 2026-05-24). Los 9 módulos críticos están a 100% (config a 94%, sin target); el TOTAL
 # medido del set es 99%. Ver docs/coverage_audit_2026-05-25.md (sección "Cierre T-P").
@@ -84,3 +86,23 @@ jobs:
           semgrep scan
           --config p/python --config p/security-audit --config p/secrets
           --metrics off --disable-version-check
+
+  # Doble red ante PII/credenciales (§15.2). Escanea SOLO las líneas agregadas en el
+  # push/PR (no el árbol entero) con scripts/check_secrets.sh. Cubre el gap del incidente
+  # 2026-05-31: emails personales/PII que gitleaks y semgrep no marcan. BLOQUEANTE.
+  pii-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Escanear lineas nuevas por credenciales/PII
+        run: |
+          BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
+          HEAD="${{ github.sha }}"
+          # Guarda: si BASE no existe (force-push / primer push de la rama), comparar
+          # contra el commit padre; si tampoco hay, contra el árbol vacío (todo = nuevo).
+          if [ -z "$BASE" ] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            BASE="$(git rev-parse HEAD~1 2>/dev/null || git hash-object -t tree /dev/null)"
+          fi
+          bash scripts/check_secrets.sh --range "$BASE" "$HEAD"

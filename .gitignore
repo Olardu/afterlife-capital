@@ -7,6 +7,25 @@ client_secret_*.json
 **/.env.bak*
 **/*.env.bak*
 
+# === Servidor MCP de coordinación — NO va a GitHub (decisión Roman 31-may) ===
+# Todo el sistema de coordinación queda LOCAL, fuera del repo público de ALC.
+# Incluye el token en .mcp.json. La durabilidad va por backup de la SQLite, NO por git.
+mcp-coordination/
+**/.mcp.json
+**/mcp_export/
+teamwork/mcp_export/
+deploy/systemd/mcp-server.service
+deploy/systemd/mcp-export.service
+deploy/systemd/mcp-export.timer
+
+# === Scripts operativos one-off con PII (owner UUID + emails de cuenta) — NO al repo público (31-may) ===
+# Decisión Roman: excluir. Operan sobre la cuenta real (UUIDs/emails), son de un solo uso.
+sentinel-v0.5/scripts/persist_residual_closes_*
+sentinel-v0.5/scripts/persist_deleverage_*
+sentinel-v0.5/scripts/queries_balance_observacion.sql
+sentinel-v0.5/scripts/queries_corporate_actions.sql
+sentinel-v0.5/scripts/run_persist_*.ps1
+
 # === Entornos Python ===
 **/venv/
 **/.venv/
@@ -116,3 +135,4 @@ backups/
 dashboard/index.pre-redesign.html
 dashboard/index1.html
 dashboard/index2.html
+.secrets-patterns.local
