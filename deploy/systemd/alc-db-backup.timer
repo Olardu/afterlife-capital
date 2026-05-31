@@ -1,0 +1,12 @@
+[Unit]
+# Dispara el backup de la DB diariamente a las 01:00 UTC (~21:00 ET, post-cierre US).
+# Persistent=true: si el server estaba apagado a esa hora, corre al próximo boot.
+Description=Timer diario backup DB ALC (01:00 UTC)
+
+[Timer]
+OnCalendar=*-*-* 01:00:00 UTC
+Persistent=true
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target

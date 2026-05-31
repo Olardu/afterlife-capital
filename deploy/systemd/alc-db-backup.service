@@ -1,0 +1,17 @@
+[Unit]
+# Backup de la DB de producción ALC: pg_dump -Fc local (rotación 14d) + upload
+# a Cloudflare R2 si el remote rclone 'r2' está configurado (Parte 2). pg_dump
+# es READ-ONLY. Lo dispara alc-db-backup.timer.
+Description=ALC DB backup (pg_dump -Fc + R2 opcional)
+After=postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=oneshot
+User=sentinel
+Group=sentinel
+WorkingDirectory=/home/sentinel/afterlife-capital/sentinel-v0.5
+ExecStart=/usr/bin/bash /home/sentinel/afterlife-capital/sentinel-v0.5/scripts/backup_db.sh
+TimeoutStartSec=900
+NoNewPrivileges=true
+PrivateTmp=true

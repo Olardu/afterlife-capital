@@ -1,0 +1,18 @@
+[Unit]
+# One-shot: persiste las 3 SELL de desapalancamiento (TLT/GLD/QQQ) cuando llenen
+# al open del lunes 1-jun. Lo dispara persist-deleverage.timer. Idempotente +
+# poll-retry interno + backup DB previo. Escribe en la DB de PRODUCCIÓN.
+Description=ALC persist deleverage SELLs (TLT/GLD/QQQ) 1-jun
+After=network-online.target postgresql.service sentinel-bot.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sentinel
+Group=sentinel
+WorkingDirectory=/home/sentinel/afterlife-capital/sentinel-v0.5
+ExecStart=/home/sentinel/afterlife-capital/sentinel-v0.5/venv/bin/python scripts/persist_deleverage_sells_01jun.py --apply
+# El script poll-retrea hasta 1h; subir el timeout del unit por encima de eso.
+TimeoutStartSec=4200
+NoNewPrivileges=true
+PrivateTmp=true

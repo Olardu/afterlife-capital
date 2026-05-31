@@ -1,0 +1,24 @@
+[Unit]
+# Sentinel v0.5 — API (FastAPI/uvicorn) en ALC-P (Hetzner). Fase C del deploy.
+# Sirve el dashboard + REST/SSE en 127.0.0.1:8080 (loopback; cloudflared lo
+# expone hacia afuera, NO se abre el puerto en ufw). PUEDE arrancar en modo PREP:
+# solo sirve datos de lectura, NO coloca órdenes (eso es main.py / sentinel-bot).
+Description=Sentinel v0.5 API (uvicorn)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sentinel
+Group=sentinel
+WorkingDirectory=/home/sentinel/afterlife-capital/sentinel-v0.5
+# load_dotenv() del bot lee el .env desde WorkingDirectory (perms 600, vía scp).
+ExecStart=/home/sentinel/afterlife-capital/sentinel-v0.5/venv/bin/uvicorn api:app --host 127.0.0.1 --port 8080
+Restart=on-failure
+RestartSec=5
+# Hardening básico del servicio.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

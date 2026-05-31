@@ -1,0 +1,14 @@
+[Unit]
+# Dispara persist-deleverage.service UNA sola vez: lunes 1-jun-2026 13:40 UTC
+# (= 09:40 ET EDT, ~10 min tras el open). Fecha específica → no recurre semanalmente
+# (no hace falta auto-deshabilitar). Persistent=true: si el server estaba apagado a
+# esa hora, corre al próximo boot (catch-up). El script es idempotente igual.
+Description=Timer one-shot persist-deleverage (lunes 1-jun ~09:40 ET)
+
+[Timer]
+OnCalendar=2026-06-01 13:40:00 UTC
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

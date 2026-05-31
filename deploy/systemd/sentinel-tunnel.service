@@ -1,0 +1,25 @@
+[Unit]
+# Sentinel v0.5 — túnel Cloudflare (cloudflared) en ALC-P (Hetzner).
+#
+# ⚠️ En Fase C (PREP) NO apuntar al hostname LIVE (sentinel.afterlifecapital.co):
+# robaría el túnel del Ally. Dejar deshabilitado, o usar un túnel/hostname de
+# prueba. El repunte del hostname real al server va en el CUTOVER (Fase D).
+#
+# Requiere credenciales del túnel ya instaladas en el server
+# (~/.cloudflared/<TUNNEL_ID>.json + config.yml), vía `cloudflared tunnel login`
+# o copiando las credenciales. Reemplazar <TUNNEL_NAME> por el nombre real.
+Description=Sentinel v0.5 Cloudflare Tunnel (cloudflared) -- NO LIVE EN PREP
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sentinel
+Group=sentinel
+ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run <TUNNEL_NAME>
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

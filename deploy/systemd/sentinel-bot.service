@@ -1,0 +1,25 @@
+[Unit]
+# Sentinel v0.5 — BOT (main.py, trading loop) en ALC-P (Hetzner).
+#
+# ⚠️⚠️ REGLA DURA: en Fase C (PREP) este servicio NO se habilita ni se arranca.
+# NUNCA dos bots operando la misma cuenta Alpaca paper = órdenes dobles.
+# Mientras el bot del Ally esté vivo, este queda APAGADO. Recién se hace
+# `systemctl enable --now sentinel-bot` en el CUTOVER (Fase D, post-lunes),
+# DESPUÉS de apagar el del Ally. Se deja el unit instalado pero deshabilitado.
+Description=Sentinel v0.5 Trading Bot (main.py) -- NO ARRANCAR EN PREP
+After=network-online.target postgresql.service sentinel-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sentinel
+Group=sentinel
+WorkingDirectory=/home/sentinel/afterlife-capital/sentinel-v0.5
+ExecStart=/home/sentinel/afterlife-capital/sentinel-v0.5/venv/bin/python main.py
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
