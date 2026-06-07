@@ -43,7 +43,7 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def _guard_echo(*, incoming_ticker, incoming_qty, open_positions, performance_scores):
+def _guard_echo(*, incoming_ticker, incoming_qty, open_positions, performance_scores, signal_type="BUY"):
     return {"approved": True, "original_qty": incoming_qty, "adjusted_qty": incoming_qty,
             "avg_correlation": 0.0, "reason": "approved"}
 

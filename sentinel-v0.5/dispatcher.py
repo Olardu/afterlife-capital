@@ -483,6 +483,7 @@ class Dispatcher:
                 incoming_qty       = qty,
                 open_positions     = list(self.open_positions.values()),
                 performance_scores = scores,
+                signal_type        = signal_type,   # #BUG-CG-SELL: el SELL queda exento (des-riesga)
             )
         except Exception as e:
             logger.error(f"Error en CorrelationGuard: {e}. Aprobando con qty original.")

@@ -38,7 +38,7 @@ def _bars_atr_4_50():
     })
 
 
-def _guard_echo(*, incoming_ticker, incoming_qty, open_positions, performance_scores):
+def _guard_echo(*, incoming_ticker, incoming_qty, open_positions, performance_scores, signal_type="BUY"):
     """CorrelationGuard que aprueba sin reducir (adjusted = incoming)."""
     return {"approved": True, "adjusted_qty": incoming_qty,
             "avg_correlation": 0.0, "reason": "approved"}
@@ -122,7 +122,7 @@ def test_flag_on_sizing_no_factible_rechaza():
 
 # --- Caso 5: combo con CorrelationGuard → final_qty respeta ambas ----------
 def test_flag_on_combo_correlation_guard_reduce_qty():
-    def _guard_reduce(*, incoming_ticker, incoming_qty, open_positions, performance_scores):
+    def _guard_reduce(*, incoming_ticker, incoming_qty, open_positions, performance_scores, signal_type="BUY"):
         # El guard reduce el qty del sizing por concentración.
         return {"approved": True, "adjusted_qty": Decimal("10"),
                 "avg_correlation": 0.80, "reason": "approved"}

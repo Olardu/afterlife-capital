@@ -144,6 +144,7 @@ class CorrelationGuard:
         incoming_qty: Decimal,
         open_positions: list[dict],
         performance_scores: list[dict],
+        signal_type: str = "BUY",
     ) -> dict:
         """
         Evalúa si una señal entrante puede ejecutarse dada la cartera actual.
@@ -155,6 +156,12 @@ class CorrelationGuard:
             open_positions:    [{ticker, qty, sentinel_id}, ...]
             performance_scores: [{sentinel_id, ticker, sharpe_ratio}, ...]
                                usado para priorizar señales (descendente por sharpe)
+            signal_type:       "BUY" | "SELL". El guard es ANTI-CONCENTRACIÓN: solo
+                               aplica a señales que AÑADEN exposición (BUY). Un SELL
+                               cierra/reduce una posición existente → nunca aumenta la
+                               concentración → se aprueba con qty completa, sin vetar ni
+                               reducir. Default "BUY" (backward-compat para callers que
+                               no lo pasen). Ver el short-circuit al inicio del flujo.
 
         Flujo:
             1. Sin posiciones abiertas → aprueba inmediatamente
@@ -179,6 +186,23 @@ class CorrelationGuard:
         # qty es monetaria → Decimal en todo el pipeline (#H-4). Conversión defensiva:
         # acepta callers que aún pasen float durante la migración gradual del dispatcher.
         incoming_qty = Decimal(str(incoming_qty))
+
+        # #BUG-CG-SELL (diagnóstico ALC-P 1-5 jun, log #80 + fix Deep): la anti-
+        # concentración solo aplica a señales que AÑADEN exposición (BUY). Un SELL
+        # cierra/reduce una posición → nunca aumenta la concentración. Antes el veto
+        # #TD-4 (duplicate_ticker) mataba SELLs legítimos sobre tickers en cartera y
+        # le IMPEDÍA des-riesgar (quedó atascado al 93.5%: no compraba por cap, no
+        # vendía por veto). Se aprueba el SELL con qty completa, sin vetar ni reducir.
+        # Coherente con el cap de exposición del dispatcher, que también exime al SELL.
+        if str(signal_type).upper() == "SELL":
+            logger.debug(f"Señal SELL {incoming_ticker} — exenta del CorrelationGuard (des-riesga).")
+            return {
+                "approved":        True,
+                "original_qty":    incoming_qty,
+                "adjusted_qty":    incoming_qty,
+                "avg_correlation": 0.0,
+                "reason":          "approved",
+            }
 
         if not open_positions:
             logger.debug(f"Sin posiciones abiertas — señal {incoming_ticker} aprobada directamente.")

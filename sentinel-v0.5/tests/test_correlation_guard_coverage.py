@@ -256,5 +256,57 @@ def test_evaluate_signal_correlacion_baja_aprueba_sin_cambios():
     assert res["adjusted_qty"] == Decimal("10")
 
 
+# =============================================================================
+# #BUG-CG-SELL — el SELL queda exento del CorrelationGuard (des-riesga)
+# =============================================================================
+
+def test_evaluate_signal_sell_en_cartera_aprueba():
+    """#BUG-CG-SELL: un SELL sobre un ticker EN CARTERA es un cierre/reducción legítimo
+    → aprobado con qty completa (antes lo vetaba duplicate_ticker e impedía des-riesgar,
+    diagnóstico ALC-P 1-5 jun log #80). Short-circuit: ni siquiera consulta barras."""
+    cg = CorrelationGuard()
+    fetch = MagicMock()
+    with patch.object(cg, "fetch_bars", fetch):
+        res = _run(cg.evaluate_signal(
+            "SPY", Decimal("10"),
+            open_positions=[{"ticker": "SPY", "qty": 5}], performance_scores=[],
+            signal_type="SELL",
+        ))
+    assert res["approved"] is True
+    assert res["reason"] == "approved"
+    assert res["adjusted_qty"] == Decimal("10")   # qty completa, no reducida
+    fetch.assert_not_called()                      # exento antes de tocar Alpaca
+
+
+def test_evaluate_signal_sell_no_se_reduce_por_correlacion():
+    """El SELL queda EXENTO de la reducción por correlación: un cierre no debe encogerse
+    aunque el resto de la cartera esté muy correlacionada. (Drift correcto sobre el
+    snippet de Deep, que con `continue` dejaba correr la reducción sobre el SELL.)"""
+    cg = CorrelationGuard()
+    with patch.object(cg, "fetch_bars",
+                      return_value={"SPY": [1.0, 2.0, 3.0], "QQQ": [1.0, 2.0, 3.0]}), \
+         patch.object(cg, "calculate_correlation", return_value=1.0):
+        res = _run(cg.evaluate_signal(
+            "SPY", Decimal("10"),
+            open_positions=[{"ticker": "QQQ", "qty": 1}], performance_scores=[],
+            signal_type="SELL",
+        ))
+    assert res["approved"] is True
+    assert res["adjusted_qty"] == Decimal("10")
+
+
+def test_evaluate_signal_buy_default_sigue_vetando_duplicado():
+    """Backward-compat: sin signal_type explícito (default BUY) el veto duplicate_ticker
+    sigue activo — el fix NO afloja la anti-concentración de las compras."""
+    cg = CorrelationGuard()
+    with patch.object(cg, "fetch_bars", return_value={"SPY": [1.0, 2.0, 3.0]}):
+        res = _run(cg.evaluate_signal(
+            "SPY", Decimal("10"),
+            open_positions=[{"ticker": "SPY", "qty": 1}], performance_scores=[],
+            signal_type="BUY",
+        ))
+    assert res["approved"] is False and res["reason"] == "duplicate_ticker"
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
