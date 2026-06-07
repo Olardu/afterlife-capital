@@ -1,6 +1,7 @@
 # === Secretos y credenciales ===
 client_secret_*.json
 **/.env
+**/.env.alc-g
 **/.env.local
 **/.env.production
 **/.env.staging

@@ -1,0 +1,27 @@
+[Unit]
+# ALC-G Fase 0 — Cockpit + runtime del núcleo apalancado (cuenta paper #2).
+# Independiente del bot Sentinel (NO importa dispatcher/main; otra cuenta Alpaca).
+# Sirve la cabina + API en 127.0.0.1:8081 (loopback; exposición opcional vía
+# cloudflared, NO se abre el puerto en ufw). Fase 0 = MODO INFORME: lee la cuenta
+# #2 y reporta el gap de leverage; NO coloca órdenes (eso exige GO de Roman).
+Description=ALC-G Cockpit (Fase 0, modo informe)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sentinel
+Group=sentinel
+WorkingDirectory=/home/sentinel/afterlife-capital/sentinel-v0.5
+# load_dotenv() lee .env.alc-g desde WorkingDirectory (perms 600, vía scp).
+Environment=ALCG_PORT=8081
+Environment=ALCG_HOST=127.0.0.1
+ExecStart=/home/sentinel/afterlife-capital/sentinel-v0.5/venv/bin/python -m alc_g
+Restart=on-failure
+RestartSec=5
+# Hardening básico del servicio.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

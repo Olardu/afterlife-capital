@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ALC-G COCKPIT — Afterlife Capital</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><polygon points='32,8 56,52 8,52' fill='none' stroke='%2300f5ff' stroke-width='3.5' stroke-linejoin='round'/></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/cockpit.css">
+</head>
+<body>
+<!-- HEADER -->
+<header class="header-fixed">
+  <div class="header-row">
+    <div class="brand">
+      <svg class="ico" viewBox="0 0 64 64"><polygon points="32,8 56,52 8,52" fill="none" stroke="#00f5ff" stroke-width="4" stroke-linejoin="round"/></svg>
+      ALC<span class="v">-G</span> COCKPIT
+    </div>
+    <div class="hdr-badges">
+      <span class="badge cyan">PAPER · CUENTA #2</span>
+      <span class="badge" id="modeBadge">MODO —</span>
+      <span class="hs"><span class="k">RECONCILIACIÓN</span><span class="v" id="reconDot"><span class="dot"></span><span id="reconTxt">—</span></span></span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="title-block">
+    <div class="title-tag">NÚCLEO APALANCADO · HUMANO-EN-EL-LOOP</div>
+    <h1><span class="a">LEVERAGE</span> <span class="b">COCKPIT</span></h1>
+  </div>
+
+  <!-- BARRA DE LEVERAGE -->
+  <section class="panel" id="leveragePanel">
+    <div class="panel-h">PALANCA DE LEVERAGE</div>
+    <div class="lev-readout">
+      <div class="lev-big"><span class="lbl">ELEGIDO</span><span class="val" id="levChosen">—</span></div>
+      <div class="lev-big"><span class="lbl">REAL</span><span class="val" id="levReal">—</span></div>
+      <div class="lev-big"><span class="lbl">GAP</span><span class="val" id="levGap">—</span></div>
+    </div>
+    <input type="range" id="levSlider" min="1.0" max="2.0" step="0.05" value="1.5">
+    <div class="lev-scale"><span>1.0×</span><span class="warnmark">1.5× límite</span><span>2.0×</span></div>
+    <div class="lev-warn" id="levWarn"></div>
+    <div class="lev-actions">
+      <button class="btn" id="applyLev">APLICAR LEVERAGE</button>
+      <span class="hint">El leverage real se mueve al rebalancear. ALC-G informa el gap; no ejecuta solo.</span>
+    </div>
+  </section>
+
+  <!-- PRESETS -->
+  <section class="panel">
+    <div class="panel-h">PRESETS DE COMPOSICIÓN</div>
+    <div class="presets" id="presets"></div>
+  </section>
+
+  <!-- SIGNOS VITALES -->
+  <section class="grid3">
+    <div class="card"><span class="k">EQUITY</span><span class="v" id="vEquity">—</span></div>
+    <div class="card"><span class="k">TECHO GLIDE-PATH</span><span class="v" id="vCeiling">—</span></div>
+    <div class="card"><span class="k">FASE DE CAPITAL</span><span class="v" id="vPhase">—</span></div>
+    <div class="card"><span class="k">VALOR LONG</span><span class="v" id="vLong">—</span></div>
+    <div class="card"><span class="k">MODO AUTO (VIX)</span><span class="v" id="vVix">—</span></div>
+    <div class="card"><span class="k">PISO $100K (DCA)</span><span class="v" id="vFloor">—</span></div>
+  </section>
+
+  <!-- PLAN DE ÓRDENES (INFORME) -->
+  <section class="panel">
+    <div class="panel-h">PLAN DE REBALANCEO <span class="tag-informe">INFORME · NO EJECUTA</span></div>
+    <table class="orders" id="ordersTbl">
+      <thead><tr><th>TICKER</th><th>OBJETIVO</th><th>ACTUAL</th><th>Δ</th><th>ACCIÓN</th></tr></thead>
+      <tbody id="ordersBody"><tr><td colspan="5" class="muted">cargando…</td></tr></tbody>
+    </table>
+    <div class="drift-note" id="driftNote"></div>
+  </section>
+
+  <footer class="foot">
+    <span id="footStamp">—</span> · ALC-G Fase 0 · cuenta paper separada del bot · spec Deep #105
+  </footer>
+</main>
+
+<script src="/static/cockpit.js"></script>
+</body>
+</html>
