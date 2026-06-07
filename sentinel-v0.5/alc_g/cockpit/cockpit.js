@@ -83,6 +83,60 @@ function flashWarn(msg) {
   const w = $('levWarn'); w.textContent = '✕ ' + msg; w.classList.add('hot');
 }
 
+// --- Ejecución del rebalanceo (manda órdenes reales a la cuenta #2) ----------
+
+async function doExecute() {
+  // Releer el plan vivo para confirmar contra lo que se va a mandar.
+  let snap;
+  try { snap = (await api('/api/alcg/status')).data; }
+  catch (e) { flashWarn(e.message); return; }
+
+  const actionable = (snap.planned_orders || [])
+    .filter((o) => o.side === 'BUY' || o.side === 'SELL');
+  if (!actionable.length) {
+    flashWarn('No hay órdenes para ejecutar (todo dentro de la banda).');
+    return;
+  }
+  const lines = actionable.map((o) =>
+    `  ${o.side} ${o.ticker}  ${Number(o.delta_value) >= 0 ? '+' : ''}${fmtUSD(o.delta_value)}`);
+  const ok = window.confirm(
+    '¿EJECUTAR el rebalanceo en la cuenta PAPER #2?\n\n' + lines.join('\n') +
+    '\n\nÓrdenes market DAY. Si el mercado está cerrado quedan pendientes al open.');
+  if (!ok) return;
+
+  const btn = $('execBtn');
+  btn.disabled = true; btn.textContent = 'EJECUTANDO…';
+  try {
+    const { data } = await api('/api/alcg/rebalance', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: true }),
+    });
+    renderExecResults(data);
+    await refresh();
+  } catch (e) {
+    $('execResults').innerHTML = `<div class="er-h err">✕ ${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = '▶ EJECUTAR REBALANCEO EN CUENTA #2';
+  }
+}
+
+function renderExecResults(data) {
+  const results = data.results || [];
+  const sent = data.sent_count || 0;
+  const rows = results.map((r) => {
+    if (r.skipped) {
+      return `<div class="er skip">• ${esc(r.ticker)} ${esc(r.side)} — omitido` +
+        ` (${esc(r.reason || '')})</div>`;
+    }
+    const detail = r.qty ? `${esc(r.qty)} acc` : (r.notional ? fmtUSD(r.notional) : '');
+    const fill = r.filled_avg_price ? ` @ ${fmtUSD(r.filled_avg_price)}` : '';
+    return `<div class="er ok">✓ ${esc(r.side)} ${esc(r.ticker)} ${detail}${fill}` +
+      ` — ${esc(r.status)} <span class="oid">${esc(r.order_id || '')}</span></div>`;
+  }).join('');
+  $('execResults').innerHTML =
+    `<div class="er-h">RESULTADO — ${sent} orden(es) enviada(s)</div>${rows}`;
+}
+
 // --- Fase de capital (deriva del techo) --------------------------------------
 
 function phaseLabel(equity) {
@@ -159,6 +213,7 @@ async function refresh() {
 window.addEventListener('DOMContentLoaded', async () => {
   $('levSlider').addEventListener('input', onSliderInput);
   $('applyLev').addEventListener('click', applyLeverage);
+  $('execBtn').addEventListener('click', doExecute);
   onSliderInput();
   await loadPresets();
   await refresh();

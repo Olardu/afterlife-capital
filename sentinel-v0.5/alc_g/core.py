@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 
 from alc_g.config_alc_g import CORE_WEIGHTS, BALLAST_SPLIT, AlcgParams
 
@@ -122,6 +122,63 @@ def drifted_tickers(positions: dict, target: dict[str, Decimal],
     p = p or AlcgParams()
     drifts = component_drifts(positions, target)
     return sorted(tk for tk, d in drifts.items() if abs(d) > p.drift_band)
+
+
+# --- Ejecución del rebalanceo (capa PURA; el broker hace el I/O) -------------
+
+@dataclass(frozen=True)
+class RebalanceOrder:
+    """Orden ejecutable derivada del plan informe. `notional` siempre > 0 (monto
+    en $ a mover). El broker traduce: BUY -> orden por notional; SELL -> acciones
+    enteras desde la posición real (ver `sell_qty_from_position`)."""
+    ticker: str
+    side: str        # "BUY" | "SELL"
+    notional: Decimal
+
+
+def plan_rebalance_orders(planned_orders, min_order_usd,
+                          p: AlcgParams | None = None) -> list[RebalanceOrder]:
+    """Convierte el plan informe (`runner.planned_orders`) en órdenes ejecutables.
+
+    Filtra: HOLD (delta 0) y deltas cuyo |valor| < `min_order_usd` (banda muerta,
+    evita órdenes triviales por micro-movimientos del slider). El resto se emite
+    como BUY/SELL con `notional = |delta_value|`. PURO: no toca red ni cuenta."""
+    del p  # firma homogénea con el resto del core; sin params propios hoy
+    floor = _D(min_order_usd)
+    out: list[RebalanceOrder] = []
+    for o in planned_orders:
+        side = o.get("side")
+        if side not in ("BUY", "SELL"):
+            continue  # HOLD u otro -> nada que ejecutar
+        notional = abs(_D(o.get("delta_value", 0)))
+        if notional < floor:
+            continue  # banda muerta
+        out.append(RebalanceOrder(ticker=str(o["ticker"]), side=side, notional=notional))
+    return out
+
+
+def sell_qty_from_position(notional_to_sell, position_qty,
+                           position_market_value) -> tuple[Decimal, bool]:
+    """Traduce un SELL por $ a acciones ENTERAS desde la posición real (decisión
+    Roman: enteras, no fraccional). Devuelve (qty_entera, close_all).
+
+    - posición vacía/sin valor -> (0, False).
+    - el monto cubre (o supera) toda la posición -> (qty_total, True): se cierra
+      por qty total (close_position), evita vender de más por redondeo.
+    - reducción parcial -> floor(notional / precio_medio) acciones; si da <1 -> (0, False)."""
+    n = _D(notional_to_sell)
+    qty_total = _D(position_qty)
+    mv = _D(position_market_value)
+    if mv <= 0 or qty_total <= 0 or n <= 0:
+        return (Decimal("0"), False)
+    if n >= mv:
+        return (qty_total, True)
+    # n < mv aquí -> floor(n/precio) es estrictamente < qty_total (reducción parcial).
+    price = mv / qty_total
+    qty = (n / price).to_integral_value(rounding=ROUND_DOWN)
+    if qty <= 0:
+        return (Decimal("0"), False)
+    return (qty, False)
 
 
 # --- Modo auto VIX (des-arriesga; estado de la racha de liberación) ----------

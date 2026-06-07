@@ -63,14 +63,19 @@
     <div class="card"><span class="k">PISO $100K (DCA)</span><span class="v" id="vFloor">—</span></div>
   </section>
 
-  <!-- PLAN DE ÓRDENES (INFORME) -->
+  <!-- PLAN DE ÓRDENES + EJECUCIÓN -->
   <section class="panel">
-    <div class="panel-h">PLAN DE REBALANCEO <span class="tag-informe">INFORME · NO EJECUTA</span></div>
+    <div class="panel-h">PLAN DE REBALANCEO <span class="tag-informe">OBJETIVO VS ACTUAL</span></div>
     <table class="orders" id="ordersTbl">
       <thead><tr><th>TICKER</th><th>OBJETIVO</th><th>ACTUAL</th><th>Δ</th><th>ACCIÓN</th></tr></thead>
       <tbody id="ordersBody"><tr><td colspan="5" class="muted">cargando…</td></tr></tbody>
     </table>
     <div class="drift-note" id="driftNote"></div>
+    <div class="exec-row">
+      <button class="btn danger" id="execBtn">▶ EJECUTAR REBALANCEO EN CUENTA #2</button>
+      <span class="hint">Manda las órdenes del plan a la cuenta paper #2 (market DAY). Pide confirmación.</span>
+    </div>
+    <div class="exec-results" id="execResults"></div>
   </section>
 
   <footer class="foot">

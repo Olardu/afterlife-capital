@@ -37,6 +37,10 @@ class PresetBody(BaseModel):
     preset: str
 
 
+class RebalanceBody(BaseModel):
+    confirm: bool = False
+
+
 def create_app(runner: AlcgRunner) -> FastAPI:
     """Factory: arma la app sobre un runner inyectado (testeable con fake broker)."""
     app = FastAPI(title="ALC-G Cockpit", version="0.1")
@@ -75,6 +79,22 @@ def create_app(runner: AlcgRunner) -> FastAPI:
         runner.params = runner.params.with_(preset=name, leverage_target=PRESETS[name].leverage)
         return _ok({"preset": name, "leverage_target": str(PRESETS[name].leverage)})
 
+    @app.post("/api/alcg/rebalance")
+    def rebalance(body: RebalanceBody):
+        # Gate (decisión Roman: "solo confirmación"): el cockpit pide confirmar y
+        # manda confirm=true. Sin eso, el endpoint no ejecuta nada.
+        if not body.confirm:
+            return _err("se requiere confirmación para ejecutar el rebalanceo",
+                        "not_confirmed")
+        try:
+            out = runner.execute_rebalance()
+        except PermissionError as exc:
+            # broker con allow_execute=False (ejecución deshabilitada)
+            return _err(str(exc), "execution_disabled", 403)
+        except Exception as exc:  # noqa: BLE001 — la cuenta/SDK puede fallar
+            return _err(f"falló el rebalanceo: {exc}", "rebalance_error", 502)
+        return _ok(out, mode=runner.params.mode)
+
     @app.get("/")
     def cockpit():
         index = COCKPIT_DIR / "index.html"
@@ -95,5 +115,8 @@ def build_default_app() -> FastAPI:
 
     env = load_dotenv(Path(__file__).resolve().parent.parent / ".env.alc-g")
     params = load_params_from_env(env)
-    broker = AlpacaAlcgBroker.from_env(env, allow_execute=False)
+    # Ejecución habilitada (gate = confirmación del cockpit, decisión Roman 07-jun).
+    # El cockpit corre en loopback detrás de SSH tunnel; el botón EJECUTAR pide
+    # confirmar antes de mandar órdenes a la cuenta paper #2.
+    broker = AlpacaAlcgBroker.from_env(env, allow_execute=True)
     return create_app(AlcgRunner(broker, params))

@@ -82,6 +82,36 @@ class AlcgRunner:
             })
         return orders
 
+    # --- ejecución del rebalanceo (modo ejecutar) ---------------------------
+
+    def execute_rebalance(self) -> dict:
+        """Lee la cuenta #2, arma el plan y LO EJECUTA en la cuenta (BUY por
+        notional / SELL por acciones enteras, market DAY). Sólo se llama tras la
+        confirmación del cockpit. Devuelve el reporte + plan + resultados de las
+        órdenes enviadas. El gate de seguridad real vive en el broker
+        (allow_execute) y en el endpoint (confirm)."""
+        account = self._broker.get_snapshot()
+        vix = self._broker.get_vix_close()
+        report = self.evaluate(account, vix)
+        orders = self.planned_orders(report, account)
+        results = self._broker.submit_rebalance(
+            orders, min_order_usd=self.params.min_order_usd, p=self.params,
+        )
+        sent = [r for r in results if not r.get("skipped")]
+        logger.warning(
+            "ALC-G REBALANCEO EJECUTADO | preset=%s eff_lev=%s órdenes=%d (enviadas=%d)",
+            self.params.preset, report.effective_leverage, len(results), len(sent),
+        )
+        return {
+            "mode": self.params.mode,
+            "preset": self.params.preset,
+            "report": report_to_dict(report),
+            "planned_orders": orders,
+            "results": results,
+            "sent_count": len(sent),
+            "min_order_usd": str(self.params.min_order_usd),
+        }
+
     # --- un ciclo completo (con lectura de la cuenta) -----------------------
 
     def run_once(self) -> dict:

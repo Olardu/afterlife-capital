@@ -66,6 +66,7 @@ class AlcgParams:
     rebalance_gap: Decimal = Decimal("0.05")       # |target-real| > esto -> rebalancea
     drift_band: Decimal = Decimal("0.05")          # componente ±5% de su peso -> rebalancea
     cost_bps: Decimal = Decimal("10")              # 10 bps por trade (slippage+comisión)
+    min_order_usd: Decimal = Decimal("100")        # banda muerta: deltas < esto se omiten
 
     # --- Modo auto: solo des-arriesga por VIX (spec §5) ---------------------
     vix_cap_threshold: Decimal = Decimal("40")     # VIX close > 40 -> cap 1.0×
@@ -108,4 +109,6 @@ def load_params_from_env(env: dict[str, str], base: AlcgParams | None = None) ->
         overrides["preset"] = env["ALCG_PRESET"].strip().lower()
     if env.get("ALCG_MODE"):
         overrides["mode"] = env["ALCG_MODE"].strip().lower()
+    if env.get("ALCG_MIN_ORDER_USD"):
+        overrides["min_order_usd"] = _D(env["ALCG_MIN_ORDER_USD"])
     return p.with_(**overrides) if overrides else p
