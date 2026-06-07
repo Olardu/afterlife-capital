@@ -2,7 +2,6 @@
 No imprime las API keys. No modifica nada (solo get_account + get_all_positions).
 Uso: venv/Scripts/python.exe scripts/_chk_alpaca_conn.py
 """
-import os
 from pathlib import Path
 
 
