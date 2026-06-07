@@ -156,6 +156,16 @@ MAX_DAILY_DRAWDOWN_PCT      = Decimal("0.05")   # 5% intradía vs equity al open
 MAX_WEEKLY_DRAWDOWN_PCT     = Decimal("0.10")   # 10% en 5 días hábiles → kill switch
 MAX_CUMULATIVE_DRAWDOWN_PCT = Decimal("0.15")   # 15% vs peak histórico → pausa indefinida (intervención manual)
 
+# --- BUG 2 (#BUG-CG-EXPOSURE, diseño Deep) — Alerta de sobre-exposición sostenida. ---
+# SOLO NOTIFICACIÓN, CERO ventas automáticas (decisión Roman/Deep: vender en un dip
+# lockea pérdidas; el cap que bloquea compras + el guard anti-margen ya cubren). Si la
+# exposición (long_market_value / equity) supera EXPOSURE_ALERT_THRESHOLD durante
+# EXPOSURE_ALERT_DAYS días hábiles seguidos, /api/status expone una alerta para el
+# dashboard ("bot al 96% hace 5 días"). Default ON: es read-only, no toca el trading.
+EXPOSURE_ALERT_ENABLED   = os.environ.get("EXPOSURE_ALERT_ENABLED", "true").lower() == "true"
+EXPOSURE_ALERT_THRESHOLD = Decimal("0.95")      # >95% del equity desplegado en longs
+EXPOSURE_ALERT_DAYS      = 5                     # días hábiles consecutivos sostenidos
+
 # --- EXP-005 — Modo Observador Fractional. FLAG-GATED, default ON. ---
 # El bot opera IDÉNTICO (qty entera, floor en execute_order); con
 # SHADOW_FRACTIONAL_ENABLED=true el dispatcher persiste en signals_shadow_fractional

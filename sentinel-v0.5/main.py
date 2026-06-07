@@ -559,8 +559,18 @@ async def _daily_equity_snapshot_poller(
             equity = await asyncio.wait_for(
                 asyncio.to_thread(dispatcher._get_account_equity), timeout=15.0,
             )
-            await historian.record_daily_equity_snapshot(owner_id, equity)
-            logger.info(f"Daily equity snapshot EOD registrado: equity={equity}")
+            # #BUG-CG-EXPOSURE — long_market_value para la alerta de sobre-exposición.
+            # Defensivo: si falla, igual se registra el equity (el snapshot es la fuente
+            # de los drawdown limits, no debe perderse por un error del lmv).
+            lmv = None
+            try:
+                lmv = await asyncio.wait_for(
+                    asyncio.to_thread(dispatcher._get_account_long_market_value), timeout=15.0,
+                )
+            except Exception as e:
+                logger.warning(f"No pude traer long_market_value para el snapshot: {e}")
+            await historian.record_daily_equity_snapshot(owner_id, equity, long_market_value=lmv)
+            logger.info(f"Daily equity snapshot EOD registrado: equity={equity} lmv={lmv}")
         except asyncio.CancelledError:
             logger.info("Daily equity snapshot poller cancelado.")
             raise

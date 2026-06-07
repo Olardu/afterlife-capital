@@ -46,6 +46,9 @@ from config import (
     DAILY_REPORT_ENABLED,
     DATABASE_URL,
     DEEPSEEK_API_KEY,
+    EXPOSURE_ALERT_DAYS,
+    EXPOSURE_ALERT_ENABLED,
+    EXPOSURE_ALERT_THRESHOLD,
     GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET,
     LOG_LEVEL,
@@ -498,6 +501,15 @@ async def api_status():
         # #CR-1 — reporte fiscal simulado (FIFO + holding + wash sales) acumulado.
         # Solo el summary (liviano) va al status; los disposals se derivan aparte.
         tax_report_summary = (await historian.get_tax_report(_owner_id))["summary"]
+        # BUG 2 (#BUG-CG-EXPOSURE) — alerta de sobre-exposición sostenida (>95%×5d).
+        # SOLO notificación para el dashboard; cero ventas. Flag-gated (default ON).
+        exposure_alert = (
+            await historian.get_exposure_alert(
+                _owner_id, EXPOSURE_ALERT_THRESHOLD, EXPOSURE_ALERT_DAYS)
+            if EXPOSURE_ALERT_ENABLED else
+            {"alert": False, "consecutive_days": 0, "ratio_latest": None,
+             "threshold": float(EXPOSURE_ALERT_THRESHOLD), "days_required": EXPOSURE_ALERT_DAYS}
+        )
         return {
             "system":           "ONLINE",
             "sentinels_active": stats["sentinels_active"],
@@ -521,6 +533,8 @@ async def api_status():
             # #TD-6 follow-up — visible si falta DEEPSEEK_API_KEY (The Ear queda
             # ciego a noticias; swap FinBERT→DeepSeek). True = sin key configurada.
             "the_ear_news_disabled":   not bool(DEEPSEEK_API_KEY),
+            # BUG 2 (#BUG-CG-EXPOSURE) — alerta de sobre-exposición sostenida (solo aviso).
+            "exposure_alert": exposure_alert,
         }
     except Exception as e:
         _http_500("/api/status", e)

@@ -374,6 +374,70 @@ def test_get_drawdown_equities_day_open_fallback():
     assert out["peak"] == Decimal("110000")
 
 
+# ─── BUG 2 (#BUG-CG-EXPOSURE) — get_exposure_alert + snapshot con long_market_value ───
+
+def test_record_daily_equity_snapshot_pasa_long_market_value():
+    """El snapshot acepta long_market_value y lo pasa como 3er parámetro al execute."""
+    conn = _conn()
+    _run(_hist(conn).record_daily_equity_snapshot(
+        uuid4(), Decimal("100000"), long_market_value=Decimal("96000")))
+    args = conn.execute.call_args[0]
+    assert args[-1] == Decimal("96000")   # 3er bind ($3) = long_market_value
+
+
+def _exp_rows(*ratios_or_none):
+    """Filas de snapshot (más reciente primero) desde una lista de ratios; None = sin lmv."""
+    out = []
+    for x in ratios_or_none:
+        if x is None:
+            out.append({"equity_close": Decimal("100000"), "long_market_value": None})
+        else:
+            out.append({"equity_close": Decimal("100000"),
+                        "long_market_value": Decimal("100000") * Decimal(str(x))})
+    return out
+
+
+def test_exp_alert_flag_dispara_con_5_dias_sostenidos():
+    conn = _conn()
+    conn.fetch = AsyncMock(return_value=_exp_rows(0.96, 0.97, 0.96, 0.98, 0.96))
+    out = _run(_hist(conn).get_exposure_alert(uuid4(), Decimal("0.95"), 5))
+    assert out["alert"] is True
+    assert out["consecutive_days"] == 5
+    assert out["ratio_latest"] == pytest.approx(0.96)
+
+
+def test_exp_alert_no_dispara_si_el_dia_mas_reciente_baja():
+    conn = _conn()
+    conn.fetch = AsyncMock(return_value=_exp_rows(0.90, 0.97, 0.96, 0.98, 0.96))
+    out = _run(_hist(conn).get_exposure_alert(uuid4(), Decimal("0.95"), 5))
+    assert out["alert"] is False
+    assert out["consecutive_days"] == 0
+    assert out["ratio_latest"] == pytest.approx(0.90)
+
+
+def test_exp_alert_lmv_none_corta_la_racha():
+    conn = _conn()
+    conn.fetch = AsyncMock(return_value=_exp_rows(0.96, 0.96, None, 0.96, 0.96))
+    out = _run(_hist(conn).get_exposure_alert(uuid4(), Decimal("0.95"), 5))
+    assert out["alert"] is False
+    assert out["consecutive_days"] == 2          # corta en la fila sin lmv
+
+
+def test_exp_alert_racha_corta_no_dispara():
+    conn = _conn()
+    conn.fetch = AsyncMock(return_value=_exp_rows(0.96, 0.96, 0.96, 0.90, 0.97))
+    out = _run(_hist(conn).get_exposure_alert(uuid4(), Decimal("0.95"), 5))
+    assert out["alert"] is False
+    assert out["consecutive_days"] == 3
+
+
+def test_exp_alert_pgerror_failsafe():
+    conn = _conn()
+    conn.fetch = AsyncMock(side_effect=_pg())
+    out = _run(_hist(conn).get_exposure_alert(uuid4(), Decimal("0.95"), 5))
+    assert out["alert"] is False and out["consecutive_days"] == 0
+
+
 # ═══════════════════════ § 7 — scores / trade history / breakdown ═══════════════════════
 
 def test_get_sentinel_scores_ok_y_pgerror():

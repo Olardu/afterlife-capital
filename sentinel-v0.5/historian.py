@@ -330,6 +330,14 @@ class Historian:
                 "CREATE INDEX IF NOT EXISTS idx_daily_equity_snapshots_owner_date "
                 "ON daily_equity_snapshots (owner_id, snapshot_date DESC)"
             )
+            # BUG 2 (#BUG-CG-EXPOSURE) — migración 020: long_market_value en el
+            # snapshot diario, para la alerta de sobre-exposición sostenida (>95%×5d,
+            # solo notificación). Idempotente; nullable → filas viejas (sin lmv) no
+            # cuentan para la alerta.
+            await conn.execute(
+                "ALTER TABLE daily_equity_snapshots "
+                "ADD COLUMN IF NOT EXISTS long_market_value NUMERIC(20, 4)"
+            )
 
             # =================================================================
             # INVESTMENT THESES (#HE-2) — migración 017: tracking de tesis.
@@ -996,32 +1004,40 @@ class Historian:
             logger.error(f"Error al obtener assigned_at ({sentinel_id}/{ticker}): {e}")
             return None
 
-    async def record_daily_equity_snapshot(self, owner_id: UUID, equity: Decimal) -> None:
+    async def record_daily_equity_snapshot(self, owner_id: UUID, equity: Decimal,
+                                           long_market_value: Decimal = None) -> None:
         """
         Registra (o actualiza) el snapshot de equity del día actual para el owner
         (#GR-3, fuente persistente de drawdown). En el primer registro del día fija
         equity_open = equity_close = equity; registros posteriores del mismo día
         actualizan equity_close y suben el peak_to_date (max running histórico).
         Idempotente por (owner_id, snapshot_date). Llamado por el poller EOD.
+
+        long_market_value (opcional, #BUG-CG-EXPOSURE): valor de mercado en longs al
+        momento del snapshot → alimenta la alerta de sobre-exposición sostenida. None
+        NO pisa el valor previo del día (COALESCE) → callers que no lo pasen son
+        backward-compatibles.
         """
         sql = """
             INSERT INTO daily_equity_snapshots
-                (owner_id, snapshot_date, equity_open, equity_close, peak_to_date)
+                (owner_id, snapshot_date, equity_open, equity_close, peak_to_date, long_market_value)
             VALUES (
                 $1, CURRENT_DATE, $2, $2,
                 GREATEST($2, COALESCE(
                     (SELECT MAX(peak_to_date) FROM daily_equity_snapshots WHERE owner_id = $1),
                     $2
-                ))
+                )),
+                $3
             )
             ON CONFLICT (owner_id, snapshot_date) DO UPDATE SET
                 equity_close = EXCLUDED.equity_close,
                 peak_to_date = GREATEST(daily_equity_snapshots.peak_to_date, EXCLUDED.peak_to_date),
+                long_market_value = COALESCE(EXCLUDED.long_market_value, daily_equity_snapshots.long_market_value),
                 updated_at   = NOW()
         """
         try:
             async with self.pool.acquire() as conn:
-                await conn.execute(sql, owner_id, equity)
+                await conn.execute(sql, owner_id, equity, long_market_value)
         except asyncpg.PostgresError as e:
             logger.error(f"Error al registrar daily_equity_snapshot ({owner_id}): {e}")
             raise
@@ -1077,6 +1093,52 @@ class Historian:
         except asyncpg.PostgresError as e:
             logger.error(f"Error al obtener drawdown equities ({owner_id}): {e}")
             return {"day_open": None, "week_ago": None, "peak": None}
+
+    async def get_exposure_alert(self, owner_id: UUID, threshold: Decimal,
+                                 days_required: int) -> dict:
+        """
+        BUG 2 (#BUG-CG-EXPOSURE) — alerta de sobre-exposición SOSTENIDA. SOLO LECTURA,
+        cero acción sobre el trading. Mira los snapshots diarios más recientes y cuenta
+        cuántos días hábiles CONSECUTIVOS (desde el más reciente hacia atrás) tuvieron
+        ratio = long_market_value / equity_close > threshold. Alerta si la racha
+        ≥ days_required.
+
+        Un día sin long_market_value (filas viejas pre-migración) o con equity_close≤0
+        CORTA la racha (no se puede evaluar → conservador). Returns:
+            {alert: bool, consecutive_days: int, ratio_latest: float|None,
+             threshold: float, days_required: int}
+        Fail-safe: ante error de DB devuelve alert=False.
+        """
+        thr = float(threshold)
+        result = {"alert": False, "consecutive_days": 0, "ratio_latest": None,
+                  "threshold": thr, "days_required": days_required}
+        try:
+            async with self.pool.acquire() as conn:
+                # Ventana acotada (días pedidos + margen) ordenada del más reciente.
+                rows = await conn.fetch(
+                    "SELECT equity_close, long_market_value FROM daily_equity_snapshots "
+                    "WHERE owner_id = $1 ORDER BY snapshot_date DESC LIMIT $2",
+                    owner_id, max(days_required * 4, 20),
+                )
+            streak = 0
+            for i, r in enumerate(rows):
+                eq = r["equity_close"]
+                lmv = r["long_market_value"]
+                if lmv is None or eq is None or eq <= 0:
+                    break                          # no evaluable → corta la racha
+                ratio = float(lmv) / float(eq)
+                if i == 0:
+                    result["ratio_latest"] = ratio
+                if ratio > thr:
+                    streak += 1
+                else:
+                    break
+            result["consecutive_days"] = streak
+            result["alert"] = streak >= days_required
+            return result
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error al evaluar exposure_alert ({owner_id}): {e}")
+            return result
 
     # ═══════════════════════════ § 7 — Scores e historia de trades ═══════════════════════════
     async def get_sentinel_scores(self, owner_id: UUID) -> list[dict]:
