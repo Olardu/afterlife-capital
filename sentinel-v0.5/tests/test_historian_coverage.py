@@ -635,9 +635,10 @@ def test_remove_user_no_existe_devuelve_false():
     assert _run(_hist(conn).remove_user(str(uuid4()))) is False
 
 
-def test_remove_user_owner_protegido():
+def test_remove_user_owner_protegido(monkeypatch):
+    monkeypatch.setattr("historian._OWNER_EMAIL", "owner@test.local")
     conn = _conn()
-    conn.fetchrow = AsyncMock(return_value={"email": "***REMOVED-EMAIL***"})
+    conn.fetchrow = AsyncMock(return_value={"email": "owner@test.local"})
     with pytest.raises(ValueError):
         _run(_hist(conn).remove_user(str(uuid4())))
 

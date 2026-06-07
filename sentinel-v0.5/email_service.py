@@ -18,7 +18,7 @@ from typing import Optional
 
 import httpx
 
-from config import RESEND_API_KEY
+from config import OWNER_EMAIL, RESEND_API_KEY
 
 logger = logging.getLogger("sentinel.email")
 
@@ -574,7 +574,7 @@ async def send_removal_email(to_email: str) -> bool:
 # ---------------------------------------------------------------------------
 
 _PERIOD_CLOSE_SUBJECT = "Sentinel — Cierre anticipado del período de prueba"
-_PERIOD_CLOSE_REPLY_TO = "***REMOVED-EMAIL***"
+_PERIOD_CLOSE_REPLY_TO = OWNER_EMAIL   # del entorno (.env), no hardcodeado (§7.1)
 _PERIOD_CLOSE_REF_ID = "period-close-2026-05-23"
 
 _PERIOD_CLOSE_TEXT = """Hola,

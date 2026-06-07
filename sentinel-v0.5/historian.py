@@ -15,6 +15,7 @@ from uuid import UUID
 import asyncpg
 
 from config import (
+    OWNER_EMAIL,
     PERFORMANCE_DECAY_THRESHOLD,
     SHARPE_MINIMUM,
     WARMUP_TRADES_REQUIRED,
@@ -44,8 +45,10 @@ _SHARPE_ANNUALIZATION_FACTOR = math.sqrt(_TRADING_DAYS_PER_YEAR * _BARS_PER_TRAD
 
 # Email del owner del sistema — protegido contra eliminación desde el panel
 # admin. Coincide con el UPDATE idempotente de connect() y con la cuenta
-# Google que tiene acceso ADMIN garantizado.
-_OWNER_EMAIL = "***REMOVED-EMAIL***"
+# Google que tiene acceso ADMIN garantizado. Se lee del entorno (OWNER_EMAIL
+# en .env) — es PII, nunca hardcodeado (§7.1). Normalizado a minúsculas para
+# comparar; "" si no está configurado (la protección se omite de forma segura).
+_OWNER_EMAIL = (OWNER_EMAIL or "").lower()
 
 
 def _bucket_signal_rows(rows) -> dict:
@@ -415,17 +418,21 @@ class Historian:
             # Asegurar email + role=ADMIN del owner (#H-1). La columna `email`
             # ya existe en schema.sql desde la creación de la DB (multi-tenant
             # base). Este UPDATE solo corre cuando el email persistido no
-            # coincide con el del admin OAuth — idempotente.
-            await conn.execute(
-                """
-                UPDATE users
-                SET email = '***REMOVED-EMAIL***',
-                    role  = 'ADMIN'
-                WHERE username = 'roman'
-                  AND (email IS DISTINCT FROM '***REMOVED-EMAIL***'
-                       OR role IS DISTINCT FROM 'ADMIN')
-                """
-            )
+            # coincide con el del admin OAuth — idempotente. El email es PII y
+            # se pasa parametrizado ($1, §7.4), nunca concatenado. Si OWNER_EMAIL
+            # no está configurado, se omite (no se pisa el email con NULL).
+            if OWNER_EMAIL:
+                await conn.execute(
+                    """
+                    UPDATE users
+                    SET email = $1,
+                        role  = 'ADMIN'
+                    WHERE username = 'roman'
+                      AND (email IS DISTINCT FROM $1
+                           OR role IS DISTINCT FROM 'ADMIN')
+                    """,
+                    OWNER_EMAIL,
+                )
 
     async def close(self):
         """Cierra el pool de conexiones limpiamente."""
@@ -1731,7 +1738,7 @@ class Historian:
     async def remove_user(self, user_id: str) -> bool:
         """
         Elimina un usuario. Retorna True si la fila fue eliminada, False si
-        no existía. NO permite eliminar al owner del sistema (***REMOVED-EMAIL***).
+        no existía. NO permite eliminar al owner del sistema (OWNER_EMAIL).
 
         Raises:
             ValueError("cannot_remove_owner") si se intenta eliminar al owner.
@@ -1748,7 +1755,7 @@ class Historian:
                 )
                 if row is None:
                     return False
-                if (row["email"] or "").lower() == _OWNER_EMAIL:
+                if _OWNER_EMAIL and (row["email"] or "").lower() == _OWNER_EMAIL:
                     raise ValueError("cannot_remove_owner")
                 result = await conn.execute(
                     "DELETE FROM users WHERE user_id = $1", uid,

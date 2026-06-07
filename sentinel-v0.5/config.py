@@ -47,6 +47,12 @@ SESSION_MAX_AGE_SECONDS = 24 * 60 * 60   # 24 horas
 # Dominio verificado: afterlifecapital.co. Sender: noreply@afterlifecapital.co.
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 
+# Email del owner del sistema (cuenta ADMIN protegida + reply-to de los emails
+# de cierre). Es PII → vive SOLO en el .env, nunca hardcodeado en el código
+# (§7.1). Si no está configurado, la protección/UPDATE del owner se omiten de
+# forma segura (no se pisa el email persistido).
+OWNER_EMAIL = os.environ.get("OWNER_EMAIL")
+
 # Anthropic API — usada por el Universe Selector para proponer candidatos
 # de rotación cuando un Sentinel se acerca al decay (#UNIVERSE-SELECTION).
 # El bot llama a Claude Sonnet 4.6 con contexto de mercado + noticias macro.
