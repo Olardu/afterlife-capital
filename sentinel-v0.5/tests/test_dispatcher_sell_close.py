@@ -9,7 +9,11 @@ vivo (19 órdenes SELL rechazadas por Alpaca el 08/09-jun, código 42210000
    arriba) y process_signal los adjuntaba al SELL → bracket SELL inválido
    para Alpaca (exige TP < SL). Fix: el SELL va SIN bracket.
 2. La qty del SELL viene del sizing (ATR o allocation) y puede exceder la
-   posición abierta → flip a short no intencional. Fix: cap a la posición.
+   posición abierta → flip a short no intencional. Fix (decisión Roman
+   09-jun): el SELL cierra la posición COMPLETA (exit de la estrategia) —
+   cerrar parcial dejaba dust residual que bloquea la re-entrada vía
+   duplicate_ticker (#TD-4). Para SELL tampoco corre el ATR sizing (es para
+   dimensionar entradas; un ATR no calculable no debe frenar el des-riesgo).
 
 Correr: venv\\Scripts\\python.exe -m pytest tests/test_dispatcher_sell_close.py -v
 """
@@ -118,9 +122,10 @@ def test_buy_con_atr_mantiene_bracket():
     assert kw["stop_loss_price"] < kw["take_profit_price"]   # forma LONG
 
 
-# ─── 2. Cap de qty a la posición abierta (anti flip-a-short) ─────────────────
+# ─── 2. SELL cierra la posición COMPLETA (decisión Roman 09-jun) ─────────────
 
-def test_sell_qty_se_capea_a_la_posicion():
+def test_sell_pide_mas_que_held_cierra_held():
+    # Nunca vende más de lo held (flip a short no intencional).
     d = _disp()
     _hold(d, qty="10")
     res = _run(_signal(d, qty=Decimal("30")))
@@ -128,19 +133,36 @@ def test_sell_qty_se_capea_a_la_posicion():
     assert d.execute_order.await_args.kwargs["qty"] == Decimal("10")
 
 
-def test_sell_qty_menor_que_posicion_no_cambia():
+def test_sell_pide_menos_que_held_cierra_completo():
+    # Exit de la estrategia = cierre TOTAL; un parcial deja dust que bloquea
+    # la re-entrada (duplicate_ticker #TD-4).
     d = _disp()
     _hold(d, qty="50")
     res = _run(_signal(d, qty=Decimal("5")))
     assert res["approved"] is True
-    assert d.execute_order.await_args.kwargs["qty"] == Decimal("5")
+    assert d.execute_order.await_args.kwargs["qty"] == Decimal("50")
 
 
-def test_sell_con_atr_capea_a_la_posicion():
-    # Caso real XLB: sizing ATR (~150 acá) > held → debe salir held completo.
+def test_sell_con_atr_cierra_held_sin_correr_sizing():
+    # Caso real XLB. Además el SELL no corre el ATR sizing (es de entradas):
+    # ni fetch de barras ni riesgo de rechazo por atr_unavailable.
     d = _disp()
     _hold(d, qty="50")
     d._fetch_bars_for_atr = AsyncMock(return_value=MagicMock())
+    p1, p2 = _atr_on()
+    with p1, p2:
+        res = _run(_signal(d))
+    assert res["approved"] is True
+    assert d.execute_order.await_args.kwargs["qty"] == Decimal("50")
+    d._fetch_bars_for_atr.assert_not_awaited()
+
+
+def test_sell_con_atr_no_calculable_no_se_bloquea():
+    # Regresión: con sizing corriendo para SELL, bars=None → atr NaN →
+    # "atr_unavailable" frenaba el des-riesgo. El SELL no depende del ATR.
+    d = _disp()
+    _hold(d, qty="50")
+    d._fetch_bars_for_atr = AsyncMock(return_value=None)
     p1, p2 = _atr_on()
     with p1, p2:
         res = _run(_signal(d))
