@@ -426,8 +426,13 @@ class Dispatcher:
                 return {**base_result, "reason": "sizing_not_feasible"}
 
             qty = sizing["qty"]
-            take_profit_price = sizing["take_profit_price"]
-            stop_loss_price   = sizing["stop_price"]
+            # #BUG-SELL-BRACKET: el TP/SL del sizing es de LONG (SL bajo el
+            # precio, TP arriba). Solo el BUY lleva bracket; un SELL acá es
+            # cierre/reducción de un long (v0.5 long-only) y Alpaca rechaza
+            # un bracket SELL con TP>SL (42210000, observado 08/09-jun).
+            if signal_type == "BUY":
+                take_profit_price = sizing["take_profit_price"]
+                stop_loss_price   = sizing["stop_price"]
             if sizing["capped"]:
                 logger.info(
                     f"{ticker}: sizing capeado por MAX_POSITION_PCT_OF_EQUITY → qty={qty}."
@@ -550,6 +555,17 @@ class Dispatcher:
             if ticker not in self.open_positions:
                 logger.info(f"Señal SELL para {ticker} rechazada — sin posición abierta.")
                 return {**base_result, "reason": "no_open_position"}
+            # #BUG-SELL-BRACKET: un SELL cierra/reduce un long. La qty viene del
+            # sizing (ATR o allocation) y puede exceder lo held → flip a short
+            # no intencional. Cap a la posición abierta; qty ≤ 0 en el cache
+            # (short/corrupta) equivale a no tener long que cerrar.
+            held_qty = Decimal(str(self.open_positions[ticker].get("qty") or 0))
+            if held_qty <= 0:
+                logger.info(f"Señal SELL para {ticker} rechazada — posición sin qty long válida.")
+                return {**base_result, "reason": "no_open_position"}
+            if final_qty > held_qty:
+                logger.info(f"{ticker}: SELL qty {final_qty} recortada a la posición abierta {held_qty}.")
+                final_qty = held_qty
         try:
             order_result = await self.execute_order(
                 ticker            = ticker,
