@@ -155,6 +155,7 @@ class DeepSeekClient:
         try:
             choice   = (data.get("choices") or [{}])[0]
             raw_text = ((choice.get("message") or {}).get("content")) or ""
+            finish_reason = choice.get("finish_reason")
         except (AttributeError, IndexError, TypeError) as e:
             logger.error(f"Respuesta de DeepSeek con forma inesperada: {e} | data={str(data)[:200]}")
             return {**result_template, "error": "malformed_response"}
@@ -169,10 +170,23 @@ class DeepSeekClient:
             try:
                 parsed = json.loads(raw_text)
             except (ValueError, TypeError) as e:
-                logger.error(f"No se pudo parsear JSON de DeepSeek: {e} | raw={raw_text[:300]}")
+                logger.error(
+                    f"No se pudo parsear JSON de DeepSeek: {e} | "
+                    f"finish_reason={finish_reason} | raw={raw_text[:300]}"
+                )
 
         if not isinstance(parsed, dict):
             parsed = None
+
+        # #BUG-DEEPSEEK-TRUNC: tipificar el truncado por max_tokens (mismo
+        # patrón que claude_client #TECH-005) — distingue "subir el presupuesto"
+        # de "el modelo devolvió JSON inválido".
+        if parsed is not None:
+            error = None
+        elif finish_reason == "length":
+            error = "truncated_max_tokens"
+        else:
+            error = "parse_failed"
 
         return {
             "success":       parsed is not None,
@@ -182,5 +196,5 @@ class DeepSeekClient:
             "output_tokens": output_tokens,
             "cost_usd":      cost,
             "model":         self.model,
-            "error":         None if parsed is not None else "parse_failed",
+            "error":         error,
         }

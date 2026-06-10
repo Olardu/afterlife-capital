@@ -69,6 +69,10 @@ DEEPSEEK_API_KEY        = os.environ.get("DEEPSEEK_API_KEY")
 DEEPSEEK_BASE_URL       = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL          = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
 DEEPSEEK_TIMEOUT_SECONDS = float(os.environ.get("DEEPSEEK_TIMEOUT_SECONDS", "20"))
+# #BUG-DEEPSEEK-TRUNC: presupuesto de salida para el risk assessment. El default
+# del cliente (512) truncaba el JSON con rationale ~9×/día (08/09-jun) → The Ear
+# caía a last_risk_score en ~1/3 de los ciclos RTH.
+DEEPSEEK_MAX_TOKENS     = int(os.environ.get("DEEPSEEK_MAX_TOKENS", "2048"))
 
 # Nombres de las credenciales críticas. validate_config() las lee FRESH desde
 # os.environ en cada llamada (#TD: antes era un dict que capturaba los VALORES al

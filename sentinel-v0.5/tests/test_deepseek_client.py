@@ -175,5 +175,29 @@ def test_call_json_parsed_no_dict_es_parse_failed():
     assert out["success"] is False and out["parsed"] is None
 
 
+def test_call_json_truncado_max_tokens_tipificado():
+    # #BUG-DEEPSEEK-TRUNC: finish_reason=length + JSON cortado → error tipificado
+    # (no parse_failed genérico), como claude_client. El caller/logs distinguen
+    # "subir max_tokens" de "el modelo devolvió basura".
+    payload = {
+        "choices": [{"message": {"content": '{"risk_score": 0.6, "top_risk_ids": ["12", "15'},
+                     "finish_reason": "length"}],
+        "usage": {"prompt_tokens": 900, "completion_tokens": 512},
+    }
+    with _patch_session(_FakeResp(200, payload)):
+        out = _run(_call())
+    assert out["success"] is False
+    assert out["error"] == "truncated_max_tokens"
+
+
+def test_call_json_finish_length_con_json_valido_es_exito():
+    # Si pese al stop por length el JSON quedó completo, success normal.
+    payload = {"choices": [{"message": {"content": '{"risk_score": 0.6}'},
+                            "finish_reason": "length"}], "usage": {}}
+    with _patch_session(_FakeResp(200, payload)):
+        out = _run(_call())
+    assert out["success"] is True and out["error"] is None
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

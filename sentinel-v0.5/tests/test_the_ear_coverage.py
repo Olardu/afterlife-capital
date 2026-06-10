@@ -188,6 +188,15 @@ def test_assess_risk_score_no_numerico_devuelve_none():
     assert _run(ear.assess_risk(_ARTS)) is None
 
 
+def test_assess_risk_pasa_max_tokens_configurado():
+    # #BUG-DEEPSEEK-TRUNC: sin max_tokens explícito el cliente usaba su default
+    # (512) y el JSON con rationale se truncaba ~9×/día (08/09-jun). assess_risk
+    # debe pasar el presupuesto configurado.
+    client = _ds({"risk_score": 0.5, "top_risk_ids": [], "rationale": None})
+    _run(_ear(client).assess_risk(_ARTS))
+    assert client.call_json.await_args.kwargs["max_tokens"] == the_ear.DEEPSEEK_MAX_TOKENS
+
+
 def test_assess_risk_call_fallida_devuelve_none():
     ear = _ear(_ds(None, success=False, error="timeout_20s"))
     assert _run(ear.assess_risk(_ARTS)) is None

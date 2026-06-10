@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from config import (
     ALPACA_API_KEY,
     ALPACA_SECRET_KEY,
+    DEEPSEEK_MAX_TOKENS,
     NEWS_BATCH_MAX_ARTICLES,
     NEWS_FETCH_INTERVAL_SECONDS,
     NEWS_TOP_TITLES,
@@ -235,6 +236,7 @@ class TheEar:
         result = await self.deepseek_client.call_json(
             system_prompt=SYSTEM_PROMPT_RISK,
             user_prompt=build_risk_user_prompt(articles),
+            max_tokens=DEEPSEEK_MAX_TOKENS,
         )
         if not result.get("success"):
             logger.warning(
