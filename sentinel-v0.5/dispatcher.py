@@ -20,6 +20,7 @@
 import asyncio
 import logging
 import math
+import time
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_EVEN
 from typing import Optional
 from uuid import UUID
@@ -150,6 +151,42 @@ class Dispatcher:
                 "sentinel_id": None,   # Alpaca no conoce el sentinel_id; se cruza por ticker si es necesario
             }
         return result
+
+    def _cancel_open_orders_sync(self, ticker: str) -> int:
+        """Cancela las órdenes ABIERTAS del ticker y espera a que liberen las shares.
+
+        #BUG-SELL-LEGS: las legs TP/SL GTC del bracket de ENTRADA reservan la
+        posición en Alpaca (qty_available=0; verificado en vivo 09-jun: XLV y
+        XLB con el 100% reservado) → un SELL de cierre sería rechazado con
+        "insufficient qty available". Cancelar las legs primero libera la qty.
+        El poll acotado (~5s) cubre el lag asíncrono de la cancelación en el
+        exchange. Ejecutado en thread (caller usa asyncio.to_thread).
+
+        Returns:
+            cantidad de órdenes que se mandaron a cancelar (0 si no había).
+        """
+        from alpaca.trading.client import TradingClient
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
+        open_orders = client.get_orders(
+            GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[ticker])
+        )
+        if not open_orders:
+            return 0
+        for order in open_orders:
+            client.cancel_order_by_id(order.id)
+        # Esperar a que el exchange procese las cancelaciones (libera la qty
+        # reservada); sin esto el SELL inmediato puede chocar igual.
+        for _ in range(20):
+            remaining = client.get_orders(
+                GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[ticker])
+            )
+            if not remaining:
+                break
+            time.sleep(0.25)
+        return len(open_orders)
 
     # ════════════════════════════════════════════════════════
     # § 4 — Distribución de capital
@@ -851,6 +888,28 @@ class Dispatcher:
             )
             return {"order_id": None, "filled_price": None, "status": "CANCELLED",
                     "executed_qty": Decimal("0")}
+
+        # #BUG-SELL-LEGS: antes de un SELL de cierre, cancelar las órdenes
+        # abiertas del ticker (las legs TP/SL GTC del bracket de entrada
+        # reservan la posición → "insufficient qty available"). Fail-open: si
+        # la cancelación falla se intenta el SELL igual — el rechazo queda
+        # logueado y la señal se reintenta en ciclos siguientes.
+        if side == "SELL":
+            try:
+                cancelled = await asyncio.wait_for(
+                    asyncio.to_thread(self._cancel_open_orders_sync, ticker),
+                    timeout=15.0,
+                )
+                if cancelled:
+                    logger.info(
+                        f"{ticker}: {cancelled} orden(es) abiertas canceladas "
+                        f"antes del SELL de cierre (#BUG-SELL-LEGS)."
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"{ticker}: no se pudieron cancelar órdenes abiertas pre-SELL: "
+                    f"{e}. Se intenta el SELL igual."
+                )
 
         try:
             submit_result = await asyncio.wait_for(

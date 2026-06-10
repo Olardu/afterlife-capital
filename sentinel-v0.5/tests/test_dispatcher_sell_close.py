@@ -180,5 +180,86 @@ def test_sell_posicion_sin_qty_valida_rechazada():
     d.execute_order.assert_not_awaited()
 
 
+# ─── 3. #BUG-SELL-LEGS: cancelar legs GTC antes del SELL de cierre ───────────
+# Las legs TP/SL GTC del bracket de ENTRADA reservan la posición en Alpaca
+# (qty_available=0, verificado en vivo: XLV 46/46 y XLB 1/1 reservadas el
+# 09-jun) → un SELL de cierre sería rechazado con "insufficient qty available".
+
+def _disp_exec():
+    """Dispatcher con execute_order REAL y capas sync mockeadas, registrando
+    el orden de las llamadas (cancel debe preceder al submit)."""
+    d = _disp()
+    del d.execute_order   # restaura el método real de la clase
+    d._llamadas = []
+    d._cancel_open_orders_sync = MagicMock(
+        side_effect=lambda t: d._llamadas.append("cancel") or 1)
+    d._submit_order_sync = MagicMock(
+        side_effect=lambda *a, **k: d._llamadas.append("submit") or {
+            "order_id": "o1", "filled_price": Decimal("100.00"), "status": "FILLED"})
+    return d
+
+
+def test_execute_order_sell_cancela_ordenes_abiertas_antes_de_enviar():
+    d = _disp_exec()
+    res = _run(d.execute_order("XLV", "SELL", Decimal("46")))
+    assert res["status"] == "FILLED"
+    d._cancel_open_orders_sync.assert_called_once_with("XLV")
+    assert d._llamadas == ["cancel", "submit"]
+
+
+def test_execute_order_buy_no_cancela_nada():
+    d = _disp_exec()
+    res = _run(d.execute_order("XLV", "BUY", Decimal("10")))
+    assert res["status"] == "FILLED"
+    d._cancel_open_orders_sync.assert_not_called()
+
+
+def test_execute_order_sell_sigue_si_cancelacion_falla():
+    # Fail-open: si la cancelación falla, el SELL se intenta igual (el rechazo
+    # de Alpaca quedaría logueado y la señal se reintenta el próximo ciclo).
+    d = _disp_exec()
+    d._cancel_open_orders_sync = MagicMock(side_effect=RuntimeError("alpaca down"))
+    res = _run(d.execute_order("XLV", "SELL", Decimal("46")))
+    assert res["status"] == "FILLED"
+    d._submit_order_sync.assert_called_once()
+
+
+def test_cancel_open_orders_sync_cancela_y_espera():
+    d = _disp()
+    o1, o2 = MagicMock(id="a1"), MagicMock(id="a2")
+    client = MagicMock()
+    # 1ª lectura: 2 abiertas → cancela ambas; poll: ya no queda ninguna.
+    client.get_orders.side_effect = [[o1, o2], []]
+    with patch("alpaca.trading.client.TradingClient", MagicMock(return_value=client)):
+        n = d._cancel_open_orders_sync("XLV")
+    assert n == 2
+    assert client.cancel_order_by_id.call_count == 2
+
+
+def test_cancel_open_orders_sync_sin_ordenes_no_cancela():
+    d = _disp()
+    client = MagicMock()
+    client.get_orders.return_value = []
+    with patch("alpaca.trading.client.TradingClient", MagicMock(return_value=client)):
+        n = d._cancel_open_orders_sync("XLV")
+    assert n == 0
+    client.cancel_order_by_id.assert_not_called()
+
+
+def test_cancel_open_orders_sync_pollea_hasta_que_liberan():
+    # La cancelación es asíncrona en el exchange: el poll reintenta (con sleep)
+    # hasta que la orden desaparece de las abiertas.
+    d = _disp()
+    o1 = MagicMock(id="a1")
+    client = MagicMock()
+    client.get_orders.side_effect = [[o1], [o1], []]  # lectura + 2 polls
+    with patch("alpaca.trading.client.TradingClient", MagicMock(return_value=client)), \
+         patch("dispatcher.time.sleep") as slept:
+        n = d._cancel_open_orders_sync("XLV")
+    assert n == 1
+    slept.assert_called_once()
+    assert client.get_orders.call_count == 3
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
